@@ -12,9 +12,10 @@ import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
 from stellar_sdk import Keypair
 import json
-from dialogs import iptc_dialog, edit_iptc_info_dialog, edit_xmp_info_dialog, cipher_dialog, assign_iptc_dialog, process_dialog
+from dialogs import iptc_dialog, edit_iptc_info_dialog, edit_xmp_info_dialog, cipher_dialog, aposematic_dialog, assign_iptc_dialog, process_dialog
 from metadata import IPTC
 from img_edit import new_watermarked_img, new_enciphered_img, new_deciphered_img, new_iptc_img, WATERMARK_POSITIONS
+from aiposematic import new_aposematic_img, recover_aposematic_img, SCRAMBLE_MODE
 from iptcinfo3 import IPTCInfo
 import exiv2
 
@@ -68,6 +69,7 @@ def init():
     global iptc_data
     global img_states
     global tmp_files
+    global scramble_modes
 
     iptc_data = IPTC()
     iptc_data.init()
@@ -112,12 +114,17 @@ def init():
     app.storage.user['img_state'] = app.storage.user.get('img_state', 1)
     app.storage.user['raw_img_hashes'] = app.storage.user.get('raw_img_hashes', [])
     app.storage.user['processed_img_hashes'] = app.storage.user.get('processed_img_hashes', [])
+    app.storage.user['aposematic_img_hashes'] = app.storage.user.get('aposematic_img_hashes', [])
     app.storage.user['enciphered_img_hashes'] = app.storage.user.get('enciphered_img_hashes', [])
     app.storage.user['deciphered_img_hashes'] = app.storage.user.get('decrypted_img_hashes', [])
     app.storage.user['tmp_files'] = app.storage.user.get('tmp_files', [])
+    app.storage.user['recipient_public_key'] = app.storage.user.get('recipient_public_key', None)
     app.storage.user['cipher_key'] = app.storage.user.get('cipher_key', None)
+    app.storage.user['scramble_mode'] = app.storage.user.get('scramble_mode', 2)
+    app.storage.user['op_string'] = app.storage.user.get('op_string', '-^+')
 
-    img_states = {1: 'raw', 2: 'processed', 3: 'enciphered'}
+    img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
+    scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
 
     remove_tmp_files()
 
@@ -170,7 +177,7 @@ def ipfs_add(file_path):
         with open(file_path, 'rb') as f:
             url = f'{ipfs_endpoint}:{port}'
             files = {'file': (os.path.basename(file_path), f)}
-            response = requests.post(f'{url}/api/v0/add', files=files, timeout=30)
+            response = requests.post(f'{url}/api/v0/add', params={'no-announce': 'true'}, files=files, timeout=30)
             response.raise_for_status()
             result = response.json()
             hash_value = result.get('Hash')
@@ -472,6 +479,34 @@ async def process_watermarking():
     persistent_save_data()
     render_gallery()
 
+def get_scramble_mode():
+    mode = app.storage.user.get('scramble_mode', 2)
+    if mode == 1:
+        return SCRAMBLE_MODE.BUTTERFLY
+    elif mode == 2:
+        return SCRAMBLE_MODE.BUTTERFLY
+    elif mode == 3:
+        return SCRAMBLE_MODE.QR
+
+async def process_aposematic():
+    app.storage.user.get('aposematic_img_hashes', []).clear()
+    for hash_value in app.storage.user.get('processed_img_hashes', []):
+        img_path = app.storage.user[hash_value]['path']
+        img_name = app.storage.user[hash_value]['name']
+        aposematic = new_aposematic_img(
+            img_path,
+            cipher_key=app.storage.user['cipher_key'],
+            op_string= app.storage.user.get('op_string', '-^+'),
+            scramble_mode=get_scramble_mode()
+        )
+        print(aposematic)
+        aposematic_img_path = aposematic['img_path']
+        ipfs_hash = ipfs_add(aposematic_img_path)
+        app.storage.user.get('aposematic_img_hashes', []).append(ipfs_hash)
+        ui.notify(f'Processed {hash_value}')
+    persistent_save_data()
+    render_gallery()
+
 async def process_enciphering():
     app.storage.user.get('enciphered_img_hashes', []).clear()
     for hash_value in app.storage.user.get('processed_img_hashes', []):
@@ -577,6 +612,7 @@ with ui.footer() as footer:
             ui.fab_action('add', on_click=choose_img)
             ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
             ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_iptc_metadata))
+            ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
             ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
             ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
             ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))

@@ -13,6 +13,7 @@ import shutil
 import exiv2
 import exiftool
 from pprint import pprint
+from aiposematic import SCRAMBLE_MODE
 
 def create_shared_key(reciever_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
@@ -468,7 +469,28 @@ def cipher_dialog(on_close, process_func):
     with ui.dialog().on('hide', lambda: on_close(process_func)) as dialog:
         with ui.card().classes('w-full max-w-xl'):
             ui.label('Recipient Public Key').classes('text-md font-medium')
-            pub = ui.input('Recipient Public Key', value=app.storage.user['cipher_key']).bind_value(app.storage.user, 'cipher_key').classes('w-full')
+            pub = ui.input('Recipient Public Key', value=app.storage.user['recipient_public_key']).bind_value(app.storage.user, 'recipient_public_key').classes('w-full')
+            with ui.row().classes('w-full justify-end'):
+                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()]).props('flat')
+    return dialog
+
+def aposematic_dialog(on_close, process_func):
+    scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
+    with ui.dialog().on('hide', lambda: on_close(process_func)) as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            with ui.row().classes('w-full'):
+                ui.label('Op String').classes('text-md font-medium')
+                op_string = ui.input('Op String', value=app.storage.user['op_string']).bind_value(app.storage.user, 'op_string').classes('w-full')
+            with ui.row().classes('w-full'):
+                ui.label('Scramble Mode').classes('text-md font-medium')
+                mode = ui.select(
+                    options=scramble_modes,
+                    value=app.storage.user['scramble_mode'],
+                    on_change=lambda e: app.storage.user.update({'scramble_mode': e.value})
+                ).classes('w-full')
+            with ui.row().classes('w-full'):
+                ui.label('Recipient Public Key').classes('text-md font-medium')
+                pub = ui.input('Recipient Public Key', value=app.storage.user['recipient_public_key']).bind_value(app.storage.user, 'recipient_public_key').classes('w-full')
             with ui.row().classes('w-full justify-end'):
                 ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()]).props('flat')
     return dialog
