@@ -41,6 +41,11 @@ app.native.window_args['resizable'] = True
 app.native.start_args['debug'] = False
 app.native.settings['ALLOW_DOWNLOADS'] = True
 app.native.window_args['title'] = 'Glass Wing'
+app.native.window_args['frameless'] = True
+
+print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
+print(app.native.settings)
+print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 
 stellar_keys = None
 hvym_keys = None
@@ -599,19 +604,27 @@ def render_watermark(watermark_container):
 
 def on_close():
     print('Closing')
+    # remove_tmp_files()
+
+def close_app():
+    ui.notify('Closing')
     remove_tmp_files()
+    app.shutdown()
+    
 @ui.page('/')
 def main_page():
 
     init()
 
-    with ui.header().classes(replace='row items-center') as header:
-
-        with ui.tabs() as tabs:
-            ui.tab('IMAGES', icon="image")
-            # ui.tab('LAYOUT', icon="grid_view")
-            ui.tab('SETTINGS', icon="settings")
-        state_container = ui.row().classes('w-full items-center')
+    with ui.header().classes('row items-center justify-between p-0') as header:
+        with ui.row().classes('w-full justify-end'):
+            ui.button(icon='close', on_click=close_app).classes('outline').props('fab')
+        with ui.row().classes('w-full items-center'):
+            with ui.tabs() as tabs:
+                ui.tab('IMAGES', icon="image")
+                # ui.tab('LAYO.classes('items-center gap-2 pr-2'):UT', icon="grid_view")
+                ui.tab('SETTINGS', icon="settings")
+            state_container = ui.row().classes('w-full items-center')
 
     with ui.footer() as footer:
         
@@ -671,7 +684,7 @@ def main_page():
                     with ui.card().classes('w-full'):
                         ui.label('Metadata').classes('text-md font-medium')
                         with ui.row().classes('w-full items-center'):
-                            ui.input('Artist', value=artist).bind_value(app.storage.user, 'artist').classes('w-full')
+                            ui.input('Artist', value=artist).bind_value(app.storage.user, 'artist').on_value_change(persistent_save_data).classes('w-full')
                             with ui.expansion('Stamp', icon='approval').classes('w-full'):
                                 w_switch = ui.switch('Stamp', value=use_watermark).bind_value(app.storage.user, 'use_watermark').on_value_change(persistent_save_data)
                                 watermark_size = app.storage.user.get('watermark_size', 0.2)
@@ -700,7 +713,7 @@ def main_page():
                                                 ).bind_visibility_from(w_switch, 'value')
 
                             with ui.expansion('IPTC', icon='data_array').classes('w-full'):
-                                iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc')
+                                iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc').on_value_change(persistent_save_data)
                                 ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
                                 .bind_visibility_from(iptc_switch, 'value')
                     
