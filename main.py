@@ -70,6 +70,7 @@ def init():
     global img_states
     global tmp_files
     global scramble_modes
+    global tabs
 
     iptc_data = IPTC()
     iptc_data.init()
@@ -87,6 +88,8 @@ def init():
            app.storage.user['watermark_size'] = data['watermark_size']
            app.storage.user['watermark_position'] = data['watermark_position']
            app.storage.user['watermark_padding'] = data['watermark_padding']
+           app.storage.user['scramble_mode'] = data['scramble_mode']
+           app.storage.user['op_string'] = data['op_string']
            app.storage.user['use_iptc'] = data['use_iptc']
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
@@ -102,6 +105,8 @@ def init():
            app.storage.user['watermark_size'] = data['watermark_size']
            app.storage.user['watermark_position'] = data['watermark_position']
            app.storage.user['watermark_padding'] = data['watermark_padding']
+           app.storage.user['scramble_mode'] = data['scramble_mode']
+           app.storage.user['op_string'] = data['op_string']
            app.storage.user['use_iptc'] = data['use_iptc']
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
@@ -120,8 +125,6 @@ def init():
     app.storage.user['tmp_files'] = app.storage.user.get('tmp_files', [])
     app.storage.user['recipient_public_key'] = app.storage.user.get('recipient_public_key', None)
     app.storage.user['cipher_key'] = app.storage.user.get('cipher_key', None)
-    app.storage.user['scramble_mode'] = app.storage.user.get('scramble_mode', 2)
-    app.storage.user['op_string'] = app.storage.user.get('op_string', '-^+')
 
     img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
     scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
@@ -146,13 +149,15 @@ def persistent_save_data():
     watermark_size = app.storage.user.get('watermark_size', 0.2)
     watermark_position = app.storage.user.get('watermark_position', 1)
     watermark_padding = app.storage.user.get('watermark_padding', 0.05)
+    scramble_mode = app.storage.user.get('scramble_mode', 2)
+    op_string = app.storage.user.get('op_string', '-^+')
     use_iptc = app.storage.user.get('use_iptc', False)
     tmp_files = app.storage.user.get('tmp_files', [])
     app.storage.user['tmp_files'] = tmp_files
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'tmp_files': tmp_files, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
 
 def is_ipfs_running():
     try:
@@ -330,22 +335,23 @@ def remove_tmp_files():
         app.storage.user['tmp_files'] = []
     persistent_save_data()
 
-async def choose_watermark():
+async def choose_watermark(watermark_container):
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
     file = files[0]
     if is_image(file):
         ipfs_hash = ipfs_add(file)
         print(ipfs_hash)
         app.storage.user['watermark'] = ipfs_hash
+        print(app.storage.user['watermark'])
         persistent_save_data()
         ui.notify(f'Chose {file}')
-        render_watermark()
+        render_watermark(watermark_container)
     else:
         ui.notify(f'{file} is not an image')
 
 async def choose_file():
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
-    tabs.set_value('IMAGES')
+    # tabs.set_value('IMAGES')
     return files
 
 async def edit_xmp_info(hash_value):
@@ -551,7 +557,7 @@ def render_state(hashes):
             ui.chip(f'{state} ({len(hashes)})', icon='view_array')
 
 def render_gallery():
-    tabs.set_value('IMAGES')
+    # tabs.set_value('IMAGES')
     idex = app.storage.user.get('img_state', 1)
     state = img_states[idex]
     hashes = app.storage.user.get(f'{state}_img_hashes', [])
@@ -573,19 +579,19 @@ def render_gallery():
                     # FAB container positioned absolutely over the image
                     ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10')
                     with ui.row().classes('absolute top-2 right-2 z-10'):
-                        with ui.fab('edit', direction='left', color='primary').props('flat'):
+                        with ui.fab('edit', direction='left', color='primary'):
                             if is_ipfs_running():
                                 ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h))
                             if is_ipfs_running():
                                 ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative')
-                        with ui.fab('data_object', direction='left', color='primary').props('flat'):
+                        with ui.fab('data_object', direction='left', color='primary'):
                             if is_ipfs_running():
                                 ui.fab_action('edit', label='IPTC', on_click=lambda h=hash_value: edit_iptc_info(h))
                                 ui.fab_action('edit', label='XMP', on_click=lambda h=hash_value: edit_xmp_info(h))
                 # Add some spacing between cards
                 ui.space().classes('h-4')
                 
-def render_watermark():
+def render_watermark(watermark_container):
     if watermark_container:
         watermark_container.clear()
         with watermark_container:
@@ -594,121 +600,124 @@ def render_watermark():
 def on_close():
     print('Closing')
     remove_tmp_files()
+@ui.page('/')
+def main_page():
 
-with ui.header().classes(replace='row items-center') as header:
-    
     init()
 
-    with ui.tabs() as tabs:
-        ui.tab('IMAGES', icon="image")
-        # ui.tab('LAYOUT', icon="grid_view")
-        ui.tab('SETTINGS', icon="settings")
-    state_container = ui.row().classes('w-full items-center')
+    with ui.header().classes(replace='row items-center') as header:
 
-with ui.footer() as footer:
-    
-    with ui.fab('image'):
-        if is_ipfs_running():
-            ui.fab_action('add', on_click=choose_img)
-            ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
-            ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_iptc_metadata))
-            ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
-            ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
-            ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
-            ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))
-    ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
+        with ui.tabs() as tabs:
+            ui.tab('IMAGES', icon="image")
+            # ui.tab('LAYOUT', icon="grid_view")
+            ui.tab('SETTINGS', icon="settings")
+        state_container = ui.row().classes('w-full items-center')
+
+    with ui.footer() as footer:
+        
+        with ui.fab('image'):
+            if is_ipfs_running():
+                ui.fab_action('add', on_click=choose_img)
+                ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
+                ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_iptc_metadata))
+                ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
+                ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
+                ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
+                ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))
+        ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
 
 
-with ui.tab_panels(tabs, value='IMAGES').classes('w-full'):
-    with ui.tab_panel('IMAGES'):
-        with ui.column().classes('w-full gap-2'):
-            # Show warnings if services are not available
-            if not is_ipfs_running():
-                ui.notify('IPFS is not running', type='warning')
-            if not is_imagemagick_available():
-                ui.notify('ImageMagick is not available', type='warning')
-            
-            # Main content
-            file_container = ui.column().classes('w-full')
-            render_gallery()
-
-    with ui.tab_panel('SETTINGS'):
-        with ui.grid(columns=2).classes('w-full'):
-            # Left column
-            with ui.column().classes('w-full gap-1'):
-                # IPFS WebUI Card
-                with ui.card().classes('w-full'):
-                    ui.label('IPFS').classes('text-md font-medium')
-                    with ui.row().classes('w-full items-end gap-2'):
-                        ui.input('WebUI URL', value=ipfs_webui).bind_value(app.storage.user, 'ipfs_webui').classes('grow')
-                        ui.input('Port', value=ipfs_webui_port).bind_value(app.storage.user, 'ipfs_webui_port').classes('w-30')
-                    with ui.row().classes('w-full items-end gap-2'):
-                        ui.input('API URL', value=ipfs_endpoint).bind_value(app.storage.user, 'ipfs_endpoint').classes('grow')
-                        ui.input('Port', value=port).bind_value(app.storage.user, 'port').classes('w-30')
-                with ui.card().classes('w-full'):
-                    ui.label('Pintheon').classes('text-md font-medium')
-                    with ui.row().classes('w-full items-end gap-2'):
-                        ui.input('Gateway', value=gateway_url).bind_value(app.storage.user, 'gateway_url').classes('grow')
-                    with ui.row().classes('w-full items-end gap-2'):
-                        ui.input('Local API', value=pintheon_endpoint).bind_value(app.storage.user, 'pintheon_endpoint').classes('grow')
-                        ui.input('Port', value=pintheon_port).bind_value(app.storage.user, 'pintheon_port').classes('w-30')
-                    ui.textarea('access token').classes('w-full') \
-                    .bind_value(app.storage.user, 'access_token')
-            
-            # Right column
-            with ui.column().classes('w-full gap-1'):
-                use_watermark = app.storage.user.get('use_watermark', False)
-                # Metadata Settings Card
-                with ui.card().classes('w-full'):
-                    ui.label('Metadata').classes('text-md font-medium')
-                    with ui.row().classes('w-full items-center'):
-                        ui.input('Artist', value=artist).bind_value(app.storage.user, 'artist').classes('w-full')
-                        with ui.expansion('Stamp', icon='approval').classes('w-full'):
-                            w_switch = ui.switch('Stamp', value=use_watermark).bind_value(app.storage.user, 'use_watermark')
-                            watermark_size = app.storage.user.get('watermark_size', 0.2)
-                            with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
-                                ui.label('Size').classes('text-md font-small')
-                                w_size = ui.slider(min=0.01, max=1.0, step=0.01, value=watermark_size).classes('w-1/2').bind_value(app.storage.user, 'watermark_size')
-                            with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
-                                ui.label('Padding').classes('text-md font-small')
-                                w_padding = app.storage.user.get('watermark_padding', 0.05)
-                                w_pad = ui.slider(min=0.0, max=0.25, step=0.01, value=w_padding).classes('w-1/2').bind_value(app.storage.user, 'watermark_padding')
-                            with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
-                                ui.label('Position').classes('text-md font-small')
-                                w_position = app.storage.user.get('watermark_position', 1)
-                                w_pos = ui.select(WATERMARK_POSITIONS, value=w_position).classes('grow').bind_value(app.storage.user, 'watermark_position')
-                            with ui.row().classes('w-full'):
-                                w_img = app.storage.user.get('watermark', None)
-                                with ui.row().classes('w-1/4').bind_visibility_from(w_switch, 'value') as watermark_container:
-                                    if w_img:
-                                        print(w_img)
-                                        url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{w_img}'
-                                        if url_valid(url):
-                                            render_watermark()
-                                w_upload = ui.button('Watermark', 
-                                                on_click=choose_watermark,
-                                                icon='upload'
-                                            ).bind_visibility_from(w_switch, 'value')
-
-                        with ui.expansion('IPTC', icon='data_array').classes('w-full'):
-                            iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc')
-                            ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
-                            .bind_visibility_from(iptc_switch, 'value')
+    with ui.tab_panels(tabs, value='IMAGES').classes('w-full'):
+        with ui.tab_panel('IMAGES'):
+            with ui.column().classes('w-full gap-2'):
+                # Show warnings if services are not available
+                if not is_ipfs_running():
+                    ui.notify('IPFS is not running', type='warning')
+                if not is_imagemagick_available():
+                    ui.notify('ImageMagick is not available', type='warning')
                 
-                # Additional settings can be added here
-                with ui.card().classes('w-full'):
-                    ui.label('App Data').classes('text-md font-medium')
-                    with ui.row().classes('w-full items-center'):
-                        key_input = ui.input('App Key', value=hvym_public_key).bind_value(app.storage.user, 'hvym_public_key').classes('grow').props('disable')
-                        ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(hvym_public_key), ui.notify('Copied App Key')]) \
-                            .classes('w-10').props('flat color=primary')
+                # Main content
+                global file_container
+                file_container = ui.column().classes('w-full')
+                render_gallery()
 
-                    with ui.row().classes('w-full items-center'):
+        with ui.tab_panel('SETTINGS'):
+            with ui.grid(columns=2).classes('w-full'):
+                # Left column
+                with ui.column().classes('w-full gap-1'):
+                    # IPFS WebUI Card
+                    with ui.card().classes('w-full'):
+                        ui.label('IPFS').classes('text-md font-medium')
+                        with ui.row().classes('w-full items-end gap-2'):
+                            ui.input('WebUI URL', value=ipfs_webui).bind_value(app.storage.user, 'ipfs_webui').classes('grow')
+                            ui.input('Port', value=ipfs_webui_port).bind_value(app.storage.user, 'ipfs_webui_port').classes('w-30')
+                        with ui.row().classes('w-full items-end gap-2'):
+                            ui.input('API URL', value=ipfs_endpoint).bind_value(app.storage.user, 'ipfs_endpoint').classes('grow')
+                            ui.input('Port', value=port).bind_value(app.storage.user, 'port').classes('w-30')
+                    with ui.card().classes('w-full'):
+                        ui.label('Pintheon').classes('text-md font-medium')
+                        with ui.row().classes('w-full items-end gap-2'):
+                            ui.input('Gateway', value=gateway_url).bind_value(app.storage.user, 'gateway_url').classes('grow')
+                        with ui.row().classes('w-full items-end gap-2'):
+                            ui.input('Local API', value=pintheon_endpoint).bind_value(app.storage.user, 'pintheon_endpoint').classes('grow')
+                            ui.input('Port', value=pintheon_port).bind_value(app.storage.user, 'pintheon_port').classes('w-30')
+                        ui.textarea('access token').classes('w-full') \
+                        .bind_value(app.storage.user, 'access_token')
+                
+                # Right column
+                with ui.column().classes('w-full gap-1'):
+                    use_watermark = app.storage.user.get('use_watermark', False)
+                    # Metadata Settings Card
+                    with ui.card().classes('w-full'):
+                        ui.label('Metadata').classes('text-md font-medium')
+                        with ui.row().classes('w-full items-center'):
+                            ui.input('Artist', value=artist).bind_value(app.storage.user, 'artist').classes('w-full')
+                            with ui.expansion('Stamp', icon='approval').classes('w-full'):
+                                w_switch = ui.switch('Stamp', value=use_watermark).bind_value(app.storage.user, 'use_watermark').on_value_change(persistent_save_data)
+                                watermark_size = app.storage.user.get('watermark_size', 0.2)
+                                with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
+                                    ui.label('Size').classes('text-md font-small')
+                                    w_size = ui.slider(min=0.01, max=1.0, step=0.01, value=watermark_size).classes('w-1/2').bind_value(app.storage.user, 'watermark_size').on_value_change(persistent_save_data)
+                                with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
+                                    ui.label('Padding').classes('text-md font-small')
+                                    w_padding = app.storage.user.get('watermark_padding', 0.05)
+                                    w_pad = ui.slider(min=0.0, max=0.25, step=0.01, value=w_padding).classes('w-1/2').bind_value(app.storage.user, 'watermark_padding').on_value_change(persistent_save_data)
+                                with ui.row().classes('w-full items-center').bind_visibility_from(w_switch, 'value'):
+                                    ui.label('Position').classes('text-md font-small')
+                                    w_position = app.storage.user.get('watermark_position', 1)
+                                    w_pos = ui.select(WATERMARK_POSITIONS, value=w_position).classes('grow').bind_value(app.storage.user, 'watermark_position').on_value_change(persistent_save_data)
+                                with ui.row().classes('w-full'):
+                                    w_img = app.storage.user.get('watermark', None)
+                                    with ui.row().classes('w-1/4').bind_visibility_from(w_switch, 'value') as watermark_container:
+                                        if w_img:
+                                            print(w_img)
+                                            url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{w_img}'
+                                            if url_valid(url):
+                                                render_watermark(watermark_container)
+                                    w_upload = ui.button('Watermark', 
+                                                    on_click=lambda: choose_watermark(watermark_container),
+                                                    icon='upload'
+                                                ).bind_visibility_from(w_switch, 'value')
 
-                        secret_input = ui.input('App Secret', value=stellar_secret, password=True) \
-                            .bind_value(app.storage.user, 'stellar_secret').classes('grow').props('disable')
-                        ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(stellar_secret), ui.notify('Copied App Secret')]) \
-                            .classes('w-10').props('flat color=primary')
+                            with ui.expansion('IPTC', icon='data_array').classes('w-full'):
+                                iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc')
+                                ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
+                                .bind_visibility_from(iptc_switch, 'value')
+                    
+                    # Additional settings can be added here
+                    with ui.card().classes('w-full'):
+                        ui.label('App Data').classes('text-md font-medium')
+                        with ui.row().classes('w-full items-center'):
+                            key_input = ui.input('App Key', value=hvym_public_key).bind_value(app.storage.user, 'hvym_public_key').classes('grow').props('disable')
+                            ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(hvym_public_key), ui.notify('Copied App Key')]) \
+                                .classes('w-10').props('flat color=primary')
+
+                        with ui.row().classes('w-full items-center'):
+
+                            secret_input = ui.input('App Secret', value=stellar_secret, password=True) \
+                                .bind_value(app.storage.user, 'stellar_secret').classes('grow').props('disable')
+                            ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(stellar_secret), ui.notify('Copied App Secret')]) \
+                                .classes('w-10').props('flat color=primary')
 
 app.on_shutdown(on_close)
 ui.run(
