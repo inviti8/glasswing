@@ -429,16 +429,8 @@ async def edit_iptc_info(hash_value):
     img_name = app.storage.user[hash_value]['name']
     try:
         metadata = await get_iptc_metadata(img_path)
-        
         await edit_metadata_dialog(img_path, metadata, process_iptc_info, img_name, img_path, hash_value)
         
-        print('gets here')
-        # new_hash_value = ipfs_add(img_path)
-        # if new_hash_value != hash_value:
-        #     await remove_img(hash_value)
-        #     app.storage.user.get('raw_img_hashes', []).append(new_hash_value)
-        #     ui.notify(f'Edited {new_hash_value}')
-        #     render_gallery()
     except Exception as e:
         ui.notify(f"Error loading IPTC data: {str(e)}", type='negative')
         print(f"Error in edit_iptc_info: {str(e)}")
@@ -447,52 +439,37 @@ async def edit_iptc_info(hash_value):
 
 async def process_iptc_info(img_name, img_path, hash_value, iptc_data):
     try:
-        # Create a persistent temp directory
-        operation_dir = tempfile.mkdtemp()
-        # Add to global tmp_files list for cleanup on exit
-        app.storage.user.setdefault('tmp_files', []).append(operation_dir)
-        print(f"Operation directory: {operation_dir}")
+        # Clear metadata first
+        # new_img_path = await clear_img_metadata(img_name, img_path)
+        # print(f"New image path after clearing metadata: {new_img_path}")
         
-        try:
-            # Clear metadata first
-            new_img_path = await clear_img_metadata(img_name, img_path)
-            print(f"New image path after clearing metadata: {new_img_path}")
+        # Process with new IPTC data
+        final_path = await new_iptc_img(img_name, img_path, iptc_data)
+        print(f"Final path after IPTC processing: {final_path}")
             
-            # Process with new IPTC data
-            final_path = await new_iptc_img(img_name, new_img_path, iptc_data)
-            print(f"Final path after IPTC processing: {final_path}")
+        # Get the IPFS hash of the final image
+        ipfs_hash = ipfs_add(final_path)
+        app.storage.user['tmp_files'].append(final_path)
+        
+        # Update the UI and storage
+        if ipfs_hash and ipfs_hash != hash_value:
+            processed_hashes = app.storage.user.get('processed_img_hashes', [])
+            print(f"processed_hashes: {processed_hashes}")
             
-            # Get the IPFS hash of the final image
-            ipfs_hash = ipfs_add(final_path)
-            app.storage.user['tmp_files'].append(final_path)
+            try:
+                index = processed_hashes.index(hash_value)
+                processed_hashes[index] = ipfs_hash
+            except ValueError:
+                processed_hashes.append(ipfs_hash)
+            app.storage.user['processed_img_hashes'] = processed_hashes
             
-            # Update the UI and storage
-            if ipfs_hash and ipfs_hash != hash_value:
-                processed_hashes = app.storage.user.get('processed_img_hashes', [])
-                print(f"processed_hashes: {processed_hashes}")
-                
-                try:
-                    index = processed_hashes.index(hash_value)
-                    processed_hashes[index] = ipfs_hash
-                except ValueError:
-                    processed_hashes.append(ipfs_hash)
-                app.storage.user['processed_img_hashes'] = processed_hashes
-                
-                ui.notify(f'Edited {ipfs_hash}')
-                render_gallery()
+            ui.notify(f'Edited {ipfs_hash}')
+            render_gallery()
             
-            return ipfs_hash, final_path  # Return both the hash and the path
+        return ipfs_hash, final_path  # Return both the hash and the path
             
-        except Exception as e:
-            # Clean up our temp directory on error
-            if os.path.exists(operation_dir):
-                shutil.rmtree(operation_dir)
-                if operation_dir in app.storage.user.get('tmp_files', []):
-                    app.storage.user['tmp_files'].remove(operation_dir)
-            ui.notify(f'Error processing image: {str(e)}', type='negative')
-            raise
     except Exception as e:
-        ui.notify(f'Error in process_iptc_info: {str(e)}', type='negative')
+        ui.notify(f'Error processing image: {str(e)}', type='negative')
         raise
 
 async def process_watermarking():
