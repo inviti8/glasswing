@@ -25,235 +25,130 @@ def create_shared_key(reciever_public_key):
     app.storage.user['cipher_key'] = shared_key.shared_secret_as_hex()
     return shared_key.shared_secret_as_hex()
 
-async def edit_iptc_info_dialog(file_path, iptc_data, on_save, *args):
-    """Dialog to edit IPTC metadata with delete functionality for each field.
+async def edit_metadata_dialog(file_path, metadata_list, on_save, *args):
+    """Dialog to edit metadata with delete functionality for each field.
     
     Args:
         file_path: Path to the image file
-        iptc_data: Dictionary containing the IPTC metadata
+        metadata_list: List of dictionaries containing the metadata
     """
-    def get_field_value(metadata, field_name):
-        """Get a field value from the metadata dictionary."""
-        # Map common IPTC field names to ExifTool tags
-        field_map = {
-            'Object Name': 'IPTC:ObjectName',
-            'Caption/Abstract': 'IPTC:Caption-Abstract',
-            'Keywords': 'IPTC:Keywords',
-            'By-line': 'IPTC:By-line',
-            'CopyrightNotice': 'IPTC:CopyrightNotice',
-            'Credit': 'IPTC:Credit',
-            'City': 'IPTC:City',
-            'Province-State': 'IPTC:Province-State',
-            'Country-PrimaryLocationName': 'IPTC:Country-PrimaryLocationName',
-            'Headline': 'IPTC:Headline',
-            'Source': 'IPTC:Source',
-            'SpecialInstructions': 'IPTC:SpecialInstructions',
-            'DateCreated': 'IPTC:DateCreated',
-            'TimeCreated': 'IPTC:TimeCreated',
-            'By-lineTitle': 'IPTC:By-lineTitle',
-            'Sub-location': 'IPTC:Sub-location',
-            'Country-PrimaryLocationCode': 'IPTC:Country-PrimaryLocationCode',
-            'OriginalTransmissionReference': 'IPTC:OriginalTransmissionReference',
-            'CreditLine': 'IPTC:CreditLine',
-            'Writer/Editor': 'IPTC:Writer-Editor'
-        }
-        
-        exif_field = field_map.get(field_name, f'IPTC:{field_name.replace(" ", "")}')
-        return metadata.get(exif_field, '')
+    if not metadata_list or not isinstance(metadata_list, list) or not metadata_list[0]:
+        ui.notify('No metadata found', type='warning')
+        return
 
-    def save_metadata(metadata, file_path):
-        """Save metadata back to the file using exiftool."""
+    metadata = metadata_list[0]  # Get the first (and usually only) metadata dictionary
+    metadata_changes = metadata_list[0].copy()
+
+    def get_field_icon(field_name):
+        """Return an appropriate icon based on the field name prefix."""
+        if field_name.startswith('XMP:'):
+            return 'code'
+        elif field_name.startswith('IPTC:'):
+            return 'photo_library'
+        elif field_name.startswith('EXIF:'):
+            return 'camera_alt'
+        elif field_name.startswith('File:'):
+            return 'insert_drive_file'
+        elif field_name.startswith('Composite:'):
+            return 'filter_hdr'
+        return 'text_fields'
+
+    def get_input_type(field_name, value):
+        """Determine the appropriate input type based on field name and value."""
+        if isinstance(value, bool):
+            return 'toggle'
+        elif isinstance(value, (int, float)):
+            return 'number'
+        elif isinstance(value, list):
+            return 'textarea'
+        elif any(ts in field_name.lower() for ts in ['date', 'time']):
+            return 'date' if 'date' in field_name.lower() else 'time'
+        return 'text'
+
+    async def delete_field(field_name, card_container):
+        """Delete a field from the metadata."""
+        if field_name in metadata:
+            del metadata[field_name]
+            if field_name in metadata_changes:
+                del metadata_changes[field_name]
+            card_container.clear()
+            ui.notify(f'Deleted field: {field_name}')
+
+    with ui.dialog() as dialog, ui.card().classes('w-full max-w-4xl max-h-[90vh]'):
+        ui.label('Edit Metadata').classes('text-xl font-bold mb-4')
+        
+        with ui.scroll_area().classes('w-full h-[70vh] pr-4'):
+            with ui.column().classes('w-full gap-4'):
+                for field_name, value in sorted(metadata.items()):
+                    # Skip SourceFile as it's not editable
+                    if field_name == 'SourceFile':
+                        continue
+                        
+                    with ui.card().classes('w-full relative group') as card:
+                        with ui.row().classes('w-full items-center gap-2'):
+                            # Field icon
+                            ui.icon(get_field_icon(field_name)).classes('text-gray-500')
+                            
+                            # Field name and input
+                            with ui.column().classes('flex-1 gap-1'):
+                                ui.label(field_name).classes('text-sm font-medium text-gray-600')
+                                
+                                # Handle different input types
+                                input_type = get_input_type(field_name, value)
+                                if input_type == 'toggle':
+                                    ui.switch(value=bool(value)).bind_value(metadata_changes, field_name)
+                                elif input_type == 'number':
+                                    ui.number(
+                                        value=float(value) if value is not None else 0,
+                                        on_change=lambda e, fn=field_name: metadata_changes.update({fn: e.value})
+                                    ).classes('w-full')
+                                elif input_type == 'textarea':
+                                    text_value = '\n'.join(str(v) for v in value) if isinstance(value, list) else str(value)
+                                    ui.textarea(
+                                        value=text_value,
+                                        on_change=lambda e, fn=field_name: metadata_changes.update({fn: e.value.split('\n') if '\n' in e.value else e.value})
+                                    ).classes('w-full')
+                                else:
+                                    ui.input(
+                                        value=str(value) if value is not None else '',
+                                        on_change=lambda e, fn=field_name: metadata_changes.update({fn: e.value})
+                                    ).classes('w-full')
+                            
+                            # Delete button
+                            with ui.row().classes('absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity'):
+                                ui.button(icon='delete', on_click=lambda fn=field_name, c=card: delete_field(fn, c)) \
+                                    .props('flat dense color=negative')
+        
+        # Action buttons
+        with ui.row().classes('w-full justify-end gap-2 mt-4'):
+            new_args = list(args)
+            new_args.append(metadata_changes)
+            ui.button('Cancel', on_click=dialog.close).props('flat')
+            ui.button('Save', on_click=lambda: on_save(*new_args)).props('flat color=primary')
+
+    async def save_metadata():
+        """Save the modified metadata back to the file."""
         try:
             with exiftool.ExifTool() as et:
-                # Prepare the arguments for exiftool
                 args = []
-                for key, value in metadata.items():
-                    if value:  # Only include non-empty values
-                        args.extend([f'-{key}={value}'])
-                    else:
-                        args.extend([f'-{key}='])  # Empty value to clear the field
+                for field, value in metadata_changes.items():
+                    if field in metadata and metadata[field] == value:
+                        continue  # Skip unchanged fields
+                    args.extend([f'-{field}={value}'])
                 
                 if args:
                     args.append(file_path)
                     et.execute(*args)
                 
                 ui.notify('Metadata saved successfully', type='positive')
-                return True
+                dialog.close()
+                if on_save:
+                    await on_save(*args)
         except Exception as e:
             ui.notify(f'Error saving metadata: {str(e)}', type='negative')
-            return False
 
-    async def delete_field(metadata, field_name, value_container):
-        """Show a confirmation dialog before deleting the field."""
-        with ui.dialog() as confirm_dialog, ui.card():
-            ui.label(f'Delete field "{field_name}"?').classes('text-lg font-medium')
-            with ui.row():
-                ui.button('Cancel', on_click=confirm_dialog.close).props('flat')
-                ui.button('Delete', on_click=lambda: [
-                    metadata.pop(field_name, None),
-                    value_container.set_visibility(False),
-                    confirm_dialog.close(),
-                    ui.notify(f'Deleted field: {field_name}')
-                ]).props('flat color=negative')
-        await confirm_dialog
-
-    def create_field_ui(metadata, field_name, config, iptc_data):
-        """Create UI elements for a single field."""
-        field_value = metadata.get(field_name, '')
-        bind_field_value = iptc_data.get_storage_field(field_name)
-        print(bind_field_value)
-
-        with ui.row().classes('w-full items-start gap-2 group'):
-            ui.icon(config.get('icon', 'text_fields')).classes('text-gray-500 mt-2')
-            with ui.column().classes('flex-1'):
-                label = config.get('label', field_name.replace('_', ' ').title())
-                if 'hint' in config:
-                    label += f" ({config['hint']})"
-                ui.label(label).classes('text-sm font-medium')
-                
-                with ui.column().classes('w-full') as field_container:
-                    if config.get('type') == 'textarea':
-                        input_field = ui.textarea(
-                            label=config.get('label', field_name),
-                            value=field_value or '',
-                            on_change=lambda e, fn=field_name: metadata.update({fn: e.value})
-                        ).bind_value(app.storage.user, bind_field_value).classes('w-full')
-                    elif config.get('type') == 'list':
-                        input_field = ui.input(
-                            label=config.get('label', field_name),
-                            value=', '.join(field_value) if isinstance(field_value, list) else field_value or '',
-                            on_change=lambda e, fn=field_name: metadata.update({fn: e.value})
-                        ).bind_value(app.storage.user, bind_field_value).classes('w-full')
-                    else:
-                        input_field = ui.input(
-                            label=config.get('label', field_name),
-                            value=field_value or '',
-                            on_change=lambda e, fn=field_name: metadata.update({fn: e.value})
-                        ).bind_value(app.storage.user, bind_field_value).classes('w-full')
-                    
-                    ui.button(
-                        icon='delete', 
-                        on_click=lambda fn=field_name, c=field_container: delete_field(metadata, fn, c)
-                    ).props('flat dense') \
-                     .classes('opacity-0 group-hover:opacity-100 transition-opacity self-end')
-
-    # Read existing metadata using exiftool
-    try:
-        # Check if file is PNG to use -fast option
-        file_ext = os.path.splitext(file_path)[1].lower()
-        common_args = ['-fast'] if file_ext == '.png' else []
-        metadata_list = None
-        with exiftool.ExifToolHelper(common_args=common_args) as et:
-            # Get all metadata for the file
-            metadata_list = et.get_metadata(file_path)
-            print('-----------------------------------------------')
-            print(file_path)
-        
-            # Process the metadata to extract IPTC fields
-            iptc_metadata = {}
-            if metadata_list and metadata_list[0]:  # Check if we have metadata
-                # Get all valid IPTC fields from our configuration
-                valid_iptc_fields = set(IPTC_FIELD_CONFIG.keys())
-                
-                # Extract only the fields that exist in our IPTC_FIELD_CONFIG
-                for field in valid_iptc_fields:
-                    if field in metadata_list[0]:
-                        iptc_metadata[field] = metadata_list[0][field]
-                
-                # If we didn't find any IPTC fields, show a notification
-                if not iptc_metadata:
-                    ui.notify('No IPTC metadata found in the file. Creating new metadata structure.', type='info')
-            else:
-                ui.notify('No metadata found in the file. Creating new metadata structure.', type='info')
-                iptc_metadata = {}
-
-            # Now we can use iptc_metadata to populate the dialog UI
-            # The keys in iptc_metadata will match the field names in IPTC_FIELD_CONFIG
+    await dialog
     
-    except Exception as e:
-        ui.notify(f'Error reading metadata: {str(e)}', type='negative')
-        return None
-
-    with ui.dialog() as dialog:
-        with ui.card().classes('w-full max-w-2xl'):
-            ui.label('Edit IPTC Metadata').classes('text-xl font-bold mb-4')
-            
-            # Create a scrollable container for all the fields
-            with ui.scroll_area().classes('w-full max-h-[70vh] pr-4'):
-                with ui.column().classes('w-full gap-4'):
-                    # Standard IPTC fields we want to include
-                    standard_fields = [
-                        'IPTC:ObjectName', 'IPTC:Caption-Abstract', 'IPTC:Keywords', 'IPTC:By-line', 
-                        'IPTC:CopyrightNotice', 'IPTC:Credit', 'IPTC:City', 'IPTC:Province-State', 
-                        'IPTC:Country-PrimaryLocationName', 'IPTC:Headline', 'IPTC:Source', 
-                        'IPTC:SpecialInstructions', 'IPTC:DateCreated', 'IPTC:TimeCreated',
-                        'IPTC:By-lineTitle', 'IPTC:Sub-location', 'IPTC:Country-PrimaryLocationCode',
-                        'IPTC:OriginalTransmissionReference', 'IPTC:CreditLine', 'IPTC:Writer-Editor'
-                    ]
-                    
-                    # Get all existing IPTC fields from the metadata
-                    existing_fields = list(iptc_metadata.keys())
-                    
-                    # Combine standard fields with existing ones, removing duplicates
-                    all_fields = list(dict.fromkeys(standard_fields + existing_fields))
-                    
-                # Process each field in the filtered metadata
-                for field_name, field_value in iptc_metadata.items():
-                    try:
-                        # Get field config or use defaults
-                        field_key = field_name.replace('-', ' ').replace('_', ' ').lower()
-                        config = IPTC_FIELD_CONFIG.get(field_key, {
-                            'icon': 'text_fields',
-                            'label': ' '.join(word.capitalize() for word in field_key.split()),
-                            'type': 'text'
-                        })
-                        
-                        # Create the field UI
-                        create_field_ui(iptc_metadata, field_name, config, iptc_data)
-                            
-                    except Exception as e:
-                        print(f"Error processing field {field_name}: {str(e)}")
-                        continue
-                    
-                    # Add a button to add a custom field
-                    with ui.expansion('Add Custom Field').classes('w-full'):
-                        with ui.column().classes('w-full gap-2'):
-                            field_name = ui.input('Field Name', placeholder='e.g., IPTC:CustomField').classes('w-full')
-                            field_value = ui.input('Field Value', placeholder='Enter value').classes('w-full')
-                            
-                            def add_custom_field():
-                                name = field_name.value.strip()
-                                value = field_value.value.strip()
-                                if name and value:
-                                    if not name.startswith('IPTC:'):
-                                        name = f'IPTC:{name}'
-                                    iptc_metadata[name] = value
-                                    field_name.value = ''
-                                    field_value.value = ''
-                                    ui.notify(f'Added field: {name}')
-                                    # Refresh the dialog to show the new field
-                                    dialog.close()
-                                    edit_iptc_info_dialog(file_path, iptc_metadata)
-                                else:
-                                    ui.notify('Please enter both field name and value', type='warning')
-                            
-                            ui.button('Add Field', on_click=add_custom_field).classes('self-end')
-            
-            # Add Save and Cancel buttons
-            # Action buttons
-            new_args = list(args)
-            new_args.append(iptc_data)
-            with ui.row().classes('w-full justify-end gap-2 mt-4'):
-                ui.button('Cancel', on_click=dialog.close).props('flat')
-                ui.button('Save', on_click=lambda: [
-                    iptc_data.update_from_storage(),  # Save the changes
-                    on_save(*args),
-                    dialog.close()
-                ]).props('flat').classes('bg-primary text-white')
-
-    dialog.open()
-    return dialog
-
 
 def edit_xmp_info_dialog(file_path: str, xmp_properties: dict):
     """Open a dialog to edit XMP metadata using exiv2.

@@ -12,12 +12,16 @@ import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
 from stellar_sdk import Keypair
 import json
-from dialogs import iptc_dialog, edit_iptc_info_dialog, edit_xmp_info_dialog, cipher_dialog, aposematic_dialog, assign_iptc_dialog, process_dialog
+from dialogs import edit_metadata_dialog, iptc_dialog, edit_xmp_info_dialog, cipher_dialog, aposematic_dialog, assign_iptc_dialog, process_dialog
 from metadata import IPTC
-from img_edit import new_watermarked_img, new_enciphered_img, new_deciphered_img, new_iptc_img, WATERMARK_POSITIONS
+from img_edit import new_watermarked_img, new_enciphered_img, new_deciphered_img, clear_img_metadata, new_iptc_img, get_iptc_metadata, WATERMARK_POSITIONS
 from aiposematic import new_aposematic_img, recover_aposematic_img, SCRAMBLE_MODE
 from iptcinfo3 import IPTCInfo
 import exiv2
+import shutil
+import tempfile
+import os
+
 
 _INITIALIZED = False
 
@@ -424,8 +428,9 @@ async def edit_iptc_info(hash_value):
     img_path = app.storage.user[hash_value]['path']
     img_name = app.storage.user[hash_value]['name']
     try:
-        # Just pass the IPTCInfo object directly - it's already loaded and ready
-        await edit_iptc_info_dialog(img_path, iptc_data, process_iptc_info, img_name, img_path, hash_value, iptc_data)
+        metadata = await get_iptc_metadata(img_path)
+        
+        await edit_metadata_dialog(img_path, metadata, process_iptc_info, img_name, img_path, hash_value)
         
         print('gets here')
         # new_hash_value = ipfs_add(img_path)
@@ -441,27 +446,54 @@ async def edit_iptc_info(hash_value):
         traceback.print_exc()
 
 async def process_iptc_info(img_name, img_path, hash_value, iptc_data):
-    new_img_path = await new_iptc_img(img_name, img_path, iptc_data)
-    ipfs_hash = ipfs_add(new_img_path)
-    print(ipfs_hash)
-    if ipfs_hash != hash_value:
-        # Get the current list of hashes
-        processed_hashes = app.storage.user.get('processed_img_hashes', [])
-        print(processed_hashes)
+    try:
+        # Create a persistent temp directory
+        operation_dir = tempfile.mkdtemp()
+        # Add to global tmp_files list for cleanup on exit
+        app.storage.user.setdefault('tmp_files', []).append(operation_dir)
+        print(f"Operation directory: {operation_dir}")
         
-        # Find the index of the old hash if it exists
         try:
-            index = processed_hashes.index(hash_value)
-            # Replace the old hash with the new one at the same position
-            processed_hashes[index] = ipfs_hash
-            app.storage.user['processed_img_hashes'] = processed_hashes
-        except ValueError:
-            # If hash not found, just append it
-            processed_hashes.append(ipfs_hash)
-            app.storage.user['processed_img_hashes'] = processed_hashes
-        ui.notify(f'Edited {ipfs_hash}')
-        render_gallery()
-    return ipfs_hash
+            # Clear metadata first
+            new_img_path = await clear_img_metadata(img_name, img_path)
+            print(f"New image path after clearing metadata: {new_img_path}")
+            
+            # Process with new IPTC data
+            final_path = await new_iptc_img(img_name, new_img_path, iptc_data)
+            print(f"Final path after IPTC processing: {final_path}")
+            
+            # Get the IPFS hash of the final image
+            ipfs_hash = ipfs_add(final_path)
+            app.storage.user['tmp_files'].append(final_path)
+            
+            # Update the UI and storage
+            if ipfs_hash and ipfs_hash != hash_value:
+                processed_hashes = app.storage.user.get('processed_img_hashes', [])
+                print(f"processed_hashes: {processed_hashes}")
+                
+                try:
+                    index = processed_hashes.index(hash_value)
+                    processed_hashes[index] = ipfs_hash
+                except ValueError:
+                    processed_hashes.append(ipfs_hash)
+                app.storage.user['processed_img_hashes'] = processed_hashes
+                
+                ui.notify(f'Edited {ipfs_hash}')
+                render_gallery()
+            
+            return ipfs_hash, final_path  # Return both the hash and the path
+            
+        except Exception as e:
+            # Clean up our temp directory on error
+            if os.path.exists(operation_dir):
+                shutil.rmtree(operation_dir)
+                if operation_dir in app.storage.user.get('tmp_files', []):
+                    app.storage.user['tmp_files'].remove(operation_dir)
+            ui.notify(f'Error processing image: {str(e)}', type='negative')
+            raise
+    except Exception as e:
+        ui.notify(f'Error in process_iptc_info: {str(e)}', type='negative')
+        raise
 
 async def process_watermarking():
     use_watermark = app.storage.user.get('use_watermark', False)

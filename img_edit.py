@@ -227,6 +227,59 @@ def iptc_delete_field(iptc_data, field_name, value_container):
         if value_container:
             value_container.visible = False
 
+async def clear_img_metadata(file_name, base_img_path):
+    """Create a copy of the image with all metadata removed.
+    
+    Args:
+        file_name: The name of the output file
+        base_img_path: Path to the source image file
+        
+    Returns:
+        str: Path to the new image file with all metadata removed
+    """
+    try:
+        # Create a temporary directory that won't be automatically deleted
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create output file path with the same extension as input
+            base_name = Path(file_name).stem
+            ext = Path(base_img_path).suffix
+            output_path = os.path.join(temp_dir, f"{base_name}_cleaned{ext}")
+            
+            print(f"Clearing metadata - Source: {base_img_path}")
+            print(f"Clearing metadata - Output: {output_path}")
+            
+            # Ensure the source file exists
+            if not os.path.exists(base_img_path):
+                raise FileNotFoundError(f"Source file not found: {base_img_path}")
+            
+            # Ensure the output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Use exiftool to copy the image without metadata
+            with exiftool.ExifTool() as et:
+                # -all= clears all metadata
+                result = et.execute(
+                    '-all=',  # Remove all metadata
+                    '-o', output_path,  # Output file
+                    base_img_path  # Input file
+                )
+                
+                # Verify the file was created
+                if not os.path.exists(output_path):
+                    raise Exception(f"Output file was not created. ExifTool output: {result}")
+                
+                print(f"Metadata cleared successfully: {output_path}")
+                return output_path
+                
+        except Exception as e:
+            # Clean up the temp directory if something went wrong
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise Exception(f"Error in clear_img_metadata: {str(e)}")
+            
+    except Exception as e:
+        raise Exception(f"Error clearing image metadata: {str(e)}")
+
 async def new_iptc_img(file_name, base_img_path, iptc_data):
     """
     Create a new image with updated IPTC metadata using ExifTool.
@@ -239,78 +292,169 @@ async def new_iptc_img(file_name, base_img_path, iptc_data):
     Returns:
         str: Path to the processed image with updated metadata
     """
-    
-    # Create output file path with original extension
-    base_name = Path(file_name).stem
-    ext = Path(file_name).suffix.lower()
-    temp_dir = tempfile.gettempdir()
-    temp_path = os.path.join(temp_dir, f"processed_{base_name}{ext}")
-    
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-    
-    # Convert iptc_data to dictionary
-    iptc_dict = iptc_data.to_dict() if hasattr(iptc_data, 'to_dict') else dict(iptc_data)
-    
-    # Map field names to ExifTool tags
-    field_to_tag = {
-        'Object Name': 'IPTC:ObjectName',
-        'Caption/Abstract': 'IPTC:Caption-Abstract',
-        'Keywords': 'IPTC:Keywords',
-        'Credit Line': 'IPTC:Credit',
-        'Copyright Notice': 'IPTC:CopyrightNotice',
-        'Byline': 'IPTC:By-line',
-        'City': 'IPTC:City',
-        'Country': 'IPTC:Country-PrimaryLocationName',
-        'Destination': 'IPTC:Destination',
-        'Data Mining': 'IPTC:SpecialInstructions'
-    }
-    
+    temp_dir = None
     try:
-        # First, copy the original file to preserve all other metadata
+        # Get the base name without extension and the extension
+        base_name = Path(file_name).stem
+        ext = Path(file_name).suffix.lower()
+        
+        # Create a temporary directory that won't be automatically deleted
+        temp_dir = tempfile.mkdtemp()
+        
+        # Create the output path with the correct extension
+        output_filename = f"processed_{base_name}{ext}"
+        temp_path = os.path.join(temp_dir, output_filename)
+        
+        print(f"Source path: {base_img_path}")
+        print(f"Temp path: {temp_path}")
+        
+        # Ensure the source file exists
+        if not os.path.exists(base_img_path):
+            raise FileNotFoundError(f"Source file not found: {base_img_path}")
+        
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+        
+        # First, copy the source file to the temp location
         shutil.copy2(base_img_path, temp_path)
         
-        # Prepare the metadata dictionary for ExifTool
+        # Verify the file was copied
+        if not os.path.exists(temp_path):
+            raise FileNotFoundError(f"Failed to copy file to {temp_path}")
+        
+        # Convert iptc_data to dictionary
+        iptc_dict = iptc_data.to_dict() if hasattr(iptc_data, 'to_dict') else dict(iptc_data)
+        
+        # Create a dictionary of EXIF data to write
         exif_dict = {}
-        for field_name, value in iptc_dict.items():
-            if not value or field_name not in field_to_tag:
-                continue
-                
-            tag_name = field_to_tag[field_name]
-            if field_name == 'keywords':
-                # Handle keywords as a list
-                if isinstance(value, str):
-                    keywords = [k.strip() for k in value.split(',') if k.strip()]
-                    exif_dict[tag_name] = keywords
-                elif isinstance(value, (list, tuple)):
-                    exif_dict[tag_name] = [str(v).strip() for v in value if str(v).strip()]
-            else:
-                exif_dict[tag_name] = str(value)
+        for field, value in iptc_dict.items():
+            if value:  # Only include non-empty values
+                if isinstance(value, list):
+                    exif_dict[field] = [str(v).strip() for v in value if str(v).strip()]
+                else:
+                    exif_dict[field] = str(value).strip()
         
         # Use ExifTool to write the metadata
-        with exiftool.ExifTool() as et:
-            # Convert the dictionary to the format ExifTool expects
-            tags = []
+        with exiftool.ExifToolHelper() as et:
+            # Convert lists to pipe-separated strings as ExifTool expects
+            tags_to_write = {}
             for tag, value in exif_dict.items():
                 if isinstance(value, list):
-                    for v in value:
-                        tags.append(f'-{tag}={v}')
+                    # Join list items with pipe (|) which is the standard separator for multi-value tags
+                    tags_to_write[tag] = '|'.join(str(v) for v in value) if value else ''
                 else:
-                    tags.append(f'-{tag}={value}')
+                    tags_to_write[tag] = str(value) if value is not None else ''
+            
+            # Write all tags at once
+            print(f"Writing metadata to {temp_path}")
+            print(f"Tags to write: {tags_to_write}")
+            
+            # Use execute to write the tags
+            params = []
+            for tag, value in tags_to_write.items():
+                params.extend([f"-{tag}={value}"])
+            
+            # Add the target file
+            params.append(temp_path)
             
             # Execute the command
-            et.execute(*tags, temp_path)
-        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-        print(temp_path)
-        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            result = et.execute(*params)
+            print(f"ExifTool result: {result}")
+
+            metadata = await get_img_metadata(temp_path)
+            print(f"Metadata after writing: {metadata}!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        
+        # Verify the output file was created
+        if not os.path.exists(temp_path):
+            raise Exception("Failed to create output file with metadata")
+        
+        print(f"Successfully created file at {temp_path}")
         return temp_path
         
     except Exception as e:
+        # Clean up the temp directory if something went wrong
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except:
+                pass
+        print(f"Error in new_iptc_img: {str(e)}")
+        raise Exception(f"Error processing image metadata with ExifTool: {str(e)}")
+            
+    except Exception as e:
         # Clean up the temp file if it was created
-        if os.path.exists(temp_path):
+        if 'temp_path' in locals() and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
-            except Exception as cleanup_error:
-                print(f"Error cleaning up temporary file: {cleanup_error}")
+            except:
+                pass
+        print(f"Error in new_iptc_img: {str(e)}")
         raise Exception(f"Error processing image metadata with ExifTool: {str(e)}")
+            
+    except Exception as e:
+        # Clean up the temp file if it was created
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+        print(f"Error in new_iptc_img: {str(e)}")
+        raise Exception(f"Error processing image metadata with ExifTool: {str(e)}")
+
+async def get_img_metadata(file_path):
+    try:
+        print(f"Attempting to read metadata from: {file_path}")
+        print(f"File exists: {os.path.exists(file_path)}")
+        print(f"File size: {os.path.getsize(file_path) if os.path.exists(file_path) else 0} bytes")
+        
+        with exiftool.ExifToolHelper() as et:
+            print("ExifToolHelper created, getting metadata...")
+            metadata = et.get_metadata(file_path)
+            print(f"Successfully read metadata: {bool(metadata)}")
+            return metadata
+    except Exception as e:
+        print(f"Error details - Type: {type(e).__name__}, Message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"Error getting metadata with ExifTool: {str(e)}")
+
+async def get_iptc_metadata(file_path):
+    try:
+        metadata_list = await get_img_metadata(file_path)
+        if not metadata_list or not isinstance(metadata_list, list):
+            return [{}]
+        # Return a list containing a single filtered dictionary
+        return [{
+            k: v for k, v in metadata_list[0].items()
+            if k.startswith(('IPTC:', 'Photoshop:IPTC'))
+        }] if metadata_list else [{}]
+    except Exception as e:
+        raise Exception(f"Error getting IPTC metadata: {str(e)}")
+
+async def get_xmp_metadata(file_path):
+    try:
+        metadata_list = await get_img_metadata(file_path)
+        if not metadata_list or not isinstance(metadata_list, list):
+            return [{}]
+        # Return a list containing a single filtered dictionary
+        return [{
+            k: v for k, v in metadata_list[0].items()
+            if k.startswith(('XMP:', 'XMP-xmp:'))
+        }] if metadata_list else [{}]
+    except Exception as e:
+        raise Exception(f"Error getting XMP metadata: {str(e)}")
+
+async def get_exif_metadata(file_path):
+    try:
+        metadata_list = await get_img_metadata(file_path)
+        if not metadata_list or not isinstance(metadata_list, list):
+            return [{}]
+        # Return a list containing a single filtered dictionary
+        return [{
+            k: v for k, v in metadata_list[0].items()
+            if k.startswith(('EXIF:', 'IFD0:'))
+        }] if metadata_list else [{}]
+    except Exception as e:
+        raise Exception(f"Error getting EXIF metadata with ExifTool: {str(e)}")
+    
     
