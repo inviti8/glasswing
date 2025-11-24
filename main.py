@@ -7,14 +7,16 @@ import base58
 import tempfile
 import os
 from PIL import Image
+import PIL.Image
+from PIL.Image import UnidentifiedImageError
 import requests
 import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
 from stellar_sdk import Keypair
 import json
-from dialogs import edit_metadata_dialog, iptc_dialog, edit_xmp_info_dialog, cipher_dialog, aposematic_dialog, assign_iptc_dialog, process_dialog
+from dialogs import *
 from metadata import IPTC
-from img_edit import new_watermarked_img, new_enciphered_img, new_deciphered_img, clear_img_metadata, new_iptc_img, get_iptc_metadata, WATERMARK_POSITIONS
+from img_edit import *
 from aiposematic import new_aposematic_img, recover_aposematic_img, SCRAMBLE_MODE
 from iptcinfo3 import IPTCInfo
 import exiv2
@@ -307,10 +309,10 @@ def is_imagemagick_available():
 
 def is_image(file_path):
     try:
-        with Image.open(file_path) as img:
-            img.verify()
-            return True
-    except (IOError, OSError, Image.UnidentifiedImageError):
+        with PIL.Image.open(file_path) as img:
+            img.verify()  # Verify that it is an image
+        return True
+    except (IOError, OSError, UnidentifiedImageError):
         return False
 
 def filter_imgs(files):
@@ -327,8 +329,13 @@ async def choose_img():
     render_gallery()
 
 async def remove_img(hash_value):
+    idex = app.storage.user.get('img_state', 1)
+    state = img_states[idex]
     ipfs_remove(hash_value)
-    app.storage.user.get('raw_img_hashes', []).remove(hash_value)
+    try:
+        app.storage.user.get(f'{state}_img_hashes', []).remove(hash_value)
+    except ValueError:
+        pass  # Hash not found, that's okay
     ipfs_gc()
     ui.notify(f'Removed {hash_value}')
     render_gallery()
@@ -343,6 +350,16 @@ def remove_tmp_files():
             os.remove(file)
         app.storage.user['tmp_files'] = []
     persistent_save_data()
+
+def remove_img_by_name_from_storage(img_name, storage_key):
+    if storage_key in app.storage.user:
+        for hash_value in app.storage.user[storage_key]:
+            img_path = app.storage.user[hash_value]['path']
+            img_filename = app.storage.user[hash_value]['name']
+            if img_name == img_filename:
+                app.storage.user[storage_key].remove(hash_value)
+                persistent_save_data()
+                break        
 
 async def choose_watermark(watermark_container):
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
@@ -363,61 +380,54 @@ async def choose_file():
     # tabs.set_value('IMAGES')
     return files
 
+async def delete_all_metadata(hash_value):
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    try:
+        new_img_path = await clear_img_metadata(img_name, img_path)
+        # Get the IPFS hash of the final image
+        ipfs_hash = ipfs_add(new_img_path)
+        new_img_name = app.storage.user[ipfs_hash]['name']
+        idex = app.storage.user.get('img_state', 1)
+        state = img_states[idex]
+
+        app.storage.user['tmp_files'].append(new_img_path)
+        ui.notify(f'Deleted all metadata from {ipfs_hash}')
+        remove_img_by_name_from_storage(img_name, f'{state}_img_hashes')
+        processed_hashes = app.storage.user.get(f'{state}_img_hashes', [])
+            
+        try:
+            index = processed_hashes.index(hash_value)
+            processed_hashes[index] = ipfs_hash
+        except ValueError:
+            processed_hashes.append(ipfs_hash)
+
+        app.storage.user[f'{state}_img_hashes'] = processed_hashe
+        # Optionally refresh the gallery to show the updated file
+        render_gallery()
+    except Exception as e:
+        ui.notify(f"Error deleting metadata: {str(e)}", type='negative')
+
+async def edit_exif_info(hash_value):
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    try:
+        metadata = await get_exif_metadata(img_path)
+        await edit_metadata_dialog(img_path, metadata, process_metadata, img_name, img_path, hash_value)
+        
+    except Exception as e:
+        ui.notify(f"Error loading XMP data: {str(e)}", type='negative')
+        print(f"Error in edit_xmp_info: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 async def edit_xmp_info(hash_value):
     img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
     try:
-        # Open the image and read XMP data using exiv2
-        image = exiv2.ImageFactory.open(img_path)
-        image.readMetadata()
+        metadata = await get_xmp_metadata(img_path)
+        await edit_metadata_dialog(img_path, metadata, process_metadata, img_name, img_path, hash_value)
         
-        # Get XMP data
-        xmp_data = image.xmpData()
-        xmp_properties = {}
-        
-        # Print all XMP keys and values
-        print("XMP Data:")
-        for datum in xmp_data:
-            try:
-                key = datum.key()
-                value = datum.toString()
-                type_name = datum.typeName()
-                print(f"{key} ({type_name}): {value}")
-                
-                # Store in properties for the dialog
-                xmp_properties[key] = {
-                    'key': key,
-                    'value': value,
-                    'type': type_name,
-                    'title': key.split('.')[-1]
-                }
-                
-                # Try to get more detailed description if available
-                try:
-                    tag_info = exiv2.XmpProperties.propertyList(key)
-                    if tag_info and hasattr(tag_info[0], 'title') and tag_info[0].title:
-                        xmp_properties[key]['title'] = tag_info[0].title
-                    if tag_info and hasattr(tag_info[0], 'desc') and tag_info[0].desc:
-                        xmp_properties[key]['description'] = tag_info[0].desc
-                except Exception as e:
-                    print(f"Couldn't get tag info for {key}: {str(e)}")
-                    
-            except Exception as e:
-                print(f"Error processing XMP property {datum.key() if hasattr(datum, 'key') else 'unknown'}: {str(e)}")
-        
-        # Open the dialog to edit XMP data
-        await edit_xmp_info_dialog(img_path, xmp_properties)
-        
-        # Save changes if any were made
-        if image.xmpData():
-            image.writeMetadata()
-            
-        new_hash_value = ipfs_add(img_path)
-        if new_hash_value != hash_value:
-            await remove_img(hash_value)
-            app.storage.user.get('raw_img_hashes', []).append(new_hash_value)
-            ui.notify(f'XMP metadata updated for {new_hash_value}')
-            render_gallery()
-            
     except Exception as e:
         ui.notify(f"Error loading XMP data: {str(e)}", type='negative')
         print(f"Error in edit_xmp_info: {str(e)}")
@@ -429,7 +439,7 @@ async def edit_iptc_info(hash_value):
     img_name = app.storage.user[hash_value]['name']
     try:
         metadata = await get_iptc_metadata(img_path)
-        await edit_metadata_dialog(img_path, metadata, process_iptc_info, img_name, img_path, hash_value)
+        await edit_metadata_dialog(img_path, metadata, process_metadata, img_name, img_path, hash_value)
         
     except Exception as e:
         ui.notify(f"Error loading IPTC data: {str(e)}", type='negative')
@@ -437,15 +447,23 @@ async def edit_iptc_info(hash_value):
         import traceback
         traceback.print_exc()
 
-async def process_iptc_info(img_name, img_path, hash_value, iptc_data):
+async def edit_all_info(hash_value):
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
     try:
-        # Clear metadata first
-        # new_img_path = await clear_img_metadata(img_name, img_path)
-        # print(f"New image path after clearing metadata: {new_img_path}")
+        metadata = await get_img_metadata(img_path)
+        await edit_metadata_dialog(img_path, metadata, process_metadata, img_name, img_path, hash_value)
         
+    except Exception as e:
+        ui.notify(f"Error loading IPTC data: {str(e)}", type='negative')
+        print(f"Error in edit_iptc_info: {str(e)}")
+        import traceback
+        traceback.print_exc()       
+
+async def process_metadata(img_name, img_path, hash_value, metadata):
+    try:
         # Process with new IPTC data
-        final_path = await new_iptc_img(img_name, img_path, iptc_data)
-        print(f"Final path after IPTC processing: {final_path}")
+        final_path = await new_iptc_img(img_name, img_path, metadata)
             
         # Get the IPFS hash of the final image
         ipfs_hash = ipfs_add(final_path)
@@ -453,15 +471,23 @@ async def process_iptc_info(img_name, img_path, hash_value, iptc_data):
         
         # Update the UI and storage
         if ipfs_hash and ipfs_hash != hash_value:
-            processed_hashes = app.storage.user.get('processed_img_hashes', [])
-            print(f"processed_hashes: {processed_hashes}")
+            im_name = app.storage.user[ipfs_hash]['name']
+            idex = app.storage.user.get('img_state', 1)
+            state = img_states[idex]
+
+            if state == 'raw':
+                state = 'processed'
+
+            remove_img_by_name_from_storage(im_name, f'{state}_img_hashes')
+            processed_hashes = app.storage.user.get(f'{state}_img_hashes', [])
             
             try:
                 index = processed_hashes.index(hash_value)
                 processed_hashes[index] = ipfs_hash
             except ValueError:
                 processed_hashes.append(ipfs_hash)
-            app.storage.user['processed_img_hashes'] = processed_hashes
+
+            app.storage.user[f'{state}_img_hashes'] = processed_hashes
             
             ui.notify(f'Edited {ipfs_hash}')
             render_gallery()
@@ -555,7 +581,11 @@ async def process_iptc_metadata():
     for hash_value in app.storage.user.get('raw_img_hashes', []):
         img_path = app.storage.user[hash_value]['path']
         img_name = app.storage.user[hash_value]['name']
-        iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data)
+        print('---------------------------------------------------------------------')
+        print(f"IPTC Data: {iptc_data}")
+        print(f"Exif Dict: {iptc_data.to_exif_dict()}")
+        print('---------------------------------------------------------------------')
+        iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data.to_exif_dict())
         ipfs_hash = ipfs_add(iptc_img_path)
         app.storage.user.get('processed_img_hashes', []).append(ipfs_hash)
         ui.notify(f'Processed {hash_value}')
@@ -600,8 +630,11 @@ def render_gallery():
                                 ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative')
                         with ui.fab('data_object', direction='left', color='primary'):
                             if is_ipfs_running():
+                                ui.fab_action('edit', label='ALL', on_click=lambda h=hash_value: edit_all_info(h))
                                 ui.fab_action('edit', label='IPTC', on_click=lambda h=hash_value: edit_iptc_info(h))
                                 ui.fab_action('edit', label='XMP', on_click=lambda h=hash_value: edit_xmp_info(h))
+                                ui.fab_action('edit', label='EXIF', on_click=lambda h=hash_value: edit_exif_info(h))
+                                ui.fab_action('delete', label='ALL', on_click=lambda h=hash_value: remove_img(h), color='negative')
                 # Add some spacing between cards
                 ui.space().classes('h-4')
                 
