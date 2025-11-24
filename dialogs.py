@@ -160,65 +160,66 @@ def iptc_dialog(iptc_data, on_close):
             with ui.column().classes('w-full gap-4'):
                 # Creator/By-line
                 with ui.row().classes('w-full items-center'):
-                    ui.checkbox('Use Creator').bind_value(iptc_data, 'use_byline').classes('w-32')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_byline'):
-                        ui.input('Creator', value=iptc_data.byline).bind_value(iptc_data, 'byline').classes('w-full')
+                    ui.checkbox('Use Creator').bind_value(app.storage.user, 'iptc_data.use_byline').classes('w-32')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_byline'):
+                        ui.input('Creator', value=iptc_data.byline).bind_value(app.storage.user, 'iptc_data.byline').classes('w-full')
                 
                 # Object Name
                 with ui.row().classes('w-full items-center'):
-                    ui.checkbox('Use Object Name').bind_value(iptc_data, 'use_objectname').classes('w-32')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_objectname'):
-                        ui.input('Object Name', value=iptc_data.objectname).bind_value(iptc_data, 'objectname').classes('w-full')
+                    ui.checkbox('Use Object Name').bind_value(app.storage.user, 'iptc_data.use_objectname').classes('w-32')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_objectname'):
+                        ui.input('Object Name', value=iptc_data.objectname).bind_value(app.storage.user, 'iptc_data.objectname').classes('w-full')
                 
                 # Caption/Abstract
                 with ui.row().classes('w-full items-start'):
-                    ui.checkbox('Use Description').bind_value(iptc_data, 'use_caption_abstract').classes('w-32 pt-2')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_caption_abstract'):
-                        ui.textarea('Description', value=iptc_data.caption_abstract).bind_value(iptc_data, 'caption_abstract').classes('w-full')
+                    ui.checkbox('Use Description').bind_value(app.storage.user, 'iptc_data.use_caption_abstract').classes('w-32 pt-2')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_caption_abstract'):
+                        ui.textarea('Description', value=iptc_data.caption_abstract).bind_value(app.storage.user, 'iptc_data.caption_abstract').classes('w-full')
                 
                 # Keywords
                 with ui.row().classes('w-full items-start'):
-                    ui.checkbox('Use Keywords').bind_value(iptc_data, 'use_keywords').classes('w-32 pt-2')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_keywords'):
+                    ui.checkbox('Use Keywords').bind_value(app.storage.user, 'iptc_data.use_keywords').classes('w-32 pt-2')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_keywords'):
                         ui.textarea('Keywords (comma separated)', 
                                   value=', '.join(iptc_data.keywords_array())).classes('w-full')\
-                                  .on('blur', lambda e: setattr(iptc_data, 'keywords', e.sender.value))
+                                  .on('blur', lambda e: setattr(app.storage.user, 'iptc_data.keywords', e.sender.value.split(',')))\
+                                  .bind_value(app.storage.user, 'iptc_data.keywords')
                 
                 # Copyright
                 with ui.row().classes('w-full items-center'):
-                    ui.checkbox('Use Copyright').bind_value(iptc_data, 'use_copyright_notice').classes('w-32')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_copyright_notice'):
+                    ui.checkbox('Use Copyright').bind_value(app.storage.user, 'iptc_data.use_copyright_notice').classes('w-32')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_copyright_notice'):
                         ui.input('Copyright Notice', 
-                               value=iptc_data.copyright_notice).bind_value(iptc_data, 'copyright_notice').classes('w-full')
+                               value=iptc_data.copyright_notice).bind_value(app.storage.user, 'iptc_data.copyright_notice').classes('w-full')
                 
                 # Location
                 with ui.row().classes('w-full items-center'):
-                    ui.checkbox('Use Location').bind_value(iptc_data, 'use_city').classes('w-32')
-                    with ui.row().classes('flex-1 gap-2').bind_visibility(iptc_data, 'use_city'):
-                        ui.input('City', value=iptc_data.city).bind_value(iptc_data, 'city').classes('flex-1')
-                        ui.input('Country', value=iptc_data.country).bind_value(iptc_data, 'country').classes('flex-1')
+                    ui.checkbox('Use Location').bind_value(app.storage.user, 'iptc_data.use_city').classes('w-32')
+                    with ui.row().classes('flex-1 gap-2').bind_visibility(app.storage.user, 'iptc_data.use_city'):
+                        ui.input('City', value=iptc_data.city).bind_value(app.storage.user, 'iptc_data.city').classes('flex-1')
+                        ui.input('Country', value=iptc_data.country).bind_value(app.storage.user, 'iptc_data.country').classes('flex-1')
                 
                 # Data Mining
                 with ui.row().classes('w-full items-center'):
-                    ui.checkbox('Data Mining').bind_value(iptc_data, 'use_data_mining').classes('w-32')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_data_mining'):
+                    ui.checkbox('Data Mining').bind_value(app.storage.user, 'iptc_data.use_data_mining').classes('w-32')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_data_mining'):
                         ui.select(
                             label='Data Mining Restriction',
                             options=iptc_data.get_data_mining_options(),
                             value=iptc_data.data_mining
-                        ).bind_value(iptc_data, 'data_mining').classes('w-full')
+                        ).bind_value(app.storage.user, 'iptc_data.data_mining').classes('w-full')
                 
                 # Other Constraints
                 with ui.row().classes('w-full items-start'):
-                    ui.checkbox('Other Constraints').bind_value(iptc_data, 'use_other_constraints').classes('w-32 pt-2')
-                    with ui.column().classes('flex-1').bind_visibility(iptc_data, 'use_other_constraints'):
+                    ui.checkbox('Other Constraints').bind_value(app.storage.user, 'iptc_data.use_other_constraints').classes('w-32 pt-2')
+                    with ui.column().classes('flex-1').bind_visibility(app.storage.user, 'iptc_data.use_other_constraints'):
                         ui.textarea('Additional Constraints', 
-                                  value=iptc_data.other_constraints).bind_value(iptc_data, 'other_constraints').classes('w-full')
+                                  value=iptc_data.other_constraints).bind_value(app.storage.user, 'iptc_data.other_constraints').classes('w-full')
             
             # Action buttons
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
                 ui.button('Cancel', on_click=dialog.close).props('flat')
-                ui.button('Save', on_click=lambda: [iptc_data.init_storage(), dialog.submit(True)])\
+                ui.button('Save', on_click=lambda: [iptc_data.update_from_storage(), dialog.submit(True)])\
                     .props('flat color=primary')
     
     return dialog

@@ -576,15 +576,11 @@ async def process_deciphering():
     persistent_save_data()
     render_gallery()
 
-async def process_iptc_metadata():
+async def process_shared_iptc_metadata():
     app.storage.user.get('processed_img_hashes', []).clear()
     for hash_value in app.storage.user.get('raw_img_hashes', []):
         img_path = app.storage.user[hash_value]['path']
         img_name = app.storage.user[hash_value]['name']
-        print('---------------------------------------------------------------------')
-        print(f"IPTC Data: {iptc_data}")
-        print(f"Exif Dict: {iptc_data.to_exif_dict()}")
-        print('---------------------------------------------------------------------')
         iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data.to_exif_dict())
         ipfs_hash = ipfs_add(iptc_img_path)
         app.storage.user.get('processed_img_hashes', []).append(ipfs_hash)
@@ -674,7 +670,7 @@ def main_page():
             if is_ipfs_running():
                 ui.fab_action('add', on_click=choose_img)
                 ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
-                ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_iptc_metadata))
+                ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata))
                 ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
                 ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
                 ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
