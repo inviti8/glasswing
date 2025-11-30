@@ -319,7 +319,7 @@ def filter_imgs(files):
     return [file for file in files if is_image(file)]
 
 async def choose_img():
-    files = await choose_file()
+    files = await choose_files()
     imgs = filter_imgs(files)
     for img in imgs:
         ipfs_hash = ipfs_add(img)
@@ -375,10 +375,13 @@ async def choose_watermark(watermark_container):
     else:
         ui.notify(f'{file} is not an image')
 
-async def choose_file():
+async def choose_files():
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
-    # tabs.set_value('IMAGES')
     return files
+
+async def choose_file():
+    file = await app.native.main_window.create_file_dialog(allow_multiple=False)
+    return file
 
 async def delete_all_metadata(hash_value):
     img_path = app.storage.user[hash_value]['path']
@@ -588,6 +591,24 @@ async def process_shared_iptc_metadata():
     persistent_save_data()
     render_gallery()
 
+async def load_iptc_template():
+    try:
+        file_path = await choose_file()
+        if file_path:
+            with open(file_path[0], 'r') as f:
+                iptc_data = json.load(f)
+            app.storage.user['iptc_data'] = iptc_data
+            persistent_save_data()
+            ui.notify('IPTC Template loaded successfully')
+    except Exception as e:
+        ui.notify(f'Error loading IPTC template: {str(e)}', type='negative')
+
+def save_iptc_template():
+    try:
+        ui.download.content(json.dumps(iptc_data.to_dict()), 'iptc_template.json')
+    except Exception as e:
+        ui.notify(f'Error saving IPTC template: {str(e)}', type='negative')
+
 def render_state(hashes):
     idex = app.storage.user.get('img_state', 1)
     state = img_states[idex]
@@ -752,8 +773,13 @@ def main_page():
 
                             with ui.expansion('IPTC', icon='data_array').classes('w-full'):
                                 iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc').on_value_change(persistent_save_data)
-                                ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
-                                .bind_visibility_from(iptc_switch, 'value')
+                                with ui.row().classes('w-full items-center'):
+                                    ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
+                                    .bind_visibility_from(iptc_switch, 'value')
+                                with ui.row().classes('w-full items-center').bind_visibility_from(iptc_switch, 'value'):
+                                    ui.label('Template IPTC Fields').classes('text-sm text-gray-500')
+                                    ui.button('Load Template', icon='download', on_click=lambda: load_iptc_template()).props('flat')
+                                    ui.button('Save Template', icon='save', on_click=lambda: save_iptc_template()).props('flat')
                     
                     # Additional settings can be added here
                     with ui.card().classes('w-full'):
