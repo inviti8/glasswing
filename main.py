@@ -661,14 +661,14 @@ def render_gallery():
                     # FAB container positioned absolutely over the image
                     ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10')
                     with ui.row().classes('absolute top-2 right-2 z-10'):
-                        with ui.fab('edit', direction='left', color='primary'):
+                        with ui.fab('edit', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
                                 ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h))
                             if is_ipfs_running():
                                 ui.fab_action('article', on_click=lambda h=hash_value: edit_body_text(h))
                             if is_ipfs_running():
                                 ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative')
-                        with ui.fab('data_object', direction='left', color='primary'):
+                        with ui.fab('data_object', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
                                 ui.fab_action('edit', label='ALL', on_click=lambda h=hash_value: edit_all_info(h))
                                 ui.fab_action('edit', label='IPTC', on_click=lambda h=hash_value: edit_iptc_info(h))
@@ -1046,11 +1046,89 @@ def close_app():
 @ui.page('/')
 def main_page():
 
+    ui.add_css('''
+        :root {
+            --primary-color: #CD38B6;
+            --secondary-color: #FF6346;
+            --text-color: #EA8CDB;
+            --bg-color: #FFFFFF;
+            --card-bg: #CD38B6;
+            --border-color: #FFAD20;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary-color: #30222E;
+                --secondary-color: #443330;
+                --text-color: #AC8B85;
+                --bg-color: #121212;
+                --card-bg: #30222E;
+                --border-color: #7D625D;
+            }
+        }
+
+        /* Buttons */
+        .q-btn, .q-button-item, .q-button--standard, .q-button--fab {
+            background-color: var(--secondary-color) !important;
+            color: white !important;
+        }
+
+        /* Inputs and selects */
+        .q-field, .q-input, .q-select, .q-textarea {
+            color: var(--text-color) !important;
+        }
+        
+        .q-field__control, .q-field__native, .q-field__label {
+            color: var(--text-color) !important;
+        }
+
+        /* Tabs */
+        .q-tab {
+            color: var(--text-color) !important;
+        }
+        
+        .q-tab--active {
+            color: var(--primary-color) !important;
+        }
+
+        /* Custom gradient background */
+        .gradient-background {
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)) !important;
+            color: white !important; /* Override text color for better contrast */
+        }
+
+        @layer components {
+            body, .q-page, .q-drawer, .q-tab-panel{
+                background-color: var(--bg-color) !important;
+                color: var(--text-color) !important;
+            }
+            .bg-primary{
+                background-color: var(--primary-color) !important;
+                color: var(--text-color) !important;
+            }
+            .q-secondary-color, bg-secondary{
+                background-color: var(--secondary-color) !important;
+                color: var(--text-color) !important;
+            }
+
+            .q-focus-helper, .block{
+                color: var(--text-color) !important;
+            }
+
+            /* Cards and dialogs */
+            .q-card, .q-dialog, .q-menu, .q-tooltip {
+                background-color: var(--card-bg) !important;
+                color: var(--text-color) !important;
+                border: 1px solid var(--border-color) !important;
+            }
+        }
+    ''')
+
     init()
 
-    with ui.header().classes('row items-center justify-between p-0') as header:
+    with ui.header().classes('row items-center justify-between p-0 gradient-background') as header:
         with ui.row().classes('w-full justify-end'):
-            ui.button(icon='close', on_click=close_app).classes('outline').props('fab')
+            ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('fab')
         with ui.row().classes('w-full items-center'):
             with ui.tabs() as tabs:
                 ui.tab('IMAGES', icon="image")
@@ -1058,9 +1136,9 @@ def main_page():
                 ui.tab('SETTINGS', icon="settings")
             state_container = ui.row().classes('w-full items-center')
 
-    with ui.footer() as footer:
+    with ui.footer().classes('gradient-background') as footer:
         
-        with ui.fab('image'):
+        with ui.fab('image').classes('q-secondary-color'):
             if is_ipfs_running():
                 ui.fab_action('add', on_click=choose_img)
                 ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
