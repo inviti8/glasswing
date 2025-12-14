@@ -461,7 +461,27 @@ async def edit_all_info(hash_value):
         ui.notify(f"Error loading IPTC data: {str(e)}", type='negative')
         print(f"Error in edit_iptc_info: {str(e)}")
         import traceback
-        traceback.print_exc()       
+        traceback.print_exc()
+
+async def process_body_text(img_name, img_path, hash_value, txt, data_type):
+    # Create a new dictionary with just the fields we want to update
+    metadata_changes = {}
+    
+    if data_type == 'IPTC':
+        metadata_changes['IPTC:Caption-Abstract'] = txt
+    elif data_type == 'XMP':
+        metadata_changes['XMP:Description'] = txt
+    
+    print(f"Updating {data_type} with changes: {metadata_changes}")
+    
+    await process_metadata(img_name, img_path, hash_value, metadata_changes)
+    
+
+async def edit_body_text(hash_value):
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    await add_body_text_dialog(img_name, img_path, hash_value, process_body_text)
+    
 
 async def process_metadata(img_name, img_path, hash_value, metadata):
     try:
@@ -643,6 +663,8 @@ def render_gallery():
                         with ui.fab('edit', direction='left', color='primary'):
                             if is_ipfs_running():
                                 ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h))
+                            if is_ipfs_running():
+                                ui.fab_action('article', on_click=lambda h=hash_value: edit_body_text(h))
                             if is_ipfs_running():
                                 ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative')
                         with ui.fab('data_object', direction='left', color='primary'):

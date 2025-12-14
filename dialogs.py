@@ -290,4 +290,19 @@ async def process_dialog(process_func: Union[Callable, Callable[..., Awaitable]]
     # Start the process after the dialog is shown
     dialog.on('show', run_process)
     dialog.open()
-    return dialog
+    return 
+    
+async def add_body_text_dialog(img_name, img_path, hash_value, on_save):
+    selected_type = ui.select(['IPTC', 'XMP'], value='IPTC').classes('w-full')
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            ui.label('Metadata Type')
+            selected_type = ui.select(['IPTC', 'XMP'], value='IPTC').classes('w-full')
+            ui.label('Body Text')
+            txt = ui.textarea(value='').classes('w-full')
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+                ui.button('Save', on_click=lambda: on_save(img_name, img_path, hash_value, txt.value, selected_type.value)).props('flat color=primary')
+
+    dialog.open()
+    return 
