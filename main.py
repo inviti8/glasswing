@@ -23,7 +23,8 @@ import exiv2
 import shutil
 import tempfile
 import os
-
+from datetime import datetime
+from pathlib import Path
 
 _INITIALIZED = False
 
@@ -683,6 +684,356 @@ def render_watermark(watermark_container):
         with watermark_container:
             ui.image(f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{app.storage.user.get("watermark", "")}').classes('w-full')
 
+
+def safe_get(metadata, key, default=''):
+    """Safely get a value from metadata with a default fallback."""
+    return metadata.get(key, default)
+
+def parse_dimensions(dim_str):
+    """Parse image dimensions from 'width height' string."""
+    if not dim_str:
+        return None, None
+    try:
+        width, height = dim_str.split()[:2]
+        return int(width), int(height)
+    except (ValueError, AttributeError):
+        return None, None
+
+def get_mimetype(file_path):
+    """Get MIME type based on file extension."""
+    if not file_path:
+        return 'image/jpeg'
+    ext = os.path.splitext(file_path)[1].lower()
+    return {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.tiff': 'image/tiff',
+        '.webp': 'image/webp',
+    }.get(ext, 'application/octet-stream')
+
+async def create_ninjs_data_pod(prefix='processed'):
+    try:
+        # Get all processed images
+        processed_hashes = app.storage.user.get(f'{prefix}_img_hashes', [])
+        if not processed_hashes:
+            ui.notify('No processed images found', type='warning')
+            return
+
+        # Create list to hold all news items
+        news_items = []
+        processed_count = 0
+        error_count = 0
+        
+        for img_hash in processed_hashes:
+            try:
+                # Get image metadata
+                img_info = app.storage.user.get(img_hash)
+                if not img_info:
+                    print(f"Warning: No info found for hash {img_hash}")
+                    error_count += 1
+                    continue
+                    
+                img_path = img_info.get('path')
+                if not img_path or not os.path.exists(img_path):
+                    print(f"Warning: Image file not found: {img_path}")
+                    error_count += 1
+                    continue
+                
+                # Get metadata using existing function
+                try:
+                    metadata_list = await get_img_metadata(img_path)
+                    if not metadata_list or not isinstance(metadata_list, list) or not metadata_list[0]:
+                        print(f"Warning: No metadata found for {img_path}")
+                        error_count += 1
+                        continue
+                    metadata = metadata_list[0]
+                except Exception as e:
+                    print(f"Error getting metadata for {img_path}: {str(e)}")
+                    error_count += 1
+                    continue
+                
+                # Build news item with safe defaults
+                news_item = {
+                    "uri": f"{app.storage.user.get('gateway_url', '')}:{img_hash}",
+                    "type": "picture",
+                    "version": "1.0",
+                    "versioncreated": datetime.utcnow().isoformat() + "Z",
+                    "firstcreated": safe_get(metadata, 'XMP:CreateDate', ''),
+                    "pubstatus": "usable",
+                    "language": "en",
+                    "headline": safe_get(metadata, 'IPTC:ObjectName', 'Untitled'),
+                    "description_text": safe_get(metadata, 'IPTC:Caption-Abstract', ''),
+                    "keywords": [k.strip() for k in safe_get(metadata, 'IPTC:Keywords', '').split('|') if k.strip()],
+                    "copyrightnotice": safe_get(metadata, 'IPTC:CopyrightNotice', ''),
+                    "creditline": safe_get(metadata, 'IPTC:Credit', ''),
+                    "byline": [b.strip() for b in safe_get(metadata, 'IPTC:By-line', '').split('|') if b.strip()],
+                }
+                
+                # Add renditions with proper MIME type and dimensions
+                width, height = parse_dimensions(safe_get(metadata, 'Composite:ImageSize'))
+                mimetype = get_mimetype(img_path)
+                renditions = {
+                    "original": {
+                        "href": f"ipfs://{img_hash}",
+                        "mimetype": mimetype,
+                    }
+                }
+                if width and height:
+                    renditions["original"]["width"] = width
+                    renditions["original"]["height"] = height
+                news_item["renditions"] = renditions
+                
+                # Add place information if available
+                city = safe_get(metadata, 'IPTC:City')
+                country = safe_get(metadata, 'IPTC:Country-PrimaryLocationName')
+                if city or country:
+                    news_item["place"] = [{"name": city, "country": country}]
+                
+                # Add usage terms if available
+                if usage_terms := safe_get(metadata, 'XMP:UsageTerms'):
+                    news_item["usageterms"] = usage_terms
+                
+                # Add rights info
+                news_item["rightsinfo"] = {
+                    "langid": "http://www.lexvo.org/page/iso639-3/eng",
+                    "usagetypes": ["publish", "archive"]
+                }
+                
+                # Add data mining constraints if present
+                if constraints := safe_get(metadata, 'XMP:OtherConstraints'):
+                    news_item["restrictions"] = {
+                        "type": "restricted",
+                        "constraints": [constraints] if isinstance(constraints, str) else constraints
+                    }
+                
+                news_items.append(news_item)
+                processed_count += 1
+                
+            except Exception as e:
+                print(f"Unexpected error processing image {img_hash}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                error_count += 1
+                continue
+        
+        if not news_items:
+            ui.notify('No valid news items to export', type='warning')
+            return
+        
+        # Create NINJ package
+        ninj_package = {
+            "version": "1.0",
+            "uri": f"urn:newsml:package:{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            "type": "package",
+            "versioncreated": datetime.utcnow().isoformat() + "Z",
+            "language": "en",
+            "items": news_items
+        }
+        
+        # Save to file
+        output_dir = Path("exports")
+        output_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"ninjs_data_pod_{timestamp}.json"
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(ninj_package, f, indent=2, ensure_ascii=False)
+        
+        ui.notify(f"Successfully exported {len(news_items)} items to {output_path}")
+        return str(output_path)
+        
+    except Exception as e:
+        ui.notify(f"Error creating NINJ package: {str(e)}", type='negative')
+        raise
+
+async def deploy_ninjs_data_pod(prefix='processed', access_token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Creates and deploys a NINJS data pod to the gallery API endpoint.
+    
+    Args:
+        prefix: The prefix for the image hashes in storage (e.g., 'processed', 'original')
+        access_token: Optional access token for the API. If not provided, will try to get from app storage.
+    
+    Returns:
+        Dictionary containing the deployment status and result.
+    """
+    # First create the NINJS data pod
+    try:
+        json_file = await create_ninjs_data_pod(prefix)
+        if not json_file or not os.path.exists(json_file):
+            ui.notify('Failed to create NINJS data pod', type='negative')
+            return {'status': 'error', 'message': 'Failed to create NINJS data pod'}
+    except Exception as e:
+        ui.notify(f'Error creating NINJS data pod: {str(e)}', type='negative')
+        return {'status': 'error', 'message': str(e)}
+    
+    # Get access token if not provided
+    if not access_token:
+        access_token = app.storage.user.get('api_access_token')
+        if not access_token:
+            ui.notify('No access token provided', type='negative')
+            return {'status': 'error', 'message': 'No access token provided'}
+    
+    # Prepare the upload URL
+    upload_url = f"{app.storage.user.get('api_base_url', '')}/api_upload"
+    if not upload_url.startswith('http'):
+        ui.notify('Invalid API base URL', type='negative')
+        return {'status': 'error', 'message': 'Invalid API base URL'}
+    
+    try:
+        # Prepare the file for upload
+        with open(json_file, 'rb') as f:
+            files = {
+                'file': (os.path.basename(json_file), f, 'application/json')
+            }
+            data = {
+                'access_token': access_token,
+                'encrypted': 'false'  # Set to 'true' if encryption is needed
+            }
+            
+            # Make the request
+            response = requests.post(
+                upload_url,
+                files=files,
+                data=data,
+                timeout=30  # 30 seconds timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                ui.notify('Successfully deployed NINJS data pod', type='positive')
+                return {
+                    'status': 'success',
+                    'file_info': result,
+                    'path': json_file
+                }
+            else:
+                error_msg = f'Upload failed with status {response.status_code}: {response.text}'
+                ui.notify(error_msg, type='negative')
+                return {
+                    'status': 'error',
+                    'message': error_msg,
+                    'status_code': response.status_code
+                }
+                
+    except Exception as e:
+        error_msg = f'Error uploading NINJS data pod: {str(e)}'
+        ui.notify(error_msg, type='negative')
+        return {
+            'status': 'error',
+            'message': error_msg
+        }
+    
+
+
+async def deploy_gallery_images(prefix: str = 'processed', access_token: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Upload all images to the gallery API endpoint.
+    
+    Args:
+        prefix: The prefix for the image hashes in storage (e.g., 'processed', 'original')
+        access_token: Optional access token for the API. If not provided, will try to get from app storage.
+    
+    Returns:
+        List of upload results with status and file information.
+    """
+    if not access_token:
+        access_token = app.storage.user.get('api_access_token')
+        if not access_token:
+            ui.notify('No access token provided', type='negative')
+            return []
+    
+    hashes = app.storage.user.get(f'{prefix}_img_hashes', [])
+    if not hashes:
+        ui.notify(f'No images found with prefix: {prefix}', type='warning')
+        return []
+    
+    upload_url = f"{app.storage.user.get('api_base_url', '')}/api_upload"
+    if not upload_url.startswith('http'):
+        ui.notify('Invalid API base URL', type='negative')
+        return []
+    
+    results = []
+    successful_uploads = 0
+    
+    for img_hash in hashes:
+        try:
+            img_info = app.storage.user.get(img_hash)
+            if not img_info:
+                results.append({
+                    'status': 'error',
+                    'hash': img_hash,
+                    'message': 'Image info not found'
+                })
+                continue
+                
+            img_path = img_info.get('path')
+            if not img_path or not os.path.exists(img_path):
+                results.append({
+                    'status': 'error',
+                    'hash': img_hash,
+                    'message': f'Image file not found: {img_path}'
+                })
+                continue
+            
+            # Prepare the file for upload
+            with open(img_path, 'rb') as img_file:
+                files = {
+                    'file': (os.path.basename(img_path), img_file, 'image/jpeg')
+                }
+                data = {
+                    'access_token': access_token,
+                    'encrypted': 'false'  # Set to 'true' if encryption is needed
+                }
+                
+                # Make the request
+                response = requests.post(
+                    upload_url,
+                    files=files,
+                    data=data,
+                    timeout=30  # 30 seconds timeout
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    results.append({
+                        'status': 'success',
+                        'hash': img_hash,
+                        'file_info': result,
+                        'path': img_path
+                    })
+                    successful_uploads += 1
+                else:
+                    results.append({
+                        'status': 'error',
+                        'hash': img_hash,
+                        'message': f'Upload failed with status {response.status_code}',
+                        'response': response.text
+                    })
+                    
+        except Exception as e:
+            results.append({
+                'status': 'error',
+                'hash': img_hash,
+                'message': str(e)
+            })
+            continue
+    
+    # Notify user of results
+    total = len(hashes)
+    if successful_uploads == total:
+        ui.notify(f'Successfully uploaded all {successful_uploads} images', type='positive')
+    elif successful_uploads > 0:
+        ui.notify(f'Uploaded {successful_uploads} of {total} images', type='warning')
+    else:
+        ui.notify('Failed to upload any images', type='negative')
+    
+    return results
+        
+    
+
 def on_close():
     print('Closing')
     # remove_tmp_files()
@@ -793,7 +1144,7 @@ def main_page():
                                                     icon='upload'
                                                 ).bind_visibility_from(w_switch, 'value')
 
-                            with ui.expansion('IPTC', icon='data_array').classes('w-full'):
+                            with ui.expansion('Shared IPTC Metadata', icon='data_array').classes('w-full'):
                                 iptc_switch = ui.switch('IPTC Metadata', value=iptc).bind_value(app.storage.user, 'iptc').on_value_change(persistent_save_data)
                                 with ui.row().classes('w-full items-center'):
                                     ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
