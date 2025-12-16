@@ -57,7 +57,7 @@ app.native.window_args['resizable'] = True
 app.native.start_args['debug'] = False
 app.native.settings['ALLOW_DOWNLOADS'] = True
 app.native.window_args['title'] = 'Glass Wing'
-app.native.window_args['frameless'] = True
+#app.native.window_args['frameless'] = True
 
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 print(app.native.settings)
@@ -72,9 +72,9 @@ state_container = None
 
 PRIMARY_COLOR = '#25F5F8'
 SECONDARY_COLOR = '#E59F61'
-TEXT_COLOR = '#EA8CDB'
-BG_COLOR = '#FFFFFF'
-CARD_BG = '#CD38B6'
+TEXT_COLOR = '#6C9D9D'
+BG_COLOR = '#FBF7F4'
+CARD_BG = '#E5D4C8'
 BORDER_COLOR = '#FFAD20'
 
 DARK_PRIMARY = '#578485'
@@ -1181,7 +1181,7 @@ def main_page():
                     style="width: 256px; height: 128px;"
                 ></lottie-player>
             ''', sanitize=False)
-            ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
+            # ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
 
     with ui.footer().classes('gradient-background') as footer:
         
