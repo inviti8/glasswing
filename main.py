@@ -1,8 +1,10 @@
 from nicegui import binding, app, ui
 from nicegui.binding import BindableProperty
+from fastapi.staticfiles import StaticFiles
 import time
 import hashlib
 import multihash
+import os
 import base58
 import tempfile
 import os
@@ -25,6 +27,13 @@ import tempfile
 import os
 from datetime import datetime
 from pathlib import Path
+
+# Configure static files directory
+static_dir = os.path.join(os.path.dirname(__file__), 'static')
+if not os.path.exists(static_dir):
+    os.makedirs(static_dir)
+# Mount static files
+app.mount('/static', StaticFiles(directory=static_dir), name='static')
 
 _INITIALIZED = False
 
@@ -60,6 +69,20 @@ hvym_public_key = None
 
 file_container = None 
 state_container = None
+
+PRIMARY_COLOR = '#25F5F8'
+SECONDARY_COLOR = '#E59F61'
+TEXT_COLOR = '#EA8CDB'
+BG_COLOR = '#FFFFFF'
+CARD_BG = '#CD38B6'
+BORDER_COLOR = '#FFAD20'
+
+DARK_PRIMARY = '#578485'
+DARK_SECONDARY = '#A4856A'
+DARK_TEXT = '#EFF1C6'
+DARK_BG = '#1A1A1A'
+DARK_CARD = '#625146'
+DARK_BORDER = '#EFF1C6'
 
 def init():
     global _INITIALIZED
@@ -1045,96 +1068,120 @@ def close_app():
     
 @ui.page('/')
 def main_page():
-
-    ui.add_css('''
-        :root {
-            --primary-color: #CD38B6;
-            --secondary-color: #FF6346;
-            --text-color: #EA8CDB;
-            --bg-color: #FFFFFF;
-            --card-bg: #CD38B6;
-            --border-color: #FFAD20;
-        }
-
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --primary-color: #30222E;
-                --secondary-color: #443330;
-                --text-color: #AC8B85;
-                --bg-color: #121212;
-                --card-bg: #30222E;
-                --border-color: #7D625D;
+    # Add Lottie player script to the head
+    ui.add_head_html('''
+        <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+        <style>
+            lottie-player {
+                width: 80px;
+                height: 80px;
+                margin: 0;
+                padding: 0;
             }
-        }
+        </style>
+    ''')
+    lottie_src = '/static/logo.json'
+
+    ui.add_css(f"""
+        :root {{
+            --primary-color: {PRIMARY_COLOR};
+            --secondary-color: {SECONDARY_COLOR};
+            --text-color: {TEXT_COLOR};
+            --bg-color: {BG_COLOR};
+            --card-bg: {CARD_BG};
+            --border-color: {BORDER_COLOR};
+        }}
+
+        @media (prefers-color-scheme: dark) {{
+            :root {{
+                --primary-color: {DARK_PRIMARY};
+                --secondary-color: {DARK_SECONDARY};
+                --text-color: {DARK_TEXT};
+                --bg-color: {DARK_BG};
+                --card-bg: {DARK_CARD};
+                --border-color: {DARK_BORDER};
+            }}
+        }}
 
         /* Buttons */
-        .q-btn, .q-button-item, .q-button--standard, .q-button--fab {
+        .q-btn, .q-button-item, .q-button--standard, .q-button--fab {{
             background-color: var(--secondary-color) !important;
             color: white !important;
-        }
+        }}
 
         /* Inputs and selects */
-        .q-field, .q-input, .q-select, .q-textarea {
+        .q-field, .q-input, .q-select, .q-textarea {{
             color: var(--text-color) !important;
-        }
+        }}
         
-        .q-field__control, .q-field__native, .q-field__label {
+        .q-field__control, .q-field__native, .q-field__label {{
             color: var(--text-color) !important;
-        }
+        }}
 
         /* Tabs */
-        .q-tab {
+        .q-tab {{
             color: var(--text-color) !important;
-        }
+        }}
         
-        .q-tab--active {
+        .q-tab--active {{
             color: var(--primary-color) !important;
-        }
+        }}
 
         /* Custom gradient background */
-        .gradient-background {
+        .gradient-background {{
             background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)) !important;
             color: white !important; /* Override text color for better contrast */
-        }
+        }}
 
-        @layer components {
-            body, .q-page, .q-drawer, .q-tab-panel{
+        @layer components {{
+            body, .q-page, .q-drawer, .q-tab-panel{{
                 background-color: var(--bg-color) !important;
                 color: var(--text-color) !important;
-            }
-            .bg-primary{
+            }}
+            .bg-primary{{
                 background-color: var(--primary-color) !important;
                 color: var(--text-color) !important;
-            }
-            .q-secondary-color, bg-secondary{
+            }}
+            .q-secondary-color, bg-secondary{{
                 background-color: var(--secondary-color) !important;
                 color: var(--text-color) !important;
-            }
+            }}
 
-            .q-focus-helper, .block{
+            .q-focus-helper, .block{{
                 color: var(--text-color) !important;
-            }
+            }}
 
             /* Cards and dialogs */
-            .q-card, .q-dialog, .q-menu, .q-tooltip {
+            .q-card, .q-dialog, .q-menu, .q-tooltip {{
                 background-color: var(--card-bg) !important;
                 color: var(--text-color) !important;
                 border: 1px solid var(--border-color) !important;
-            }
-        }
-    ''')
+            }}
+        }}
+    """)
 
     init()
 
     with ui.header().classes('row items-center justify-between p-0 gradient-background') as header:
-        with ui.row().classes('w-full justify-end'):
-            ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('fab')
-        with ui.row().classes('w-full items-center'):
+        # Left side: Tabs
+        with ui.row().classes('items-center'):
             with ui.tabs() as tabs:
                 ui.tab('IMAGES', icon="image")
-                # ui.tab('LAYO.classes('items-center gap-2 pr-2'):UT', icon="grid_view")
+                # ui.tab('LAYO.classes(\'items-center gap-2 pr-2\'):UT', icon="grid_view")
                 ui.tab('SETTINGS', icon="settings")
-            state_container = ui.row().classes('w-full items-center')
+            state_container = ui.row().classes('items-center')
+        
+        # Right side: Lottie animation and close button
+        with ui.row().classes('items-center gap-2 pr-2'):
+            ui.html(f'''
+                <lottie-player 
+                    src="{lottie_src}" 
+                    loop 
+                    autoplay 
+                    style="width: 256px; height: 128px;"
+                ></lottie-player>
+            ''', sanitize=False)
+            ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
 
     with ui.footer().classes('gradient-background') as footer:
         
