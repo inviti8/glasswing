@@ -1151,7 +1151,7 @@ def main_page():
                 color: var(--text-color) !important;
             }}
             
-            .q-field__control, .q-field__native, .q-field__label {{
+            .q-field__control, .q-field__native, .q-field__label, .q-fab__label {{
                 color: var(--text-color) !important;
             }}
 
@@ -1175,13 +1175,37 @@ def main_page():
 
     init()
 
-    with ui.header().classes('row items-center justify-between p-0 gradient-background') as header:
+    # Create state for toggling header/footer visibility
+    show_header_footer = True
+    
+    def toggle_header_footer():
+        nonlocal show_header_footer
+        show_header_footer = not show_header_footer
+        
+        if show_header_footer:
+            # Make elements visible first
+            header.visible = True
+            footer.visible = True
+            # Small delay to ensure visibility is applied before transform
+            ui.timer(0.01, lambda: [
+                header.classes(replace='row items-center justify-between p-0 gradient-background transition-all duration-300 transform translate-y-0'),
+                footer.classes(replace='gradient-background transition-all duration-300 transform translate-y-0')
+            ], once=True)
+        else:
+            # Apply transform to hide
+            header.classes(replace='row items-center justify-between p-0 gradient-background transition-all duration-300 transform -translate-y-full')
+            footer.classes(replace='gradient-background transition-all duration-300 transform translate-y-full')
+            # Hide after animation completes
+            ui.timer(300, lambda: [setattr(header, 'visible', False), setattr(footer, 'visible', False)], once=True)
+
+    with ui.header().classes('row items-center justify-between p-0 gradient-background transition-all duration-300 transform') as header:
         # Left side: Tabs
         with ui.row().classes('items-center'):
             with ui.tabs() as tabs:
                 ui.tab('IMAGES', icon="image")
-                # ui.tab('LAYO.classes(\'items-center gap-2 pr-2\'):UT', icon="grid_view")
+                ui.tab('BROWSER', icon="web")
                 ui.tab('SETTINGS', icon="settings")
+                
             state_container = ui.row().classes('items-center')
         
         # Right side: Lottie animation and close button
@@ -1196,7 +1220,12 @@ def main_page():
             ''', sanitize=False)
             # ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
 
-    with ui.footer().classes('gradient-background') as footer:
+    # Add a floating button to toggle header/footer visibility
+    fab = ui.button(icon='visibility', color='primary').classes('fixed-bottom-right q-mb-xl q-mr-xl shadow-5')
+    fab.style('z-index: 9999; width: 56px; height: 56px; border-radius: 50%;')
+    fab.on('click', toggle_header_footer)
+    
+    with ui.footer().classes('gradient-background transition-all duration-300 transform') as footer:
         
         with ui.fab('image').classes('q-secondary-color'):
             if is_ipfs_running():
@@ -1306,6 +1335,10 @@ def main_page():
                                 .bind_value(app.storage.user, 'stellar_secret').classes('grow').props('disable')
                             ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(stellar_secret), ui.notify('Copied App Secret')]) \
                                 .classes('w-10').props('flat color=primary')
+
+        with ui.tab_panel('BROWSER'):
+            global content_container
+            content_container = ui.column().classes('w-full')
 
 app.on_shutdown(on_close)
 ui.run(
