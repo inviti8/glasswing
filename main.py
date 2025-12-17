@@ -54,7 +54,7 @@ pintheon_port = '9999'
 gateway_url = ''
 
 app.native.window_args['resizable'] = True
-app.native.start_args['debug'] = False
+app.native.start_args['debug'] = True
 app.native.settings['ALLOW_DOWNLOADS'] = True
 app.native.window_args['title'] = 'Glass Wing'
 #app.native.window_args['frameless'] = True
@@ -1072,6 +1072,19 @@ def main_page():
     ui.add_head_html('''
         <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
         <style>
+        @font-face {
+            font-family: 'phino';
+            src: url('/static/PhinoVariation.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+        }
+        
+        /* Apply Phino font globally */
+        body, button, input, select, textarea, .q-btn, .q-tab, .q-field__native, .q-item {
+            font-family: 'phino', monospace, sans-serif !important;
+            letter-spacing: 0.5px;
+        }
             lottie-player {
                 width: 80px;
                 height: 80px;
@@ -1080,7 +1093,7 @@ def main_page():
             }
         </style>
     ''')
-    lottie_src = '/static/logo.json'
+    logo_anim = '/static/logo.json'
 
     ui.add_css(f"""
         :root {{
@@ -1109,24 +1122,6 @@ def main_page():
             color: white !important;
         }}
 
-        /* Inputs and selects */
-        .q-field, .q-input, .q-select, .q-textarea {{
-            color: var(--text-color) !important;
-        }}
-        
-        .q-field__control, .q-field__native, .q-field__label {{
-            color: var(--text-color) !important;
-        }}
-
-        /* Tabs */
-        .q-tab {{
-            color: var(--text-color) !important;
-        }}
-        
-        .q-tab--active {{
-            color: var(--primary-color) !important;
-        }}
-
         /* Custom gradient background */
         .gradient-background {{
             background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)) !important;
@@ -1149,6 +1144,24 @@ def main_page():
 
             .q-focus-helper, .block{{
                 color: var(--text-color) !important;
+            }}
+
+            /* Inputs and selects */
+            .q-field, .q-input, .q-select, .q-textarea, .q-icon, .text-sm {{
+                color: var(--text-color) !important;
+            }}
+            
+            .q-field__control, .q-field__native, .q-field__label {{
+                color: var(--text-color) !important;
+            }}
+
+            /* Tabs */
+            .q-tab {{
+                color: var(--text-color) !important;
+            }}
+            
+            .q-tab--active, .q-button--active, .text-white {{
+                color: var(--primary-color) !important;
             }}
 
             /* Cards and dialogs */
@@ -1175,10 +1188,10 @@ def main_page():
         with ui.row().classes('items-center gap-2 pr-2'):
             ui.html(f'''
                 <lottie-player 
-                    src="{lottie_src}" 
+                    src="{logo_anim}" 
                     loop 
                     autoplay 
-                    style="width: 256px; height: 128px;"
+                    style="width: 192px; height: 96px;"
                 ></lottie-player>
             ''', sanitize=False)
             # ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
@@ -1275,7 +1288,7 @@ def main_page():
                                     ui.button('Set Shared IPTC Metadata', icon='perm_data_setting', on_click=lambda: iptc_dialog(iptc_data, persistent_save_data)) \
                                     .bind_visibility_from(iptc_switch, 'value')
                                 with ui.row().classes('w-full items-center').bind_visibility_from(iptc_switch, 'value'):
-                                    ui.label('Template IPTC Fields').classes('text-sm text-gray-500')
+                                    ui.label('Template IPTC Fields')
                                     ui.button('Load Template', icon='download', on_click=lambda: load_iptc_template()).props('flat')
                                     ui.button('Save Template', icon='save', on_click=lambda: save_iptc_template()).props('flat')
                     
