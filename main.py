@@ -106,6 +106,8 @@ def init():
     global tmp_files
     global scramble_modes
     global tabs
+    global editor_ctrls
+    global browser_ctrls
 
     iptc_data = IPTC()
     iptc_data.init()
@@ -129,6 +131,7 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['app_mode'] = data['app_mode']
     else:
         persistent_save_data()
         with open(data_file, 'r') as f:
@@ -146,6 +149,7 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['app_mode'] = data['app_mode']
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -160,6 +164,7 @@ def init():
     app.storage.user['tmp_files'] = app.storage.user.get('tmp_files', [])
     app.storage.user['recipient_public_key'] = app.storage.user.get('recipient_public_key', None)
     app.storage.user['cipher_key'] = app.storage.user.get('cipher_key', None)
+    app.storage.user['app_mode'] = app.storage.user.get('app_mode', 'image')
 
     img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
     scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
@@ -189,10 +194,11 @@ def persistent_save_data():
     use_iptc = app.storage.user.get('use_iptc', False)
     tmp_files = app.storage.user.get('tmp_files', [])
     app.storage.user['tmp_files'] = tmp_files
+    app_mode = app.storage.user.get('app_mode', 'image')
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'app_mode': app_mode, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
 
 def is_ipfs_running():
     try:
@@ -1054,8 +1060,32 @@ async def deploy_gallery_images(prefix: str = 'processed', access_token: Optiona
         ui.notify('Failed to upload any images', type='negative')
     
     return results
-        
+
+async def fadeout_element(element):
+    element.style('opacity: 0; transition: opacity 0.25s ease-out;')
+    await asyncio.sleep(0.25)
+    element.visible = False
+
+async def fadein_element(element):
+    element.visible = True
+    # Set initial state (invisible)
+    element.style('opacity: 0;')
+    # Force reflow
+    await asyncio.sleep(0.01)
+    # Apply transition and trigger fade in
+    element.style('opacity: 1; transition: opacity 0.25s ease-in;')
+    await asyncio.sleep(0.25)
+
+async def fade_swap_elements(elem1, elem2):
+    await fadeout_element(elem1)
+    await fadein_element(elem2)
+
     
+def toggle_app_mode():
+    current_mode = app.storage.user.get('app_mode', 'image')
+    new_mode = 'browser' if current_mode == 'image' else 'image'
+    app.storage.user['app_mode'] = new_mode
+    persistent_save_data()
 
 def on_close():
     print('Closing')
@@ -1160,7 +1190,7 @@ def main_page():
                 color: var(--text-color) !important;
             }}
             
-            .q-tab--active, .q-button--active, .text-white {{
+            .q-tab--active, .q-tab--active .q-icon, .q-tab--active .q-tab__icon, .q-button--active, .text-white, .q-tab__indicator {{
                 color: var(--primary-color) !important;
             }}
 
@@ -1169,6 +1199,12 @@ def main_page():
                 background-color: var(--card-bg) !important;
                 color: var(--text-color) !important;
                 border: 1px solid var(--border-color) !important;
+            }}
+
+            .card-no-border {{
+                background-color: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
             }}
         }}
     """)
@@ -1198,10 +1234,20 @@ def main_page():
             # Hide after animation completes
             ui.timer(300, lambda: [setattr(header, 'visible', False), setattr(footer, 'visible', False)], once=True)
 
+    async def on_tab_change():
+        print(tabs.value)
+        if tabs.value == 'IMAGES' and app.storage.user.get('app_mode') != 'image':
+            toggle_app_mode()
+            await fade_swap_elements(browser_ctrls, editor_ctrls)
+        elif tabs.value == 'BROWSER' and app.storage.user.get('app_mode') != 'browser':
+            toggle_app_mode()
+            await fade_swap_elements(editor_ctrls, browser_ctrls)
+
+
     with ui.header().classes('row items-center justify-between p-0 gradient-background transition-all duration-300 transform') as header:
         # Left side: Tabs
         with ui.row().classes('items-center'):
-            with ui.tabs() as tabs:
+            with ui.tabs().on('update:model-value', on_tab_change) as tabs:
                 ui.tab('IMAGES', icon="image")
                 ui.tab('BROWSER', icon="web")
                 ui.tab('SETTINGS', icon="settings")
@@ -1226,20 +1272,25 @@ def main_page():
     fab.on('click', toggle_header_footer)
     
     with ui.footer().classes('gradient-background transition-all duration-300 transform') as footer:
-        
-        with ui.fab('image').classes('q-secondary-color'):
-            if is_ipfs_running():
-                ui.fab_action('add', on_click=choose_img)
-                ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
-                ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata))
-                ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
-                ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
-                ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
-                ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))
-        ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
+        with ui.card().classes('w-full card-no-border') as editor_ctrls:
+            with ui.fab('image').classes('q-secondary-color'):
+                if is_ipfs_running():
+                    ui.fab_action('add', on_click=choose_img)
+                    ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
+                    ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata))
+                    ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
+                    ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
+                    ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
+                    ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))
+            ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
+        with ui.card().classes('w-full card-no-border') as browser_ctrls:
+            with ui.fab('web_stories').classes('q-secondary-color'):
+                if is_ipfs_running():
+                    ui.fab_action('subscriptions', on_click=choose_img)
+                    ui.fab_action('add', on_click=choose_img)
 
 
-    with ui.tab_panels(tabs, value='IMAGES').classes('w-full'):
+    with ui.tab_panels(tabs, value='IMAGES').classes('w-full') as tab_panel:
         with ui.tab_panel('IMAGES'):
             with ui.column().classes('w-full gap-2'):
                 # Show warnings if services are not available
@@ -1339,6 +1390,16 @@ def main_page():
         with ui.tab_panel('BROWSER'):
             global content_container
             content_container = ui.column().classes('w-full')
+    
+    if app.storage.user.get('app_mode') == 'browser':
+        tab_panel.set_value('BROWSER')
+        fade_swap_elements(browser_ctrls, editor_ctrls)
+        editor_ctrls.visible = True
+        browser_ctrls.visible = False
+    else:
+        tab_panel.set_value('IMAGES')
+        editor_ctrls.visible = True
+        browser_ctrls.visible = False
 
 app.on_shutdown(on_close)
 ui.run(
