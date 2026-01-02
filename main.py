@@ -90,6 +90,7 @@ def init():
         return
     global file_container
     global state_container
+    global browser_content
     global watermark_container
     global stellar_keys
     global hvym_keys
@@ -732,6 +733,42 @@ def render_watermark(watermark_container):
         with watermark_container:
             ui.image(f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{app.storage.user.get("watermark", "")}').classes('w-full')
 
+def setup_browser_tab():
+    if browser_content:
+        with browser_content.classes('w-full h-full'):
+            # Create the iframe with proper sanitization
+            iframe = ui.html('''
+                <div id="browser-frame-container" style="width: 100%; height: 100%;">
+                    <iframe 
+                        id="browser-frame"
+                        style="width: 100%; height: 100%; border: none;"
+                        srcdoc="<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>"
+                    ></iframe>
+                </div>
+            ''', sanitize=lambda x: x).classes('w-full h-full')
+            
+            # Function to update the iframe content
+            def update_browser_content(html_content=None):
+                if html_content is None:
+                    # Clear the iframe
+                    js = """
+                        const iframe = document.querySelector('#browser-frame');
+                        if (iframe) {
+                            iframe.srcdoc = "<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>";
+                        }
+                    """
+                else:
+                    # Update with new content
+                    js = f"""
+                        const iframe = document.querySelector('#browser-frame');
+                        if (iframe) {{
+                            iframe.srcdoc = `{html_content.replace('`', '\\`').replace('\\', '\\\\')}`;
+                        }}
+                    """
+                ui.run_javascript(js)
+            
+            return update_browser_content
+
 
 def safe_get(metadata, key, default=''):
     """Safely get a value from metadata with a default fallback."""
@@ -1099,7 +1136,6 @@ async def fade_swap_elements(elem1, elem2):
     await fadeout_element(elem1)
     await fadein_element(elem2)
 
-    
 def toggle_app_mode():
     current_mode = app.storage.user.get('app_mode', 'image')
     new_mode = 'browser' if current_mode == 'image' else 'image'
@@ -1263,11 +1299,13 @@ def main_page():
         if tabs.value == 'IMAGES' and app.storage.user.get('app_mode') != 'image':
             toggle_app_mode()
             await fade_swap_elements(browser_ctrls, editor_ctrls)
+            await fade_swap_elements(browser_content, file_container)
             editor_settings.visible = True
             browser_settings.visible = False
         elif tabs.value == 'BROWSER' and app.storage.user.get('app_mode') != 'browser':
             toggle_app_mode()
             await fade_swap_elements(editor_ctrls, browser_ctrls)
+            await fade_swap_elements(file_container, browser_content)
             editor_settings.visible = False
             browser_settings.visible = True
 
@@ -1327,10 +1365,28 @@ def main_page():
                 if not is_imagemagick_available():
                     ui.notify('ImageMagick is not available', type='warning')
                 
-                # Main content
+                # Main Image File content
                 global file_container
                 file_container = ui.column().classes('w-full')
                 render_gallery()
+
+        # In your tab panel initialization:
+        with ui.tab_panel('BROWSER'):
+            global browser_content
+            browser_content = ui.column().classes('w-full h-full')
+            update_browser_content = setup_browser_tab()
+            
+            # Initialize with empty iframe
+            update_browser_content()  # This will clear/initialize the iframe
+            
+            # # Example usage:
+            # async def load_browser_content():
+            #     template = env.get_template('browser_view.html')
+            #     html_content = template.render(your_ninjs_data)
+            #     update_browser_content(html_content)
+            
+            # # Call this when the tab is activated
+            # ui.timer(0.1, load_browser_content, once=True)  # Small delay to ensure DOM is ready
 
         with ui.tab_panel('SETTINGS'):
             with ui.card().classes('w-full card-no-border') as editor_settings:
@@ -1417,7 +1473,7 @@ def main_page():
                                     ui.button(icon='copy_all', on_click=lambda: [ui.clipboard.write(stellar_secret), ui.notify('Copied App Secret')]) \
                                         .classes('w-10').props('flat color=primary')
 
-                        with ui.card().classes('w-full'):
+                        with ui.card().classes('w-full') as app_colors_card:
                             with ui.expansion('App Colors').classes('w-full'):
                                 app_colors = app.storage.user.get('app_colors', {
                                     'primary': PRIMARY_COLOR,
@@ -1433,18 +1489,46 @@ def main_page():
                                     'dark-card': DARK_CARD,
                                     'dark-border': DARK_BORDER
                                 })
-                                with ui.row().classes('w-full items-center'):
-                                    for key, value in app_colors.items():
-                                        with ui.button().classes('no-underline pallete-btn') as btn:
-                                            btn._props['no-caps'] = True
-                                            btn._props['flat'] = True
-                                            btn.style(f'background-color: {value} !important;')
-                                            def update_btn_color(e, b=btn):
-                                                b.style(f'background-color: {e.color} !important;')
-                                            color_picker = ui.color_picker(on_pick=update_btn_color)
-                                            color_picker.value = value  # Set initial value
-                                            color_picker.on('update:model-value', lambda e, k=key: app_colors.update({k: color_picker.value}))
-                                            color_picker.on_value_change(persistent_save_data)
+                                with ui.card().classes('w-full') as light_colors:
+                                    ui.label('light').classes('text-md font-medium')
+                                    with ui.row().classes('w-full items-center'):
+                                        for key, value in app_colors.items():
+                                            if 'dark' not in key:
+                                                with ui.button().classes('no-underline pallete-btn') as btn:
+                                                    btn._props['no-caps'] = True
+                                                    btn._props['flat'] = True
+                                                    btn.style(f'background-color: {value} !important;')
+                                                    def update_btn_color(e, b=btn):
+                                                        b.style(f'background-color: {e.color} !important;')
+                                                    color_picker = ui.color_picker(on_pick=update_btn_color)
+                                                    color_picker.value = value
+                                                    color_picker.on('update:model-value', lambda e, k=key: app_colors.update({k: color_picker.value}))
+                                                    color_picker.on_value_change(persistent_save_data)
+                                with ui.card().classes('w-full') as dark_colors:
+                                    ui.label('dark').classes('text-md font-medium')
+                                    with ui.row().classes('w-full items-center'):
+                                        for key, value in app_colors.items():
+                                            if 'dark' in key:
+                                                with ui.button().classes('no-underline pallete-btn') as btn:
+                                                    btn._props['no-caps'] = True
+                                                    btn._props['flat'] = True
+                                                    btn.style(f'background-color: {value} !important;')
+                                                    def update_btn_color(e, b=btn):
+                                                        b.style(f'background-color: {e.color} !important;')
+                                                    color_picker = ui.color_picker(on_pick=update_btn_color)
+                                                    color_picker.value = value
+                                                    color_picker.on('update:model-value', lambda e, k=key: app_colors.update({k: color_picker.value}))
+                                                    color_picker.on_value_change(persistent_save_data)
+                                #TODO: NEED TO FIX LOGIC FOR UPDATING APP COLORS
+                                app_colors_card.visible = False
+                                dark_colors.visible = False
+                                light_colors.visible = False
+                                # if ui.dark_mode:
+                                #     dark_colors.visible = True
+                                #     light_colors.visible = False
+                                # else:
+                                #     dark_colors.visible = False
+                                #     light_colors.visible = True
                                         
                                     
 
