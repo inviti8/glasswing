@@ -103,6 +103,7 @@ def init():
     global watermark_position
     global watermark_padding
     global iptc_data
+    global current_img_folder
     global img_states
     global tmp_files
     global scramble_modes
@@ -160,6 +161,12 @@ def init():
     hvym_keys = Stellar25519KeyPair(stellar_keys)
     hvym_public_key = hvym_keys.public_key()
 
+    if not ipfs_folder_exists(hvym_public_key):
+        ipfs_new_folder(hvym_public_key)
+        print(f"Created IPFS folder: {hvym_public_key}")
+    else:
+        print(f"IPFS folder already exists: {hvym_public_key}")
+
     app.storage.user['img_state'] = app.storage.user.get('img_state', 1)
     app.storage.user['raw_img_hashes'] = app.storage.user.get('raw_img_hashes', [])
     app.storage.user['processed_img_hashes'] = app.storage.user.get('processed_img_hashes', [])
@@ -184,9 +191,10 @@ def init():
     DARK_BG = app.storage.user.get('app_colors')['dark-bg']
     DARK_CARD = app.storage.user.get('app_colors')['dark-card']
     DARK_BORDER = app.storage.user.get('app_colors')['dark-border']
-
+    
     img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
     scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
+    folder_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
 
     remove_tmp_files()
 
@@ -233,6 +241,143 @@ def url_valid(url):
         return response.status_code == 200
     except (requests.exceptions.RequestException, ValueError):
         return False
+
+def ipfs_folder_exists(folder):
+    """
+    Check if a folder exists in IPFS MFS.
+    
+    Args:
+        folder (str): Folder path to check
+        
+    Returns:
+        bool: True if folder exists, False otherwise
+    """
+    if not is_ipfs_running():
+        return False
+        
+    try:
+        url = f'{ipfs_endpoint}:{port}/api/v0/files/stat'
+        params = {'arg': f'/{folder}'}
+        response = requests.post(url, params=params, timeout=10)
+        return response.status_code == 200
+    except (requests.exceptions.RequestException, ValueError):
+        return False
+
+def ipfs_new_folder(name):
+    if not is_ipfs_running():
+        print("Error: IPFS daemon is not running or not accessible")
+        return False
+        
+    try:
+        url = f'{ipfs_endpoint}:{port}/api/v0/files/mkdir'
+        params = {
+            'arg': f'/{name}',
+            'parents': True,  # Changed from string 'true' to boolean
+            'cid-version': 1  # Use CIDv1 for better compatibility
+        }
+        
+        response = requests.post(url, params=params, timeout=30)
+        response.raise_for_status()
+        
+        # Verify the directory was actually created
+        verify_url = f'{ipfs_endpoint}:{port}/api/v0/files/stat'
+        verify_params = {'arg': f'/{name}'}
+        verify_response = requests.post(verify_url, params=verify_params, timeout=10)
+        
+        if verify_response.status_code == 200:
+            return True
+        return False
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating IPFS folder: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_msg = e.response.json()
+                print(f"IPFS API error: {error_msg.get('Message', 'Unknown error')}")
+            except:
+                print(f"Error response: {e.response.text}")
+        return False
+
+def ipfs_add_to_folder(folder, file_path):
+    """
+    Add a file to a specific folder in IPFS MFS.
+    
+    Args:
+        folder (str): Target folder path in MFS (without leading/trailing slashes)
+        file_path (str): Local file path to add
+    
+    Returns:
+        dict: Dictionary containing file info if successful, None if failed
+    """
+    if not is_ipfs_running():
+        print("Error: IPFS daemon is not running or not accessible")
+        return None
+        
+    try:
+        # Normalize folder path (remove leading/trailing slashes)
+        folder = folder.strip('/')
+        
+        # First check if folder exists
+        stat_url = f'{ipfs_endpoint}:{port}/api/v0/files/stat'
+        stat_params = {'arg': f'/{folder}'}
+        stat_response = requests.post(stat_url, params=stat_params, timeout=10)
+        
+        if stat_response.status_code != 200:
+            print(f"Folder /{folder} does not exist or is not accessible")
+            return None
+        
+        # Read file content
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Add file to the specified folder
+        url = f'{ipfs_endpoint}:{port}/api/v0/files/write'
+        params = {
+            'arg': f'/{folder}/{os.path.basename(file_path)}',
+            'create': True,
+            'parents': True,
+            'truncate': True,
+            'count': str(len(file_content))
+        }
+        
+        # Send the request with file content in the body
+        response = requests.post(
+            url,
+            params=params,
+            data=file_content,
+            headers={'Content-Type': 'application/octet-stream'},
+            timeout=30
+        )
+        
+        response.raise_for_status()
+        
+        # The write endpoint returns empty response on success
+        # Get the file stat to return some useful info
+        file_path_in_ipfs = f'/{folder}/{os.path.basename(file_path)}'
+        stat_params = {'arg': file_path_in_ipfs}
+        stat_response = requests.post(
+            f'{ipfs_endpoint}:{port}/api/v0/files/stat',
+            params=stat_params,
+            timeout=10
+        )
+        
+        if stat_response.status_code == 200:
+            return {
+                'path': file_path_in_ipfs,
+                'size': stat_response.json().get('Size', 0),
+                'type': 'file'
+            }
+        return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Error adding file to IPFS folder: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_msg = e.response.json()
+                print(f"IPFS API error: {error_msg.get('Message', 'Unknown error')}")
+            except:
+                print(f"Error response: {e.response.text}")
+        return None
 
 def ipfs_add(file_path):
     if not is_ipfs_running():
@@ -687,7 +832,7 @@ def render_state(hashes):
         with state_container:
             ui.chip(f'{state} ({len(hashes)})', icon='view_array')
 
-def render_gallery():
+def render_gallery(folder=None):
     # tabs.set_value('IMAGES')
     idex = app.storage.user.get('img_state', 1)
     state = img_states[idex]
@@ -705,7 +850,10 @@ def render_gallery():
                 with ui.card().classes('relative overflow-visible w-full max-w-2xl mx-auto'):
                     
                     file_info = app.storage.user.get(hash_value, {})
-                    img_container = ui.image(f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}').classes('w-full')
+                    img_url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}'
+                    if folder:
+                        img_url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{folder}/{hash_value}'
+                    img_container = ui.image(img_url).classes('w-full')
                     
                     # FAB container positioned absolutely over the image
                     ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10')
@@ -1341,13 +1489,14 @@ def main_page():
         with ui.card().classes('w-full card-no-border') as editor_ctrls:
             with ui.fab('image').classes('q-secondary-color'):
                 if is_ipfs_running():
-                    ui.fab_action('add', on_click=choose_img)
+                    ui.fab_action('add_photo_alternate', on_click=choose_img)
                     ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
                     ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata))
                     ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
                     ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
-                    ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
-                    ui.fab_action('perm_media', on_click=lambda: ui.notify('Rocket'))
+                    # ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
+                    ui.fab_action('cloud_upload', on_click=lambda: ui.notify('Upload to IPFS'))
+                    ui.fab_action('drive_folder_upload', on_click=lambda: ui.notify('Share Folder'))
             ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
         with ui.card().classes('w-full card-no-border') as browser_ctrls:
             with ui.fab('web_stories').classes('q-secondary-color'):
