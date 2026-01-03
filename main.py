@@ -135,6 +135,7 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
     else:
@@ -154,6 +155,7 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
 
@@ -167,6 +169,7 @@ def init():
     else:
         print(f"IPFS folder already exists: {hvym_public_key}")
 
+    app.storage.user['hvym_public_key'] = hvym_public_key
     app.storage.user['img_state'] = app.storage.user.get('img_state', 1)
     app.storage.user['raw_img_hashes'] = app.storage.user.get('raw_img_hashes', [])
     app.storage.user['processed_img_hashes'] = app.storage.user.get('processed_img_hashes', [])
@@ -221,12 +224,15 @@ def persistent_save_data():
     use_iptc = app.storage.user.get('use_iptc', False)
     tmp_files = app.storage.user.get('tmp_files', [])
     app.storage.user['tmp_files'] = tmp_files
+    public_key = app.storage.user.get('hvym_public_key', None)
+    content_folders = app.storage.user.get('content_folders', [])
+    app.storage.user['content_folders'] = content_folders
     app_mode = app.storage.user.get('app_mode', 'image')
     app_colors = app.storage.user.get('app_colors', {'primary': PRIMARY_COLOR, 'secondary': SECONDARY_COLOR, 'text-color': TEXT_COLOR, 'bg-color': BG_COLOR, 'card-bg': CARD_BG, 'border-color': BORDER_COLOR, 'dark-primary': DARK_PRIMARY, 'dark-secondary': DARK_SECONDARY, 'dark-text': DARK_TEXT, 'dark-bg': DARK_BG, 'dark-card': DARK_CARD, 'dark-border': DARK_BORDER})
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
 
 def is_ipfs_running():
     try:
@@ -285,6 +291,9 @@ def ipfs_new_folder(name):
         verify_response = requests.post(verify_url, params=verify_params, timeout=10)
         
         if verify_response.status_code == 200:
+            content_folders = app.storage.user.get('content_folders', [])
+            content_folders.append(name)
+            app.storage.user['content_folders'] = content_folders
             return True
         return False
         
@@ -297,6 +306,59 @@ def ipfs_new_folder(name):
             except:
                 print(f"Error response: {e.response.text}")
         return False
+
+def ipfs_clean_folder(name):
+    """
+    Remove all files from a specific folder in IPFS MFS.
+    
+    Args:
+        name (str): Name of the folder to clean (without leading/trailing slashes)
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not is_ipfs_running():
+        print("IPFS daemon is not running")
+        return False
+        
+    try:
+        ipfs_endpoint = 'http://127.0.0.1'
+        port = '5001'
+        
+        # First, list all files in the folder
+        list_url = f'{ipfs_endpoint}:{port}/api/v0/files/ls'
+        list_params = {'arg': f'/{name}'}
+        
+        list_response = requests.post(list_url, params=list_params, timeout=10)
+        list_response.raise_for_status()
+        
+        # Remove each file in the folder
+        files = list_response.json().get('Entries', [])
+        for file_info in files:
+            if file_info['Type'] == 0:  # Regular file
+                file_path = f'/{name}/{file_info["Name"]}'
+                rm_url = f'{ipfs_endpoint}:{port}/api/v0/files/rm'
+                rm_params = {'arg': file_path}
+                
+                try:
+                    rm_response = requests.post(rm_url, params=rm_params, timeout=10)
+                    rm_response.raise_for_status()
+                except requests.exceptions.RequestException as e:
+                    print(f"Error removing file {file_path}: {e}")
+                    continue
+        
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error cleaning IPFS folder: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_msg = e.response.json()
+                print(f"IPFS API error: {error_msg.get('Message', 'Unknown error')}")
+            except:
+                print(f"Error response: {e.response.text}")
+        return False
+
 
 def ipfs_add_to_folder(folder, file_path):
     """
