@@ -27,6 +27,10 @@ import tempfile
 import os
 from datetime import datetime
 from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+import base64
+
+#APP NAME: Andromicae
 
 # Configure static files directory
 static_dir = os.path.join(os.path.dirname(__file__), 'static')
@@ -53,6 +57,10 @@ pintheon_port = '9999'
 
 gateway_url = ''
 
+# Browser content globals
+update_browser_content = None
+pending_browser_html = None
+
 app.native.window_args['resizable'] = True
 app.native.start_args['debug'] = True
 app.native.settings['ALLOW_DOWNLOADS'] = True
@@ -67,8 +75,9 @@ stellar_keys = None
 hvym_keys = None
 hvym_public_key = None
 
-file_container = None 
+file_container = None
 state_container = None
+tabs = None
 
 PRIMARY_COLOR = '#25F5F8'
 SECONDARY_COLOR = '#E59F61'
@@ -91,6 +100,7 @@ def init():
     global file_container
     global state_container
     global browser_content
+    global update_browser_content
     global watermark_container
     global stellar_keys
     global hvym_keys
@@ -135,6 +145,8 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['subscribers'] = data['subscribers']
+           app.storage.user['subscriptions'] = data['subscriptions']
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
@@ -155,6 +167,8 @@ def init():
            iptc_data = IPTC.from_dict(data['iptc_data'])
            iptc_data.init_storage()
            app.storage.user['tmp_files'] = data['tmp_files']
+           app.storage.user['subscribers'] = data['subscribers']
+           app.storage.user['subscriptions'] = data['subscriptions']
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
@@ -163,8 +177,8 @@ def init():
     hvym_keys = Stellar25519KeyPair(stellar_keys)
     hvym_public_key = hvym_keys.public_key()
 
-    if not ipfs_folder_exists(hvym_public_key):
-        ipfs_new_folder(hvym_public_key)
+    if not ipns_folder_exists(hvym_public_key):
+        ipns_new_folder(hvym_public_key)
         print(f"Created IPFS folder: {hvym_public_key}")
     else:
         print(f"IPFS folder already exists: {hvym_public_key}")
@@ -226,13 +240,15 @@ def persistent_save_data():
     app.storage.user['tmp_files'] = tmp_files
     public_key = app.storage.user.get('hvym_public_key', None)
     content_folders = app.storage.user.get('content_folders', [])
+    subscribers = app.storage.user.get('subscribers', [])
+    subscriptions = app.storage.user.get('subscriptions', [])
     app.storage.user['content_folders'] = content_folders
     app_mode = app.storage.user.get('app_mode', 'image')
     app_colors = app.storage.user.get('app_colors', {'primary': PRIMARY_COLOR, 'secondary': SECONDARY_COLOR, 'text-color': TEXT_COLOR, 'bg-color': BG_COLOR, 'card-bg': CARD_BG, 'border-color': BORDER_COLOR, 'dark-primary': DARK_PRIMARY, 'dark-secondary': DARK_SECONDARY, 'dark-text': DARK_TEXT, 'dark-bg': DARK_BG, 'dark-card': DARK_CARD, 'dark-border': DARK_BORDER})
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
 
 def is_ipfs_running():
     try:
@@ -248,7 +264,7 @@ def url_valid(url):
     except (requests.exceptions.RequestException, ValueError):
         return False
 
-def ipfs_folder_exists(folder):
+def ipns_folder_exists(folder):
     """
     Check if a folder exists in IPFS MFS.
     
@@ -269,7 +285,7 @@ def ipfs_folder_exists(folder):
     except (requests.exceptions.RequestException, ValueError):
         return False
 
-def ipfs_new_folder(name):
+def ipns_new_folder(name):
     if not is_ipfs_running():
         print("Error: IPFS daemon is not running or not accessible")
         return False
@@ -307,48 +323,88 @@ def ipfs_new_folder(name):
                 print(f"Error response: {e.response.text}")
         return False
 
-def ipfs_clean_folder(name):
+def ipns_ensure_folder(name):
+    """
+    Ensure an IPFS MFS folder exists. Creates it if it doesn't exist.
+
+    Args:
+        name (str): Name of the folder (without leading/trailing slashes)
+
+    Returns:
+        bool: True if folder exists or was created, False otherwise
+    """
+    if not is_ipfs_running():
+        print("IPFS daemon is not running")
+        return False
+
+    try:
+        # Check if folder exists
+        stat_url = f'{ipfs_endpoint}:{port}/api/v0/files/stat'
+        stat_params = {'arg': f'/{name}'}
+        stat_response = requests.post(stat_url, params=stat_params, timeout=10)
+
+        if stat_response.status_code == 200:
+            # Folder exists
+            return True
+        else:
+            # Folder doesn't exist, create it
+            print(f"Folder /{name} doesn't exist, creating it...")
+            return ipns_new_folder(name)
+
+    except requests.exceptions.RequestException as e:
+        # If we get an error, try to create the folder
+        print(f"Folder /{name} check failed, attempting to create...")
+        return ipns_new_folder(name)
+
+def ipns_clean_folder(name):
     """
     Remove all files from a specific folder in IPFS MFS.
-    
+
     Args:
         name (str): Name of the folder to clean (without leading/trailing slashes)
-        
+
     Returns:
         bool: True if successful, False otherwise
     """
     if not is_ipfs_running():
         print("IPFS daemon is not running")
         return False
-        
+
+    # Ensure folder exists first
+    if not ipns_ensure_folder(name):
+        print(f"Could not ensure folder /{name} exists")
+        return False
+
     try:
-        ipfs_endpoint = 'http://127.0.0.1'
-        port = '5001'
-        
         # First, list all files in the folder
         list_url = f'{ipfs_endpoint}:{port}/api/v0/files/ls'
         list_params = {'arg': f'/{name}'}
-        
+
         list_response = requests.post(list_url, params=list_params, timeout=10)
         list_response.raise_for_status()
-        
+
         # Remove each file in the folder
         files = list_response.json().get('Entries', [])
+        if not files:
+            print(f"Folder /{name} is already empty")
+            return True
+
         for file_info in files:
             if file_info['Type'] == 0:  # Regular file
                 file_path = f'/{name}/{file_info["Name"]}'
                 rm_url = f'{ipfs_endpoint}:{port}/api/v0/files/rm'
                 rm_params = {'arg': file_path}
-                
+
                 try:
                     rm_response = requests.post(rm_url, params=rm_params, timeout=10)
                     rm_response.raise_for_status()
+                    print(f"Removed {file_path}")
                 except requests.exceptions.RequestException as e:
                     print(f"Error removing file {file_path}: {e}")
                     continue
-        
+
         return True
-        
+
     except requests.exceptions.RequestException as e:
         print(f"Error cleaning IPFS folder: {e}")
         if hasattr(e, 'response') and e.response is not None:
@@ -360,7 +416,7 @@ def ipfs_clean_folder(name):
         return False
 
 
-def ipfs_add_to_folder(folder, file_path):
+def ipns_add_to_folder(folder, file_path):
     """
     Add a file to a specific folder in IPFS MFS.
     
@@ -378,58 +434,59 @@ def ipfs_add_to_folder(folder, file_path):
     try:
         # Normalize folder path (remove leading/trailing slashes)
         folder = folder.strip('/')
-        
-        # First check if folder exists
-        stat_url = f'{ipfs_endpoint}:{port}/api/v0/files/stat'
-        stat_params = {'arg': f'/{folder}'}
-        stat_response = requests.post(stat_url, params=stat_params, timeout=10)
-        
-        if stat_response.status_code != 200:
-            print(f"Folder /{folder} does not exist or is not accessible")
+
+        # Ensure folder exists, create if it doesn't
+        if not ipns_ensure_folder(folder):
+            print(f"Could not ensure folder /{folder} exists")
             return None
         
-        # Read file content
+        # First add the file to IPFS to get its hash
         with open(file_path, 'rb') as f:
-            file_content = f.read()
-        
-        # Add file to the specified folder
-        url = f'{ipfs_endpoint}:{port}/api/v0/files/write'
-        params = {
-            'arg': f'/{folder}/{os.path.basename(file_path)}',
-            'create': True,
-            'parents': True,
-            'truncate': True,
-            'count': str(len(file_content))
-        }
-        
-        # Send the request with file content in the body
-        response = requests.post(
-            url,
-            params=params,
-            data=file_content,
-            headers={'Content-Type': 'application/octet-stream'},
-            timeout=30
-        )
-        
-        response.raise_for_status()
-        
-        # The write endpoint returns empty response on success
-        # Get the file stat to return some useful info
-        file_path_in_ipfs = f'/{folder}/{os.path.basename(file_path)}'
-        stat_params = {'arg': file_path_in_ipfs}
-        stat_response = requests.post(
-            f'{ipfs_endpoint}:{port}/api/v0/files/stat',
-            params=stat_params,
-            timeout=10
-        )
-        
-        if stat_response.status_code == 200:
-            return {
-                'path': file_path_in_ipfs,
-                'size': stat_response.json().get('Size', 0),
-                'type': 'file'
+            url = f'{ipfs_endpoint}:{port}'
+            files = {'file': (os.path.basename(file_path), f)}
+            add_response = requests.post(f'{url}/api/v0/add', params={'no-announce': 'true'}, files=files, timeout=30)
+            add_response.raise_for_status()
+            add_result = add_response.json()
+            hash_value = add_result.get('Hash')
+            
+            if not hash_value:
+                print("Error: Failed to get hash from IPFS add response")
+                return None
+            
+            # Store the file info with the hash as the key
+            file_info = {
+                'name': os.path.basename(file_path),
+                'path': file_path,
+                'ipns_path': f'/{folder}/{hash_value}',
+                'extension': os.path.splitext(file_path)[1]
             }
-        return None
+            app.storage.user[hash_value] = file_info
+            
+            # Now copy the file from the IPFS repo to the MFS folder
+            copy_url = f'{ipfs_endpoint}:{port}/api/v0/files/cp'
+            copy_params = {
+                'arg': [f'/ipfs/{hash_value}', f'/{folder}/{os.path.basename(file_path)}']
+            }
+            copy_response = requests.post(copy_url, params=copy_params, timeout=30)
+            copy_response.raise_for_status()
+            
+            # Get the file stat to return some useful info
+            file_path_in_ipfs = f'/{folder}/{os.path.basename(file_path)}'
+            stat_params = {'arg': file_path_in_ipfs}
+            stat_response = requests.post(
+                f'{ipfs_endpoint}:{port}/api/v0/files/stat',
+                params=stat_params,
+                timeout=10
+            )
+            
+            if stat_response.status_code == 200:
+                return {
+                    'hash': hash_value,
+                    'path': file_path_in_ipfs,
+                    'size': stat_response.json().get('Size', 0),
+                    'type': 'file'
+                }
+            return None
             
     except requests.exceptions.RequestException as e:
         print(f"Error adding file to IPFS folder: {e}")
@@ -440,6 +497,31 @@ def ipfs_add_to_folder(folder, file_path):
             except:
                 print(f"Error response: {e.response.text}")
         return None
+
+def ipns_add_gallery_to_folder(name):
+    idex = app.storage.user.get('img_state', 1)
+    state = img_states[idex]
+    hashes = app.storage.user.get(f'{state}_img_hashes', [])
+    
+    for hash_value in hashes:
+        # Get the file info from storage
+        file_info = app.storage.user.get(hash_value)
+        if not file_info:
+            print(f"No file info found for hash: {hash_value}")
+            continue
+            
+        file_path = file_info.get('path')
+        if not file_path or not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
+            continue
+            
+        # Add the file to the specified MFS folder
+        result = ipns_add_to_folder(name, file_path)
+        if result:
+            print(f"Added {file_path} to MFS folder {name}")
+        else:
+            print(f"Failed to add {file_path} to MFS folder {name}")
+    
 
 def ipfs_add(file_path):
     if not is_ipfs_running():
@@ -454,7 +536,7 @@ def ipfs_add(file_path):
             response.raise_for_status()
             result = response.json()
             hash_value = result.get('Hash')
-            app.storage.user[hash_value] = {'name': os.path.basename(file_path), 'path': file_path, 'extension': os.path.splitext(file_path)[1]}
+            app.storage.user[hash_value] = {'name': os.path.basename(file_path), 'path': file_path, 'ipns_path': None, 'extension': os.path.splitext(file_path)[1]}
             return hash_value
     except requests.exceptions.RequestException as e:
         print(f"Error uploading to IPFS: {e}")
@@ -868,6 +950,107 @@ async def process_shared_iptc_metadata():
     persistent_save_data()
     render_gallery()
 
+async def process_debug_deploy_gallery():
+    try:
+        # Get the current gallery state
+        idex = app.storage.user.get('img_state', 1)
+        state = img_states[idex]
+
+        # Create the NINJS data pod using the existing function
+        output_path = await create_ninjs_data_pod(state)
+
+        ipns_clean_folder(state)
+        ipns_add_gallery_to_folder(state)
+
+        if output_path:
+            ui.notify(f'Successfully created data pod at: {output_path}')
+
+            # Load the created JSON data pod
+            with open(output_path, 'r', encoding='utf-8') as f:
+                data_pod = json.load(f)
+
+            # Set up Jinja2 environment
+            template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+            jinja_env = Environment(loader=FileSystemLoader(template_dir))
+            template = jinja_env.get_template('gallery.html')
+
+            # Render the template with the data pod and gateway configuration
+            template_context = {
+                'data_pod': data_pod,
+                'ipfs_gateway': f"{ipfs_webui}:{ipfs_webui_port}",
+                'ipfs_webui': ipfs_webui,
+                'ipfs_webui_port': ipfs_webui_port
+            }
+            html_content = template.render(**template_context)
+
+            # Save the rendered HTML to the exports folder for debugging
+            html_output_path = output_path.replace('.json', '.html')
+            with open(html_output_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"Saved rendered HTML to: {html_output_path}")
+
+            # Store the HTML content and switch to BROWSER tab
+            global pending_browser_html, tabs
+            pending_browser_html = html_content
+            print(f"Stored pending HTML content, length: {len(html_content)}")
+
+            # Switch to BROWSER tab so the iframe gets rendered
+            if tabs:
+                tabs.value = 'BROWSER'
+                print("Switched to BROWSER tab")
+                ui.notify('Gallery rendered in browser view', type='positive')
+            else:
+                ui.notify('Browser tab not initialized', type='warning')
+                print("tabs object not available")
+
+            # Optionally, you can also deploy the data pod
+            # Uncomment the following lines if you want to deploy automatically
+            # deployment_result = await deploy_ninjs_data_pod(state)
+            # if deployment_result and deployment_result.get('success'):
+            #     ui.notify('Successfully deployed data pod to gallery')
+            # else:
+            #     ui.notify('Failed to deploy data pod', type='warning')
+        else:
+            ui.notify('No valid images found to create data pods', type='warning')
+
+    except Exception as e:
+        ui.notify(f'Error processing gallery: {str(e)}', type='negative')
+        print(f"Error in process_debug_deploy_gallery: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+def add_subscriber(name, public_key):
+    subscribers = app.storage.user.get('subscribers', [])
+    subscribers.append({'name': name, 'public_key': public_key})
+    app.storage.user['subscribers'] = subscribers
+    persistent_save_data()   
+
+async def remove_subscriber(name):
+    subscribers = app.storage.user.get('subscribers', [])
+    subscribers = [s for s in subscribers if s['name'] != name]
+    app.storage.user['subscribers'] = subscribers
+    persistent_save_data()
+
+async def get_subscribers():
+    return app.storage.user.get('subscribers', [])
+
+async def add_subscription(name, public_key):
+    subscriptions = app.storage.user.get('subscriptions', [])
+    subscriptions.append({'name': name, 'public_key': public_key})
+    app.storage.user['subscriptions'] = subscriptions
+    persistent_save_data()
+    ui.notify(f'Added subscription for {name}')
+
+async def remove_subscription(name):
+    subscriptions = app.storage.user.get('subscriptions', [])
+    subscriptions = [s for s in subscribers if s['name'] != name]
+    app.storage.user['subscriptions'] = subscribers
+    persistent_save_data()
+    ui.notify(f'Removed subscription for {name}')
+
+async def get_subscriptions():
+    return app.storage.user.get('subscriptions', [])    
+
 async def load_iptc_template():
     try:
         file_path = await choose_file()
@@ -922,18 +1105,18 @@ def render_gallery(folder=None):
                     with ui.row().classes('absolute top-2 right-2 z-10'):
                         with ui.fab('edit', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
-                                ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h))
+                                ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h)).tooltip('Copy image')
                             if is_ipfs_running():
-                                ui.fab_action('article', on_click=lambda h=hash_value: edit_body_text(h))
+                                ui.fab_action('article', on_click=lambda h=hash_value: edit_body_text(h)).tooltip('Edit body text')
                             if is_ipfs_running():
-                                ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative')
+                                ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative').tooltip('Delete image')
                         with ui.fab('data_object', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
-                                ui.fab_action('edit', label='ALL', on_click=lambda h=hash_value: edit_all_info(h))
-                                ui.fab_action('edit', label='IPTC', on_click=lambda h=hash_value: edit_iptc_info(h))
-                                ui.fab_action('edit', label='XMP', on_click=lambda h=hash_value: edit_xmp_info(h))
-                                ui.fab_action('edit', label='EXIF', on_click=lambda h=hash_value: edit_exif_info(h))
-                                ui.fab_action('delete', label='ALL', on_click=lambda h=hash_value: remove_img(h), color='negative')
+                                ui.fab_action('edit', label='ALL', on_click=lambda h=hash_value: edit_all_info(h)).tooltip('Edit all metadata')
+                                ui.fab_action('edit', label='IPTC', on_click=lambda h=hash_value: edit_iptc_info(h)).tooltip('Edit IPTC metadata')
+                                ui.fab_action('edit', label='XMP', on_click=lambda h=hash_value: edit_xmp_info(h)).tooltip('Edit XMP metadata')
+                                ui.fab_action('edit', label='EXIF', on_click=lambda h=hash_value: edit_exif_info(h)).tooltip('Edit EXIF metadata')
+                                ui.fab_action('delete', label='ALL', on_click=lambda h=hash_value: remove_img(h), color='negative').tooltip('Delete metadata')
                 # Add some spacing between cards
                 ui.space().classes('h-4')
                 
@@ -949,7 +1132,7 @@ def setup_browser_tab():
             # Create the iframe with proper sanitization
             iframe = ui.html('''
                 <div id="browser-frame-container" style="width: 100%; height: 100%;">
-                    <iframe 
+                    <iframe
                         id="browser-frame"
                         style="width: 100%; height: 100%; border: none;"
                         srcdoc="<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>"
@@ -967,15 +1150,59 @@ def setup_browser_tab():
                             iframe.srcdoc = "<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>";
                         }
                     """
+                    ui.run_javascript(js)
                 else:
-                    # Update with new content
+                    # Use base64 encoding to safely pass large HTML content
+                    # This avoids all escaping issues
+                    encoded_html = base64.b64encode(html_content.encode('utf-8')).decode('ascii')
                     js = f"""
-                        const iframe = document.querySelector('#browser-frame');
-                        if (iframe) {{
-                            iframe.srcdoc = `{html_content.replace('`', '\\`').replace('\\', '\\\\')}`;
-                        }}
+                        (function updateIframe() {{
+                            console.log('Looking for iframe #browser-frame...');
+                            const iframe = document.querySelector('#browser-frame');
+                            console.log('iframe element:', iframe);
+
+                            if (iframe) {{
+                                console.log('Found iframe, decoding and setting content...');
+                                const encodedHtml = '{encoded_html}';
+                                const decodedHtml = atob(encodedHtml);
+                                console.log('Decoded HTML length:', decodedHtml.length);
+                                console.log('First 200 chars:', decodedHtml.substring(0, 200));
+
+                                iframe.srcdoc = decodedHtml;
+                                console.log('✓ Iframe srcdoc set successfully');
+
+                                // Also try setting via contentWindow as a fallback
+                                setTimeout(() => {{
+                                    if (iframe.contentDocument) {{
+                                        console.log('Iframe contentDocument accessible');
+                                    }} else {{
+                                        console.warn('Iframe contentDocument not accessible (may be CORS)');
+                                    }}
+                                }}, 100);
+                            }} else {{
+                                console.error('✗ Iframe #browser-frame not found in DOM');
+                                console.log('Available iframes:', document.querySelectorAll('iframe').length);
+
+                                // The iframe might not be in the DOM yet if the BROWSER tab hasn't been opened
+                                // Try again after a short delay
+                                setTimeout(() => {{
+                                    console.log('Retrying iframe update...');
+                                    const retryIframe = document.querySelector('#browser-frame');
+                                    if (retryIframe) {{
+                                        console.log('Found iframe on retry!');
+                                        const encodedHtml = '{encoded_html}';
+                                        const decodedHtml = atob(encodedHtml);
+                                        retryIframe.srcdoc = decodedHtml;
+                                        console.log('✓ Iframe srcdoc set on retry');
+                                    }} else {{
+                                        console.error('✗ Iframe still not found. User may need to switch to BROWSER tab first.');
+                                    }}
+                                }}, 500);
+                            }}
+                        }})();
                     """
-                ui.run_javascript(js)
+                    print(f"Updating iframe with base64 encoded HTML, original length: {len(html_content)}")
+                    ui.run_javascript(js)
             
             return update_browser_content
 
@@ -983,6 +1210,21 @@ def setup_browser_tab():
 def safe_get(metadata, key, default=''):
     """Safely get a value from metadata with a default fallback."""
     return metadata.get(key, default)
+
+def safe_list_from_metadata(metadata, key, separator='|'):
+    """
+    Safely convert metadata field to a list.
+    Handles both string (with separator) and already-list values.
+    """
+    value = safe_get(metadata, key, '')
+    if isinstance(value, list):
+        # Already a list, just strip whitespace from each item
+        return [str(item).strip() for item in value if str(item).strip()]
+    elif isinstance(value, str) and value:
+        # String, split by separator
+        return [item.strip() for item in value.split(separator) if item.strip()]
+    else:
+        return []
 
 def parse_dimensions(dim_str):
     """Parse image dimensions from 'width height' string."""
@@ -1017,7 +1259,7 @@ async def create_ninjs_data_pod(prefix='processed'):
             return
 
         # Create list to hold all news items
-        news_items = []
+        data_items = []
         processed_count = 0
         error_count = 0
         
@@ -1050,7 +1292,7 @@ async def create_ninjs_data_pod(prefix='processed'):
                     continue
                 
                 # Build news item with safe defaults
-                news_item = {
+                data_item = {
                     "uri": f"{app.storage.user.get('gateway_url', '')}:{img_hash}",
                     "type": "picture",
                     "version": "1.0",
@@ -1060,50 +1302,55 @@ async def create_ninjs_data_pod(prefix='processed'):
                     "language": "en",
                     "headline": safe_get(metadata, 'IPTC:ObjectName', 'Untitled'),
                     "description_text": safe_get(metadata, 'IPTC:Caption-Abstract', ''),
-                    "keywords": [k.strip() for k in safe_get(metadata, 'IPTC:Keywords', '').split('|') if k.strip()],
+                    "keywords": safe_list_from_metadata(metadata, 'IPTC:Keywords'),
                     "copyrightnotice": safe_get(metadata, 'IPTC:CopyrightNotice', ''),
                     "creditline": safe_get(metadata, 'IPTC:Credit', ''),
-                    "byline": [b.strip() for b in safe_get(metadata, 'IPTC:By-line', '').split('|') if b.strip()],
+                    "byline": safe_list_from_metadata(metadata, 'IPTC:By-line'),
                 }
                 
                 # Add renditions with proper MIME type and dimensions
                 width, height = parse_dimensions(safe_get(metadata, 'Composite:ImageSize'))
                 mimetype = get_mimetype(img_path)
+
+                # Use the IPFS gateway URL for browser access
+                # This allows the HTML to display images when loaded in a browser
+                gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
                 renditions = {
                     "original": {
-                        "href": f"ipfs://{img_hash}",
+                        "href": f"{gateway_base}/ipfs/{img_hash}",
+                        "ipfs_hash": img_hash,  # Store the hash separately for reference
                         "mimetype": mimetype,
                     }
                 }
                 if width and height:
                     renditions["original"]["width"] = width
                     renditions["original"]["height"] = height
-                news_item["renditions"] = renditions
+                data_item["renditions"] = renditions
                 
                 # Add place information if available
                 city = safe_get(metadata, 'IPTC:City')
                 country = safe_get(metadata, 'IPTC:Country-PrimaryLocationName')
                 if city or country:
-                    news_item["place"] = [{"name": city, "country": country}]
+                    data_item["place"] = [{"name": city, "country": country}]
                 
                 # Add usage terms if available
                 if usage_terms := safe_get(metadata, 'XMP:UsageTerms'):
-                    news_item["usageterms"] = usage_terms
+                    data_item["usageterms"] = usage_terms
                 
                 # Add rights info
-                news_item["rightsinfo"] = {
+                data_item["rightsinfo"] = {
                     "langid": "http://www.lexvo.org/page/iso639-3/eng",
                     "usagetypes": ["publish", "archive"]
                 }
                 
                 # Add data mining constraints if present
                 if constraints := safe_get(metadata, 'XMP:OtherConstraints'):
-                    news_item["restrictions"] = {
+                    data_item["restrictions"] = {
                         "type": "restricted",
                         "constraints": [constraints] if isinstance(constraints, str) else constraints
                     }
                 
-                news_items.append(news_item)
+                data_items.append(data_item)
                 processed_count += 1
                 
             except Exception as e:
@@ -1113,7 +1360,7 @@ async def create_ninjs_data_pod(prefix='processed'):
                 error_count += 1
                 continue
         
-        if not news_items:
+        if not data_items:
             ui.notify('No valid news items to export', type='warning')
             return
         
@@ -1124,7 +1371,7 @@ async def create_ninjs_data_pod(prefix='processed'):
             "type": "package",
             "versioncreated": datetime.utcnow().isoformat() + "Z",
             "language": "en",
-            "items": news_items
+            "items": data_items
         }
         
         # Save to file
@@ -1136,7 +1383,7 @@ async def create_ninjs_data_pod(prefix='processed'):
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(ninj_package, f, indent=2, ensure_ascii=False)
         
-        ui.notify(f"Successfully exported {len(news_items)} items to {output_path}")
+        ui.notify(f"Successfully exported {len(data_items)} items to {output_path}")
         return str(output_path)
         
     except Exception as e:
@@ -1505,6 +1752,7 @@ def main_page():
             ui.timer(300, lambda: [setattr(header, 'visible', False), setattr(footer, 'visible', False)], once=True)
 
     async def on_tab_change():
+        global pending_browser_html
         print(tabs.value)
         if tabs.value == 'IMAGES' and app.storage.user.get('app_mode') != 'image':
             toggle_app_mode()
@@ -1519,9 +1767,20 @@ def main_page():
             editor_settings.visible = False
             browser_settings.visible = True
 
+            # Load pending browser content if available
+            if pending_browser_html and update_browser_content:
+                print(f"Loading pending HTML content into iframe, length: {len(pending_browser_html)}")
+                # Use a small delay to ensure the iframe is fully rendered in the DOM
+                import asyncio
+                await asyncio.sleep(0.1)
+                update_browser_content(pending_browser_html)
+                pending_browser_html = None  # Clear after loading
+                print("Pending HTML loaded and cleared")
+
 
     with ui.header().classes('row items-center justify-between p-0 gradient-background transition-all duration-300 transform') as header:
         # Left side: Tabs
+        global tabs
         with ui.row().classes('items-center'):
             with ui.tabs().on('update:model-value', on_tab_change) as tabs:
                 ui.tab('IMAGES', icon="image")
@@ -1551,14 +1810,15 @@ def main_page():
         with ui.card().classes('w-full card-no-border') as editor_ctrls:
             with ui.fab('image').classes('q-secondary-color'):
                 if is_ipfs_running():
-                    ui.fab_action('add_photo_alternate', on_click=choose_img)
-                    ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking))
-                    ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata))
-                    ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic))
-                    ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering))
+                    ui.fab_action('add_photo_alternate', on_click=choose_img).tooltip('Choose images')
+                    ui.fab_action('person_add', on_click=lambda: add_subscriber_dialog(add_subscriber)).tooltip('Add Subscriber')
+                    ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking)).tooltip('Add watermark to images')
+                    ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata)).tooltip('Assign Shared IPTC metadata')
+                    ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic)).tooltip('Create Aposematic images')
+                    ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering)).tooltip('Encipher images')
                     # ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
-                    ui.fab_action('cloud_upload', on_click=lambda: ui.notify('Upload to IPFS'))
-                    ui.fab_action('drive_folder_upload', on_click=lambda: ui.notify('Share Folder'))
+                    ui.fab_action('cloud_upload', on_click=lambda: ui.notify('Upload to IPFS')).tooltip('Deploy to Pintheon')
+                    ui.fab_action('drive_folder_upload', on_click=lambda: process_dialog(process_debug_deploy_gallery)).tooltip('Local Debug')
             ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
         with ui.card().classes('w-full card-no-border') as browser_ctrls:
             with ui.fab('web_stories').classes('q-secondary-color'):
@@ -1583,12 +1843,17 @@ def main_page():
 
         # In your tab panel initialization:
         with ui.tab_panel('BROWSER'):
-            global browser_content
+            global browser_content, update_browser_content
             browser_content = ui.column().classes('w-full h-full')
-            update_browser_content = setup_browser_tab()
-            
+
+            # Set up the browser tab and get the update function
+            update_func = setup_browser_tab()
+            update_browser_content = update_func
+
             # Initialize with empty iframe
-            update_browser_content()  # This will clear/initialize the iframe
+            if update_browser_content:
+                update_browser_content()  # This will clear/initialize the iframe
+                print(f"Browser tab initialized, update_browser_content is: {type(update_browser_content)}")
             
             # # Example usage:
             # async def load_browser_content():
