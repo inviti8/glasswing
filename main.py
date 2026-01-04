@@ -1133,10 +1133,10 @@ def setup_browser_tab():
             iframe = ui.html('''
                 <iframe
                     id="browser-frame"
-                    style="width: 100%; height: 100%; min-height: 600px; border: none; margin: 0; padding: 0; display: block;"
+                    style="width: 100%; height: 100%; min-height: 100vh; border: none; margin: 0; padding: 0; display: block;"
                     srcdoc="<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>"
                 ></iframe>
-            ''', sanitize=lambda x: x).style('width: 100%; height: 100%; min-height: 600px; margin: 0; padding: 0; display: block;')
+            ''', sanitize=lambda x: x).style('width: 100%; height: 100%; min-height: 100vh; margin: 0; padding: 0; display: block;')
             
             # Function to update the iframe content
             def update_browser_content(html_content=None):
@@ -1843,7 +1843,7 @@ def main_page():
         with ui.tab_panel('BROWSER'):
             global browser_content, update_browser_content
             # Use minimal structure with explicit height
-            browser_content = ui.element().style('width: 100%; height: 100%; min-height: 600px;')
+            browser_content = ui.element().style('width: 100%; height: 100%; min-height: 100vh;')
 
             # Set up the browser tab and get the update function
             update_func = setup_browser_tab()
