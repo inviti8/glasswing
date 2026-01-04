@@ -153,6 +153,8 @@ def init():
            app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
            app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
+           app.storage.user['gallery_title'] = data.get('gallery_title', '')
+           app.storage.user['gallery_description'] = data.get('gallery_description', '')
     else:
         persistent_save_data()
         with open(data_file, 'r') as f:
@@ -178,6 +180,8 @@ def init():
            app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
            app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
+           app.storage.user['gallery_title'] = data.get('gallery_title', '')
+           app.storage.user['gallery_description'] = data.get('gallery_description', '')
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -205,6 +209,10 @@ def init():
     app.storage.user['latest_data_pod_hash'] = app.storage.user.get('latest_data_pod_hash', None)
     app.storage.user['latest_gallery_html_hash'] = app.storage.user.get('latest_gallery_html_hash', None)
     app.storage.user['latest_data_pod_timestamp'] = app.storage.user.get('latest_data_pod_timestamp', None)
+
+    # Initialize gallery info
+    app.storage.user['gallery_title'] = app.storage.user.get('gallery_title', '')
+    app.storage.user['gallery_description'] = app.storage.user.get('gallery_description', '')
 
     PRIMARY_COLOR = app.storage.user.get('app_colors')['primary']
     SECONDARY_COLOR = app.storage.user.get('app_colors')['secondary']
@@ -259,10 +267,12 @@ def persistent_save_data():
     latest_data_pod_hash = app.storage.user.get('latest_data_pod_hash', None)
     latest_gallery_html_hash = app.storage.user.get('latest_gallery_html_hash', None)
     latest_data_pod_timestamp = app.storage.user.get('latest_data_pod_timestamp', None)
+    gallery_title = app.storage.user.get('gallery_title', '')
+    gallery_description = app.storage.user.get('gallery_description', '')
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)   
 
 def is_ipfs_running():
     try:
@@ -993,7 +1003,9 @@ async def process_debug_deploy_gallery():
                 'data_pod': data_pod,
                 'ipfs_gateway': f"{ipfs_webui}:{ipfs_webui_port}",
                 'ipfs_webui': ipfs_webui,
-                'ipfs_webui_port': ipfs_webui_port
+                'ipfs_webui_port': ipfs_webui_port,
+                'gallery_title': app.storage.user.get('gallery_title', ''),
+                'gallery_description': app.storage.user.get('gallery_description', '')
             }
             html_content = template.render(**template_context)
 
@@ -1842,6 +1854,7 @@ def main_page():
         with ui.card().classes('w-full card-no-border') as editor_ctrls:
             with ui.fab('image').classes('q-secondary-color'):
                 if is_ipfs_running():
+                    ui.fab_action('info', on_click=gallery_info_dialog).tooltip('Set Gallery Info')
                     ui.fab_action('add_photo_alternate', on_click=choose_img).tooltip('Choose images')
                     ui.fab_action('person_add', on_click=lambda: add_subscriber_dialog(add_subscriber)).tooltip('Add Subscriber')
                     ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking)).tooltip('Add watermark to images')

@@ -320,3 +320,31 @@ async def add_subscriber_dialog(on_save):
 
     dialog.open()
     return
+
+def gallery_info_dialog():
+    """Dialog for setting gallery title and description."""
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Gallery Information').classes('text-xl font-bold mb-4')
+
+            with ui.column().classes('w-full gap-4'):
+                ui.input('Gallery Title',
+                        value=app.storage.user.get('gallery_title', ''),
+                        placeholder='Enter gallery title (leave empty to hide)') \
+                    .bind_value(app.storage.user, 'gallery_title') \
+                    .classes('w-full')
+
+                ui.textarea('Gallery Description',
+                           value=app.storage.user.get('gallery_description', ''),
+                           placeholder='Enter gallery description (leave empty to hide)') \
+                    .bind_value(app.storage.user, 'gallery_description') \
+                    .classes('w-full')
+
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+                ui.button('Save', on_click=lambda: [dialog.close(), ui.notify('Gallery info saved', type='positive')]) \
+                    .props('flat color=primary')
+
+    dialog.open()
+    return dialog
