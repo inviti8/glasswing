@@ -1031,11 +1031,25 @@ async def process_debug_deploy_gallery():
             pending_browser_html = html_content
             print(f"Stored pending HTML content, length: {len(html_content)}")
 
-            # Switch to BROWSER tab so the iframe gets rendered
+            # Switch to BROWSER tab
             if tabs:
                 tabs.value = 'BROWSER'
                 print("Switched to BROWSER tab")
-                ui.notify('Gallery rendered in browser view', type='positive')
+
+                # Use timer to load content after tab panel is rendered
+                def load_gallery_content():
+                    global pending_browser_html
+                    if update_browser_content and pending_browser_html:
+                        print(f"Timer loading gallery content, length: {len(pending_browser_html)}")
+                        update_browser_content(pending_browser_html)
+                        pending_browser_html = None  # Clear after loading
+                        ui.notify('Gallery rendered in browser view', type='positive')
+                        print("Gallery content loaded successfully")
+                    else:
+                        print(f"Timer check failed: update_browser_content={update_browser_content is not None}, pending_browser_html={pending_browser_html is not None}")
+
+                # Give the tab panel time to render in the DOM
+                ui.timer(0.5, load_gallery_content, once=True)
             else:
                 ui.notify('Browser tab not initialized', type='warning')
                 print("tabs object not available")
@@ -1811,15 +1825,15 @@ def main_page():
             editor_settings.visible = False
             browser_settings.visible = True
 
-            # Load pending browser content if available
-            if pending_browser_html and update_browser_content:
-                print(f"Loading pending HTML content into iframe, length: {len(pending_browser_html)}")
-                # Use a small delay to ensure the iframe is fully rendered in the DOM
-                import asyncio
-                await asyncio.sleep(0.1)
-                update_browser_content(pending_browser_html)
-                pending_browser_html = None  # Clear after loading
-                print("Pending HTML loaded and cleared")
+        # Load pending browser content if available (regardless of mode change)
+        if tabs.value == 'BROWSER' and pending_browser_html and update_browser_content:
+            print(f"Loading pending HTML content into iframe, length: {len(pending_browser_html)}")
+            # Use a small delay to ensure the iframe is fully rendered in the DOM
+            import asyncio
+            await asyncio.sleep(0.5)
+            update_browser_content(pending_browser_html)
+            pending_browser_html = None  # Clear after loading
+            print("Pending HTML loaded and cleared")
 
 
     with ui.header().classes('row items-center justify-between p-0 gradient-background transition-all duration-300 transform') as header:
