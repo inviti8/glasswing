@@ -150,6 +150,9 @@ def init():
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
+           app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
+           app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
+           app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
     else:
         persistent_save_data()
         with open(data_file, 'r') as f:
@@ -172,6 +175,9 @@ def init():
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
            app.storage.user['app_colors'] = data['app_colors']
+           app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
+           app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
+           app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -194,6 +200,11 @@ def init():
     app.storage.user['recipient_public_key'] = app.storage.user.get('recipient_public_key', None)
     app.storage.user['cipher_key'] = app.storage.user.get('cipher_key', None)
     app.storage.user['app_mode'] = app.storage.user.get('app_mode', 'image')
+
+    # Initialize IPFS data pod storage
+    app.storage.user['latest_data_pod_hash'] = app.storage.user.get('latest_data_pod_hash', None)
+    app.storage.user['latest_gallery_html_hash'] = app.storage.user.get('latest_gallery_html_hash', None)
+    app.storage.user['latest_data_pod_timestamp'] = app.storage.user.get('latest_data_pod_timestamp', None)
 
     PRIMARY_COLOR = app.storage.user.get('app_colors')['primary']
     SECONDARY_COLOR = app.storage.user.get('app_colors')['secondary']
@@ -245,10 +256,13 @@ def persistent_save_data():
     app.storage.user['content_folders'] = content_folders
     app_mode = app.storage.user.get('app_mode', 'image')
     app_colors = app.storage.user.get('app_colors', {'primary': PRIMARY_COLOR, 'secondary': SECONDARY_COLOR, 'text-color': TEXT_COLOR, 'bg-color': BG_COLOR, 'card-bg': CARD_BG, 'border-color': BORDER_COLOR, 'dark-primary': DARK_PRIMARY, 'dark-secondary': DARK_SECONDARY, 'dark-text': DARK_TEXT, 'dark-bg': DARK_BG, 'dark-card': DARK_CARD, 'dark-border': DARK_BORDER})
+    latest_data_pod_hash = app.storage.user.get('latest_data_pod_hash', None)
+    latest_gallery_html_hash = app.storage.user.get('latest_gallery_html_hash', None)
+    latest_data_pod_timestamp = app.storage.user.get('latest_data_pod_timestamp', None)
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict()}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp}, f)   
 
 def is_ipfs_running():
     try:
@@ -983,11 +997,22 @@ async def process_debug_deploy_gallery():
             }
             html_content = template.render(**template_context)
 
-            # Save the rendered HTML to the exports folder for debugging
-            html_output_path = output_path.replace('.json', '.html')
-            with open(html_output_path, 'w', encoding='utf-8') as f:
+            # Save the rendered HTML to temp file then add to IPFS
+            timestamp = app.storage.user.get('latest_data_pod_timestamp', datetime.now().strftime("%Y%m%d_%H%M%S"))
+            html_temp_path = os.path.join(tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.html")
+            with open(html_temp_path, 'w', encoding='utf-8') as f:
                 f.write(html_content)
-            print(f"Saved rendered HTML to: {html_output_path}")
+
+            # Add HTML to IPFS
+            html_hash = ipfs_add(html_temp_path)
+            if html_hash:
+                app.storage.user['latest_gallery_html_hash'] = html_hash
+                app.storage.user['tmp_files'].append(html_temp_path)
+                print(f"Saved rendered HTML to IPFS: {html_hash}")
+                ui.notify(f'Gallery HTML saved to IPFS: {html_hash}', type='positive')
+            else:
+                print(f"Failed to add HTML to IPFS, saved locally at: {html_temp_path}")
+                ui.notify('Failed to add HTML to IPFS', type='warning')
 
             # Store the HTML content and switch to BROWSER tab
             global pending_browser_html, tabs
@@ -1361,7 +1386,7 @@ async def create_ninjs_data_pod(prefix='processed'):
         if not data_items:
             ui.notify('No valid news items to export', type='warning')
             return
-        
+
         # Create NINJ package
         ninj_package = {
             "version": "1.0",
@@ -1371,18 +1396,27 @@ async def create_ninjs_data_pod(prefix='processed'):
             "language": "en",
             "items": data_items
         }
-        
-        # Save to file
-        output_dir = Path("exports")
-        output_dir.mkdir(exist_ok=True)
+
+        # Save to temp file then add to IPFS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = output_dir / f"ninjs_data_pod_{timestamp}.json"
-        
-        with open(output_path, 'w', encoding='utf-8') as f:
+        temp_path = os.path.join(tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.json")
+
+        with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(ninj_package, f, indent=2, ensure_ascii=False)
-        
-        ui.notify(f"Successfully exported {len(data_items)} items to {output_path}")
-        return str(output_path)
+
+        # Add to IPFS
+        json_hash = ipfs_add(temp_path)
+        if not json_hash:
+            ui.notify('Failed to add data pod to IPFS', type='negative')
+            return None
+
+        # Store the hash for later retrieval
+        app.storage.user['latest_data_pod_hash'] = json_hash
+        app.storage.user['latest_data_pod_timestamp'] = timestamp
+        app.storage.user['tmp_files'].append(temp_path)
+
+        ui.notify(f"Successfully exported {len(data_items)} items to IPFS: {json_hash}")
+        return temp_path
         
     except Exception as e:
         ui.notify(f"Error creating NINJ package: {str(e)}", type='negative')
