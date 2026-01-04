@@ -1026,33 +1026,11 @@ async def process_debug_deploy_gallery():
                 print(f"Failed to add HTML to IPFS, saved locally at: {html_temp_path}")
                 ui.notify('Failed to add HTML to IPFS', type='warning')
 
-            # Store the HTML content and switch to BROWSER tab
-            global pending_browser_html, tabs
+            # Store content for user to view when they switch to BROWSER tab
+            global pending_browser_html
             pending_browser_html = html_content
-            print(f"Stored pending HTML content, length: {len(html_content)}")
-
-            # Switch to BROWSER tab
-            if tabs:
-                tabs.value = 'BROWSER'
-                print("Switched to BROWSER tab")
-
-                # Use timer to load content after tab panel is rendered
-                def load_gallery_content():
-                    global pending_browser_html
-                    if update_browser_content and pending_browser_html:
-                        print(f"Timer loading gallery content, length: {len(pending_browser_html)}")
-                        update_browser_content(pending_browser_html)
-                        pending_browser_html = None  # Clear after loading
-                        ui.notify('Gallery rendered in browser view', type='positive')
-                        print("Gallery content loaded successfully")
-                    else:
-                        print(f"Timer check failed: update_browser_content={update_browser_content is not None}, pending_browser_html={pending_browser_html is not None}")
-
-                # Give the tab panel time to render in the DOM
-                ui.timer(0.5, load_gallery_content, once=True)
-            else:
-                ui.notify('Browser tab not initialized', type='warning')
-                print("tabs object not available")
+            print(f"Stored pending HTML content for browser view, length: {len(html_content)}")
+            ui.notify('Gallery ready - switch to BROWSER tab to view', type='positive')
 
             # Optionally, you can also deploy the data pod
             # Uncomment the following lines if you want to deploy automatically
@@ -1811,7 +1789,7 @@ def main_page():
 
     async def on_tab_change():
         global pending_browser_html
-        print(tabs.value)
+        print(f"Tab changed to: {tabs.value}")
         if tabs.value == 'IMAGES' and app.storage.user.get('app_mode') != 'image':
             toggle_app_mode()
             await fade_swap_elements(browser_ctrls, editor_ctrls)
@@ -1825,15 +1803,15 @@ def main_page():
             editor_settings.visible = False
             browser_settings.visible = True
 
-        # Load pending browser content if available (regardless of mode change)
-        if tabs.value == 'BROWSER' and pending_browser_html and update_browser_content:
-            print(f"Loading pending HTML content into iframe, length: {len(pending_browser_html)}")
-            # Use a small delay to ensure the iframe is fully rendered in the DOM
-            import asyncio
-            await asyncio.sleep(0.5)
-            update_browser_content(pending_browser_html)
-            pending_browser_html = None  # Clear after loading
-            print("Pending HTML loaded and cleared")
+            # Load pending content if available
+            if pending_browser_html and update_browser_content:
+                print("Loading pending HTML content into iframe")
+                # Small delay to ensure iframe is in DOM after tab switch
+                def load_content():
+                    global pending_browser_html
+                    update_browser_content(pending_browser_html)
+                    pending_browser_html = None
+                ui.timer(0.1, load_content, once=True)
 
 
     with ui.header().classes('row items-center justify-between p-0 gradient-background transition-all duration-300 transform') as header:
