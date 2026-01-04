@@ -306,3 +306,17 @@ async def add_body_text_dialog(img_name, img_path, hash_value, on_save):
 
     dialog.open()
     return 
+
+async def add_subscriber_dialog(on_save):
+    with ui.dialog().on('hide', lambda: on_save(name.value, pub.value)) as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            ui.label('Add Subscriber').classes('text-md font-medium')
+            with ui.row().classes('w-full justify-end'):
+                name = ui.input('Subscriber Name', value='').bind_value(app.storage.user, 'subscriber_name').classes('w-full')
+            with ui.row().classes('w-full justify-end'):
+                pub = ui.input('Subscriber Public Key', value='').bind_value(app.storage.user, 'subscriber_public_key').classes('w-full')
+            with ui.row().classes('w-full justify-end'):
+                ui.button('ADD', on_click=lambda: dialog.close()).props('flat')
+
+    dialog.open()
+    return

@@ -1128,17 +1128,15 @@ def render_watermark(watermark_container):
 
 def setup_browser_tab():
     if browser_content:
-        with browser_content.classes('w-full h-full'):
-            # Create the iframe with proper sanitization
+        with browser_content:
+            # Minimal iframe structure - no wrapper div
             iframe = ui.html('''
-                <div id="browser-frame-container" style="width: 100%; height: 100%;">
-                    <iframe
-                        id="browser-frame"
-                        style="width: 100%; height: 100%; border: none;"
-                        srcdoc="<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>"
-                    ></iframe>
-                </div>
-            ''', sanitize=lambda x: x).classes('w-full h-full')
+                <iframe
+                    id="browser-frame"
+                    style="width: 100%; height: 100%; min-height: 600px; border: none; margin: 0; padding: 0; display: block;"
+                    srcdoc="<html><body style='margin:0;padding:0;overflow:hidden;background:transparent;'></body></html>"
+                ></iframe>
+            ''', sanitize=lambda x: x).style('width: 100%; height: 100%; min-height: 600px; margin: 0; padding: 0; display: block;')
             
             # Function to update the iframe content
             def update_browser_content(html_content=None):
@@ -1827,7 +1825,7 @@ def main_page():
                     ui.fab_action('add', on_click=choose_img)
 
 
-    with ui.tab_panels(tabs, value='IMAGES').classes('w-full') as tab_panel:
+    with ui.tab_panels(tabs, value='IMAGES').classes('w-full h-full') as tab_panel:
         with ui.tab_panel('IMAGES'):
             with ui.column().classes('w-full gap-2'):
                 # Show warnings if services are not available
@@ -1844,7 +1842,8 @@ def main_page():
         # In your tab panel initialization:
         with ui.tab_panel('BROWSER'):
             global browser_content, update_browser_content
-            browser_content = ui.column().classes('w-full h-full')
+            # Use minimal structure with explicit height
+            browser_content = ui.element().style('width: 100%; height: 100%; min-height: 600px;')
 
             # Set up the browser tab and get the update function
             update_func = setup_browser_tab()
@@ -1854,15 +1853,6 @@ def main_page():
             if update_browser_content:
                 update_browser_content()  # This will clear/initialize the iframe
                 print(f"Browser tab initialized, update_browser_content is: {type(update_browser_content)}")
-            
-            # # Example usage:
-            # async def load_browser_content():
-            #     template = env.get_template('browser_view.html')
-            #     html_content = template.render(your_ninjs_data)
-            #     update_browser_content(html_content)
-            
-            # # Call this when the tab is activated
-            # ui.timer(0.1, load_browser_content, once=True)  # Small delay to ensure DOM is ready
 
         with ui.tab_panel('SETTINGS'):
             with ui.card().classes('w-full card-no-border') as editor_settings:
