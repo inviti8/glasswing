@@ -122,6 +122,18 @@ def init():
     global editor_settings
     global browser_ctrls
     global browser_settings
+    global PRIMARY_COLOR
+    global SECONDARY_COLOR
+    global TEXT_COLOR
+    global BG_COLOR
+    global CARD_BG
+    global BORDER_COLOR
+    global DARK_PRIMARY
+    global DARK_SECONDARY
+    global DARK_TEXT
+    global DARK_BG
+    global DARK_CARD
+    global DARK_BORDER
 
     iptc_data = IPTC()
     iptc_data.init()
@@ -149,13 +161,42 @@ def init():
            app.storage.user['subscriptions'] = data['subscriptions']
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
-           app.storage.user['app_colors'] = data['app_colors']
+           # Load app_colors with fallback to defaults if not in data.json
+           app.storage.user['app_colors'] = data.get('app_colors', {
+               'primary': PRIMARY_COLOR,
+               'secondary': SECONDARY_COLOR,
+               'text-color': TEXT_COLOR,
+               'bg-color': BG_COLOR,
+               'card-bg': CARD_BG,
+               'border-color': BORDER_COLOR,
+               'dark-primary': DARK_PRIMARY,
+               'dark-secondary': DARK_SECONDARY,
+               'dark-text': DARK_TEXT,
+               'dark-bg': DARK_BG,
+               'dark-card': DARK_CARD,
+               'dark-border': DARK_BORDER
+           })
            app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
            app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
            app.storage.user['gallery_title'] = data.get('gallery_title', '')
            app.storage.user['gallery_description'] = data.get('gallery_description', '')
     else:
+        # Initialize app_colors with defaults before calling persistent_save_data()
+        app.storage.user['app_colors'] = {
+            'primary': PRIMARY_COLOR,
+            'secondary': SECONDARY_COLOR,
+            'text-color': TEXT_COLOR,
+            'bg-color': BG_COLOR,
+            'card-bg': CARD_BG,
+            'border-color': BORDER_COLOR,
+            'dark-primary': DARK_PRIMARY,
+            'dark-secondary': DARK_SECONDARY,
+            'dark-text': DARK_TEXT,
+            'dark-bg': DARK_BG,
+            'dark-card': DARK_CARD,
+            'dark-border': DARK_BORDER
+        }
         persistent_save_data()
         with open(data_file, 'r') as f:
            data = json.load(f)
@@ -176,7 +217,7 @@ def init():
            app.storage.user['subscriptions'] = data['subscriptions']
            app.storage.user['content_folders'] = data['content_folders']
            app.storage.user['app_mode'] = data['app_mode']
-           app.storage.user['app_colors'] = data['app_colors']
+           # app_colors already initialized above
            app.storage.user['latest_data_pod_hash'] = data.get('latest_data_pod_hash', None)
            app.storage.user['latest_gallery_html_hash'] = data.get('latest_gallery_html_hash', None)
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
@@ -214,20 +255,6 @@ def init():
     app.storage.user['gallery_title'] = app.storage.user.get('gallery_title', '')
     app.storage.user['gallery_description'] = app.storage.user.get('gallery_description', '')
 
-    PRIMARY_COLOR = app.storage.user.get('app_colors')['primary']
-    SECONDARY_COLOR = app.storage.user.get('app_colors')['secondary']
-    TEXT_COLOR = app.storage.user.get('app_colors')['text-color']
-    BG_COLOR = app.storage.user.get('app_colors')['bg-color']
-    CARD_BG = app.storage.user.get('app_colors')['card-bg']
-    BORDER_COLOR = app.storage.user.get('app_colors')['border-color']
-
-    DARK_PRIMARY = app.storage.user.get('app_colors')['dark-primary']
-    DARK_SECONDARY = app.storage.user.get('app_colors')['dark-secondary']
-    DARK_TEXT = app.storage.user.get('app_colors')['dark-text']
-    DARK_BG = app.storage.user.get('app_colors')['dark-bg']
-    DARK_CARD = app.storage.user.get('app_colors')['dark-card']
-    DARK_BORDER = app.storage.user.get('app_colors')['dark-border']
-    
     img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
     scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
     folder_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}
@@ -272,7 +299,167 @@ def persistent_save_data():
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)   
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)
+
+def apply_theme_colors():
+    """Apply theme colors using ui.colors() and CSS variables"""
+    print("\n=== apply_theme_colors() CALLED ===")
+
+    colors = app.storage.user.get('app_colors', {
+        'primary': PRIMARY_COLOR,
+        'secondary': SECONDARY_COLOR,
+        'text-color': TEXT_COLOR,
+        'bg-color': BG_COLOR,
+        'card-bg': CARD_BG,
+        'border-color': BORDER_COLOR,
+        'dark-primary': DARK_PRIMARY,
+        'dark-secondary': DARK_SECONDARY,
+        'dark-text': DARK_TEXT,
+        'dark-bg': DARK_BG,
+        'dark-card': DARK_CARD,
+        'dark-border': DARK_BORDER
+    })
+
+
+    print("Colors from storage:")
+    print(f"  Light Primary: {colors.get('primary', PRIMARY_COLOR)}")
+    print(f"  Dark Primary: {colors.get('dark-primary', DARK_PRIMARY)}")
+
+    # Update CSS variables - simplified with debug logging
+    primary_color = colors.get("primary", PRIMARY_COLOR)
+    secondary_color = colors.get("secondary", SECONDARY_COLOR)
+    text_color = colors.get("text-color", TEXT_COLOR)
+    bg_color = colors.get("bg-color", BG_COLOR)
+    card_bg = colors.get("card-bg", CARD_BG)
+    border_color = colors.get("border-color", BORDER_COLOR)
+
+    dark_primary = colors.get("dark-primary", DARK_PRIMARY)
+    dark_secondary = colors.get("dark-secondary", DARK_SECONDARY)
+    dark_text = colors.get("dark-text", DARK_TEXT)
+    dark_bg = colors.get("dark-bg", DARK_BG)
+    dark_card = colors.get("dark-card", DARK_CARD)
+    dark_border = colors.get("dark-border", DARK_BORDER)
+
+    # Determine which color palette to use based on dark mode detection
+    ui.run_javascript(f'''
+        (function() {{
+            const root = document.documentElement;
+            const body = document.body;
+            const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+            console.log("=== APPLYING THEME COLORS ===");
+            console.log("Dark mode:", isDark);
+
+            // Set light mode source colors
+            root.style.setProperty('--light-primary-color', '{primary_color}');
+            root.style.setProperty('--light-secondary-color', '{secondary_color}');
+            root.style.setProperty('--light-text-color', '{text_color}');
+            root.style.setProperty('--light-bg-color', '{bg_color}');
+            root.style.setProperty('--light-card-bg', '{card_bg}');
+            root.style.setProperty('--light-border-color', '{border_color}');
+
+            // Set dark mode source colors
+            root.style.setProperty('--dark-primary-color', '{dark_primary}');
+            root.style.setProperty('--dark-secondary-color', '{dark_secondary}');
+            root.style.setProperty('--dark-text-color', '{dark_text}');
+            root.style.setProperty('--dark-bg-color', '{dark_bg}');
+            root.style.setProperty('--dark-card-bg', '{dark_card}');
+            root.style.setProperty('--dark-border-color', '{dark_border}');
+
+            // Choose colors based on mode
+            const activeColors = isDark ? {{
+                primary: '{dark_primary}',
+                secondary: '{dark_secondary}',
+                text: '{dark_text}',
+                bg: '{dark_bg}',
+                card: '{dark_card}',
+                border: '{dark_border}'
+            }} : {{
+                primary: '{primary_color}',
+                secondary: '{secondary_color}',
+                text: '{text_color}',
+                bg: '{bg_color}',
+                card: '{card_bg}',
+                border: '{border_color}'
+            }};
+
+            console.log("Active colors:", activeColors);
+
+            // Set active color variables (our custom ones)
+            root.style.setProperty('--primary-color', activeColors.primary);
+            root.style.setProperty('--secondary-color', activeColors.secondary);
+            root.style.setProperty('--text-color', activeColors.text);
+            root.style.setProperty('--bg-color', activeColors.bg);
+            root.style.setProperty('--card-bg', activeColors.card);
+            root.style.setProperty('--border-color', activeColors.border);
+
+            // ALSO update body element directly to force background/text colors
+            body.style.backgroundColor = activeColors.bg;
+            body.style.color = activeColors.text;
+
+            // Try updating common Quasar CSS variables on body
+            body.style.setProperty('--q-primary', activeColors.primary);
+            body.style.setProperty('--q-secondary', activeColors.secondary);
+            body.style.setProperty('--q-color-primary', activeColors.primary);
+            body.style.setProperty('--q-color-secondary', activeColors.secondary);
+
+            // Update on root as well
+            root.style.setProperty('--q-primary', activeColors.primary);
+            root.style.setProperty('--q-secondary', activeColors.secondary);
+
+            console.log("CSS variables set");
+
+            // Inject/update dynamic CSS rules
+            let styleEl = document.getElementById('dynamic-theme-colors');
+            if (!styleEl) {{
+                styleEl = document.createElement('style');
+                styleEl.id = 'dynamic-theme-colors';
+                document.head.appendChild(styleEl);
+            }}
+
+            // Create CSS rules using the active colors directly (not variables)
+            styleEl.textContent = `
+                /* Force these colors with highest specificity */
+                body, .q-page, .q-drawer, .q-tab-panel {{
+                    background-color: ${{activeColors.bg}} !important;
+                    color: ${{activeColors.text}} !important;
+                }}
+
+                .q-btn:not(.pallete-btn) {{
+                    background-color: ${{activeColors.secondary}} !important;
+                    color: white !important;
+                }}
+
+                .q-tab {{
+                    color: ${{activeColors.text}} !important;
+                }}
+
+                .q-tab--active, .q-tab--active .q-icon {{
+                    color: ${{activeColors.primary}} !important;
+                }}
+
+                .q-card {{
+                    background-color: ${{activeColors.card}} !important;
+                    color: ${{activeColors.text}} !important;
+                    border: 1px solid ${{activeColors.border}} !important;
+                }}
+
+                .q-field, .q-input, .q-select, .q-textarea, .q-icon {{
+                    color: ${{activeColors.text}} !important;
+                }}
+
+                .q-field__control, .q-field__native, .q-field__label {{
+                    color: ${{activeColors.text}} !important;
+                }}
+            `;
+
+            console.log("Dynamic CSS injected");
+            console.log("=== THEME COLORS APPLIED ===");
+        }})();
+    ''')
+
+    print("JavaScript theme update sent")
+    print("===========================")
 
 def is_ipfs_running():
     try:
@@ -1673,27 +1860,102 @@ def main_page():
     ''')
     logo_anim = '/static/logo.json'
 
-    ui.add_css(f"""
-        :root {{
-            --primary-color: {PRIMARY_COLOR};
-            --secondary-color: {SECONDARY_COLOR};
-            --text-color: {TEXT_COLOR};
-            --bg-color: {BG_COLOR};
-            --card-bg: {CARD_BG};
-            --border-color: {BORDER_COLOR};
-        }}
+    # Get stored colors for initial CSS
+    stored_colors = app.storage.user.get('app_colors', {
+        'primary': PRIMARY_COLOR,
+        'secondary': SECONDARY_COLOR,
+        'text-color': TEXT_COLOR,
+        'bg-color': BG_COLOR,
+        'card-bg': CARD_BG,
+        'border-color': BORDER_COLOR,
+        'dark-primary': DARK_PRIMARY,
+        'dark-secondary': DARK_SECONDARY,
+        'dark-text': DARK_TEXT,
+        'dark-bg': DARK_BG,
+        'dark-card': DARK_CARD,
+        'dark-border': DARK_BORDER
+    })
 
-        @media (prefers-color-scheme: dark) {{
+    # Debug: Print stored colors
+    print("=== STORED COLORS FROM STORAGE ===")
+    for key, value in stored_colors.items():
+        print(f"  {key}: {value}")
+    print("==================================")
+
+    # Set default Quasar colors (will be immediately overridden by JavaScript based on dark mode)
+    ui.colors(
+        primary=stored_colors.get('primary', PRIMARY_COLOR),
+        secondary=stored_colors.get('secondary', SECONDARY_COLOR)
+    )
+
+    # Inject initial CSS variables
+    ui.add_head_html(f'''
+        <style>
             :root {{
-                --primary-color: {DARK_PRIMARY};
-                --secondary-color: {DARK_SECONDARY};
-                --text-color: {DARK_TEXT};
-                --bg-color: {DARK_BG};
-                --card-bg: {DARK_CARD};
-                --border-color: {DARK_BORDER};
-            }}
-        }}
+                /* Light mode source colors */
+                --light-primary-color: {stored_colors.get('primary', PRIMARY_COLOR)};
+                --light-secondary-color: {stored_colors.get('secondary', SECONDARY_COLOR)};
+                --light-text-color: {stored_colors.get('text-color', TEXT_COLOR)};
+                --light-bg-color: {stored_colors.get('bg-color', BG_COLOR)};
+                --light-card-bg: {stored_colors.get('card-bg', CARD_BG)};
+                --light-border-color: {stored_colors.get('border-color', BORDER_COLOR)};
 
+                /* Dark mode source colors */
+                --dark-primary-color: {stored_colors.get('dark-primary', DARK_PRIMARY)};
+                --dark-secondary-color: {stored_colors.get('dark-secondary', DARK_SECONDARY)};
+                --dark-text-color: {stored_colors.get('dark-text', DARK_TEXT)};
+                --dark-bg-color: {stored_colors.get('dark-bg', DARK_BG)};
+                --dark-card-bg: {stored_colors.get('dark-card', DARK_CARD)};
+                --dark-border-color: {stored_colors.get('dark-border', DARK_BORDER)};
+
+                /* Active colors default to light mode */
+                --primary-color: var(--light-primary-color);
+                --secondary-color: var(--light-secondary-color);
+                --text-color: var(--light-text-color);
+                --bg-color: var(--light-bg-color);
+                --card-bg: var(--light-card-bg);
+                --border-color: var(--light-border-color);
+            }}
+
+            @media (prefers-color-scheme: dark) {{
+                :root {{
+                    --primary-color: var(--dark-primary-color);
+                    --secondary-color: var(--dark-secondary-color);
+                    --text-color: var(--dark-text-color);
+                    --bg-color: var(--dark-bg-color);
+                    --card-bg: var(--dark-card-bg);
+                    --border-color: var(--dark-border-color);
+                }}
+            }}
+        </style>
+        <script>
+            // Set initial colors based on dark mode
+            (function() {{
+                const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const root = document.documentElement;
+                const body = document.body;
+                console.log("Initial dark mode detection:", isDark);
+
+                if (isDark) {{
+                    console.log("Setting initial colors to DARK mode");
+                    // Update Quasar color variables
+                    body.style.setProperty('--q-primary', '{stored_colors.get('dark-primary', DARK_PRIMARY)}');
+                    body.style.setProperty('--q-secondary', '{stored_colors.get('dark-secondary', DARK_SECONDARY)}');
+                    body.style.setProperty('--q-color-primary', '{stored_colors.get('dark-primary', DARK_PRIMARY)}');
+                    body.style.setProperty('--q-color-secondary', '{stored_colors.get('dark-secondary', DARK_SECONDARY)}');
+                }} else {{
+                    console.log("Setting initial colors to LIGHT mode");
+                    // Update Quasar color variables
+                    body.style.setProperty('--q-primary', '{stored_colors.get('primary', PRIMARY_COLOR)}');
+                    body.style.setProperty('--q-secondary', '{stored_colors.get('secondary', SECONDARY_COLOR)}');
+                    body.style.setProperty('--q-color-primary', '{stored_colors.get('primary', PRIMARY_COLOR)}');
+                    body.style.setProperty('--q-color-secondary', '{stored_colors.get('secondary', SECONDARY_COLOR)}');
+                }}
+            }})();
+        </script>
+    ''')
+
+    ui.add_css("""
         /* Buttons */
         .q-btn, .q-button-item, .q-button--standard, .q-button--fab {{
             background-color: var(--secondary-color) !important;
@@ -1825,17 +2087,34 @@ def main_page():
                 
             state_container = ui.row().classes('items-center')
         
-        # Right side: Lottie animation and close button
+        # Right side: Dark mode toggle, Lottie animation and close button
         with ui.row().classes('items-center gap-2 pr-2'):
+            # Dark mode toggle
+            ui.dark_mode()
+
             ui.html(f'''
-                <lottie-player 
-                    src="{logo_anim}" 
-                    loop 
-                    autoplay 
+                <lottie-player
+                    src="{logo_anim}"
+                    loop
+                    autoplay
                     style="width: 192px; height: 96px;"
                 ></lottie-player>
             ''', sanitize=False)
             # ui.button(icon='close', on_click=close_app).classes('outline q-secondary-color').props('flat')
+
+    # Define color change handler (defined here so it's in scope for color pickers below)
+    def on_color_change():
+        """Handle color picker changes - save and apply theme"""
+        print("\n=== COLOR PICKER CHANGED ===")
+        print("Saving and reapplying theme...")
+        persistent_save_data()
+        # Reapply theme colors when user changes them
+        apply_theme_colors()
+        print("===========================\n")
+
+    # Apply theme colors on page load
+    # CSS media queries automatically switch between light/dark mode colors
+    ui.timer(0.2, apply_theme_colors, once=True)
 
     # Add a floating button to toggle header/footer visibility
     fab = ui.button(icon='visibility', color='primary').classes('fixed-bottom-right q-mb-xl q-mr-xl shadow-5')
@@ -2003,12 +2282,16 @@ def main_page():
                                                     btn._props['no-caps'] = True
                                                     btn._props['flat'] = True
                                                     btn.style(f'background-color: {value} !important;')
-                                                    def update_btn_color(e, b=btn):
-                                                        b.style(f'background-color: {e.color} !important;')
-                                                    color_picker = ui.color_picker(on_pick=update_btn_color)
+                                                    def make_color_handler(color_key, btn_ref):
+                                                        def handler(e):
+                                                            # e.color contains the actual hex color value
+                                                            btn_ref.style(f'background-color: {e.color} !important;')
+                                                            app.storage.user['app_colors'][color_key] = e.color
+                                                            print(f"Color changed: {color_key} = {e.color}")
+                                                            on_color_change()
+                                                        return handler
+                                                    color_picker = ui.color_picker(on_pick=make_color_handler(key, btn))
                                                     color_picker.value = value
-                                                    color_picker.on('update:model-value', lambda e, k=key: app_colors.update({k: color_picker.value}))
-                                                    color_picker.on_value_change(persistent_save_data)
                                 with ui.card().classes('w-full') as dark_colors:
                                     ui.label('dark').classes('text-md font-medium')
                                     with ui.row().classes('w-full items-center'):
@@ -2018,22 +2301,19 @@ def main_page():
                                                     btn._props['no-caps'] = True
                                                     btn._props['flat'] = True
                                                     btn.style(f'background-color: {value} !important;')
-                                                    def update_btn_color(e, b=btn):
-                                                        b.style(f'background-color: {e.color} !important;')
-                                                    color_picker = ui.color_picker(on_pick=update_btn_color)
+                                                    def make_color_handler(color_key, btn_ref):
+                                                        def handler(e):
+                                                            # e.color contains the actual hex color value
+                                                            btn_ref.style(f'background-color: {e.color} !important;')
+                                                            app.storage.user['app_colors'][color_key] = e.color
+                                                            print(f"Color changed: {color_key} = {e.color}")
+                                                            on_color_change()
+                                                        return handler
+                                                    color_picker = ui.color_picker(on_pick=make_color_handler(key, btn))
                                                     color_picker.value = value
-                                                    color_picker.on('update:model-value', lambda e, k=key: app_colors.update({k: color_picker.value}))
-                                                    color_picker.on_value_change(persistent_save_data)
-                                #TODO: NEED TO FIX LOGIC FOR UPDATING APP COLORS
-                                app_colors_card.visible = False
-                                dark_colors.visible = False
-                                light_colors.visible = False
-                                # if ui.dark_mode:
-                                #     dark_colors.visible = True
-                                #     light_colors.visible = False
-                                # else:
-                                #     dark_colors.visible = False
-                                #     light_colors.visible = True
+                                # Show both color palettes so user can edit both
+                                light_colors.visible = True
+                                dark_colors.visible = True
                                         
                                     
 
