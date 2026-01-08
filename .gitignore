@@ -1,6 +1,17 @@
 
-.nicegui/storage-user-7ae7d385-5ed2-4927-b07a-4ea25cef53e6.json
+.nicegui/
+.claude/
 
 __pycache__/
 
 data.json
+
+# Build artifacts
+build/
+release/
+dist/
+*.egg-info/
+
+# Generated icons
+/icon.ico
+/icon.icns

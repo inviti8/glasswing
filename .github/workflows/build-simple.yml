@@ -1,0 +1,213 @@
+name: Build Simple Cross-Platform
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          imagemagick libmagickwand-dev \
+          libexiv2-27 libexiv2-dev \
+          libxcb-xinerama0 libxcb-cursor0 \
+          libwebkit2gtk-4.0-37
+
+    - name: Install ExifTool
+      run: |
+        wget https://exiftool.org/Image-ExifTool-12.70.tar.gz
+        tar -xzf Image-ExifTool-12.70.tar.gz
+        cd Image-ExifTool-12.70
+        perl Makefile.PL
+        make
+        sudo make install
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller pillow
+
+    - name: Generate icons
+      run: python scripts/generate_icons.py
+
+    - name: Build Linux executable
+      run: python scripts/build_cross_platform.py
+
+    - name: Upload Linux build
+      uses: actions/upload-artifact@v4
+      with:
+        name: glasswing-linux
+        path: build/dist/glasswing
+        retention-days: 30
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller pillow
+
+    - name: Generate icons
+      run: python scripts/generate_icons.py
+
+    - name: Build Windows executable
+      run: python scripts/build_cross_platform.py
+
+    - name: Upload Windows build
+      uses: actions/upload-artifact@v4
+      with:
+        name: glasswing-windows
+        path: build/dist/glasswing.exe
+        retention-days: 30
+
+  build-macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-latest
+            arch: arm64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        brew install imagemagick exiftool
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller pillow icnsutil
+
+    - name: Generate icons
+      run: python scripts/generate_icons.py
+
+    - name: Build macOS executable
+      run: python scripts/build_cross_platform.py
+
+    - name: Create ZIP
+      run: |
+        cd build/dist
+        zip -r glasswing-${{ matrix.arch }}.zip glasswing.app
+
+    - name: Upload macOS build
+      uses: actions/upload-artifact@v4
+      with:
+        name: glasswing-macos-${{ matrix.arch }}
+        path: build/dist/glasswing-${{ matrix.arch }}.zip
+        retention-days: 30
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all builds
+      uses: actions/download-artifact@v4
+      with:
+        path: builds
+
+    - name: Create release package
+      run: |
+        mkdir -p release
+        cp builds/glasswing-linux/glasswing release/glasswing-linux
+        cp builds/glasswing-windows/glasswing.exe release/glasswing-windows.exe
+        cp builds/glasswing-macos-amd64/*.zip release/
+        cp builds/glasswing-macos-arm64/*.zip release/
+
+    - name: Create installation guide
+      run: |
+        cat > release/INSTALL.txt << 'EOF'
+        # Glasswing Installation Guide
+
+        ## Prerequisites
+
+        Glasswing requires the following native tools to be installed:
+
+        ### Windows
+        1. ImageMagick: https://imagemagick.org/script/download.php#windows
+           - Select 16-bit dynamic version
+           - During installation, check "Add to PATH"
+        2. ExifTool: https://exiftool.org/
+           - Download and add to PATH
+        3. (Optional) IPFS Desktop: https://docs.ipfs.tech/install/ipfs-desktop/
+
+        ### macOS
+        brew install imagemagick exiftool
+        # Optional: brew install ipfs
+
+        ### Linux (Ubuntu/Debian)
+        sudo apt install imagemagick libmagickwand-dev exiftool libexiv2-27
+        # Optional: sudo apt install ipfs
+
+        ## Installation
+
+        ### Linux
+        chmod +x glasswing-linux
+        ./glasswing-linux
+
+        ### Windows
+        Double-click glasswing-windows.exe or run from command prompt.
+
+        ### macOS
+        1. Unzip the appropriate file for your architecture:
+           - Intel Macs: glasswing-amd64.zip
+           - Apple Silicon: glasswing-arm64.zip
+        2. Move glasswing.app to Applications
+        3. Right-click and select "Open" (first time only, due to Gatekeeper)
+
+        ## Notes
+
+        - IPFS Features: Require IPFS daemon running at 127.0.0.1:5001
+        - Font Licensing: OCR-A.ttf is copyrighted by Monotype (1994)
+
+        For detailed documentation, see docs/INSTALL.md in the repository.
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release/*
+        body_path: release/INSTALL.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
