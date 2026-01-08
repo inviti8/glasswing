@@ -64,7 +64,7 @@ pending_browser_html = None
 app.native.window_args['resizable'] = True
 app.native.start_args['debug'] = True
 app.native.settings['ALLOW_DOWNLOADS'] = True
-app.native.window_args['title'] = 'Glass Wing'
+app.native.window_args['title'] = 'Andromica'
 #app.native.window_args['frameless'] = True
 
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
@@ -468,10 +468,17 @@ def apply_theme_colors():
                     color: ${{activeColors.primary}} !important;
                 }}
 
-                .q-card {{
+                .q-card:not(.card-no-border) {{
                     background-color: ${{activeColors.card}} !important;
                     color: ${{activeColors.text}} !important;
                     border: 1px solid ${{activeColors.border}} !important;
+                }}
+
+                /* Explicitly keep card-no-border transparent */
+                .card-no-border {{
+                    background-color: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
                 }}
 
                 .q-field, .q-input, .q-select, .q-textarea, .q-icon {{
@@ -1221,6 +1228,30 @@ async def process_debug_deploy_gallery():
             jinja_env = Environment(loader=FileSystemLoader(template_dir))
             template = jinja_env.get_template('gallery.html')
 
+            # Get current color scheme
+            app_colors = app.storage.user.get('app_colors', {})
+            is_dark_mode = app.storage.user.get('dark_mode', None)
+
+            # Choose colors based on dark mode setting
+            if is_dark_mode:
+                colors = {
+                    'primary': app_colors.get('dark-primary', DARK_PRIMARY),
+                    'secondary': app_colors.get('dark-secondary', DARK_SECONDARY),
+                    'text': app_colors.get('dark-text', DARK_TEXT),
+                    'bg': app_colors.get('dark-bg', DARK_BG),
+                    'card': app_colors.get('dark-card', DARK_CARD),
+                    'border': app_colors.get('dark-border', DARK_BORDER)
+                }
+            else:
+                colors = {
+                    'primary': app_colors.get('primary', PRIMARY_COLOR),
+                    'secondary': app_colors.get('secondary', SECONDARY_COLOR),
+                    'text': app_colors.get('text-color', TEXT_COLOR),
+                    'bg': app_colors.get('bg-color', BG_COLOR),
+                    'card': app_colors.get('card-bg', CARD_BG),
+                    'border': app_colors.get('border-color', BORDER_COLOR)
+                }
+
             # Render the template with the data pod and gateway configuration
             template_context = {
                 'data_pod': data_pod,
@@ -1228,7 +1259,9 @@ async def process_debug_deploy_gallery():
                 'ipfs_webui': ipfs_webui,
                 'ipfs_webui_port': ipfs_webui_port,
                 'gallery_title': app.storage.user.get('gallery_title', ''),
-                'gallery_description': app.storage.user.get('gallery_description', '')
+                'gallery_description': app.storage.user.get('gallery_description', ''),
+                'colors': colors,
+                'is_dark_mode': is_dark_mode
             }
             html_content = template.render(**template_context)
 
@@ -2046,7 +2079,7 @@ def main_page():
             }}
 
             /* Cards and dialogs */
-            .q-card, .q-dialog, .q-menu, .q-tooltip {{
+            .q-card:not(.card-no-border), .q-dialog, .q-menu, .q-tooltip {{
                 background-color: var(--card-bg) !important;
                 color: var(--text-color) !important;
                 border: 1px solid var(--border-color) !important;
