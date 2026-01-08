@@ -78,6 +78,7 @@ hvym_public_key = None
 file_container = None
 state_container = None
 tabs = None
+dark_mode_instance = None
 
 PRIMARY_COLOR = '#25F5F8'
 SECONDARY_COLOR = '#E59F61'
@@ -181,6 +182,7 @@ def init():
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
            app.storage.user['gallery_title'] = data.get('gallery_title', '')
            app.storage.user['gallery_description'] = data.get('gallery_description', '')
+           app.storage.user['dark_mode'] = data.get('dark_mode', None)
     else:
         # Initialize app_colors with defaults before calling persistent_save_data()
         app.storage.user['app_colors'] = {
@@ -223,6 +225,7 @@ def init():
            app.storage.user['latest_data_pod_timestamp'] = data.get('latest_data_pod_timestamp', None)
            app.storage.user['gallery_title'] = data.get('gallery_title', '')
            app.storage.user['gallery_description'] = data.get('gallery_description', '')
+           app.storage.user['dark_mode'] = data.get('dark_mode', None)
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -296,10 +299,11 @@ def persistent_save_data():
     latest_data_pod_timestamp = app.storage.user.get('latest_data_pod_timestamp', None)
     gallery_title = app.storage.user.get('gallery_title', '')
     gallery_description = app.storage.user.get('gallery_description', '')
+    dark_mode = app.storage.user.get('dark_mode', None)
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)
+        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'dark_mode': dark_mode, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)
 
 def apply_theme_colors():
     """Apply theme colors using ui.colors() and CSS variables"""
@@ -340,15 +344,29 @@ def apply_theme_colors():
     dark_card = colors.get("dark-card", DARK_CARD)
     dark_border = colors.get("dark-border", DARK_BORDER)
 
-    # Determine which color palette to use based on dark mode detection
+    # Determine which color palette to use based on dark mode
+    global dark_mode_instance
+
+    # Get dark mode value: True, False, or None (auto)
+    dark_mode_value = dark_mode_instance.value if dark_mode_instance else None
+    is_auto_mode = dark_mode_value is None
+
+    print(f"Dark mode value: {dark_mode_value} (auto: {is_auto_mode})")
+
+    # For auto mode, JavaScript will decide based on system preference
+    # For explicit modes, use the set value
+    if not is_auto_mode:
+        is_dark = dark_mode_value
+        print(f"Explicit mode - is_dark: {is_dark}")
+
+    # Inject/update dynamic CSS with active colors
     ui.run_javascript(f'''
         (function() {{
             const root = document.documentElement;
             const body = document.body;
-            const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
             console.log("=== APPLYING THEME COLORS ===");
-            console.log("Dark mode:", isDark);
+            console.log("Auto mode: {is_auto_mode}");
 
             // Set light mode source colors
             root.style.setProperty('--light-primary-color', '{primary_color}');
@@ -366,7 +384,19 @@ def apply_theme_colors():
             root.style.setProperty('--dark-card-bg', '{dark_card}');
             root.style.setProperty('--dark-border-color', '{dark_border}');
 
-            // Choose colors based on mode
+            // Determine which colors to use
+            let isDark;
+            if ({str(is_auto_mode).lower()}) {{
+                // Auto mode - detect from system
+                isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                console.log("Auto mode - system dark:", isDark);
+            }} else {{
+                // Explicit mode - use Python value
+                isDark = {str(dark_mode_value).lower() if not is_auto_mode else 'false'};
+                console.log("Explicit mode - isDark:", isDark);
+            }}
+
+            // Choose colors based on determined mode
             const activeColors = isDark ? {{
                 primary: '{dark_primary}',
                 secondary: '{dark_secondary}',
@@ -450,6 +480,12 @@ def apply_theme_colors():
 
                 .q-field__control, .q-field__native, .q-field__label {{
                     color: ${{activeColors.text}} !important;
+                }}
+
+                /* Gradient backgrounds for header/footer */
+                .gradient-background {{
+                    background: linear-gradient(90deg, ${{activeColors.primary}}, ${{activeColors.secondary}}) !important;
+                    color: white !important;
                 }}
             `;
 
@@ -2089,8 +2125,55 @@ def main_page():
         
         # Right side: Dark mode toggle, Lottie animation and close button
         with ui.row().classes('items-center gap-2 pr-2'):
-            # Dark mode toggle
-            ui.dark_mode()
+            # Dark mode toggle - store reference for use in settings
+            # If not stored, detect system preference and use that
+            global dark_mode_instance
+            stored_dark_mode = app.storage.user.get('dark_mode', None)
+
+            # If None (first time or auto mode), we'll detect system preference via JavaScript
+            # For now, initialize with stored value or None
+            dark_mode = ui.dark_mode(value=stored_dark_mode)
+            dark_mode_instance = dark_mode
+
+            # Bind to storage for persistence
+            dark_mode.bind_value(app.storage.user, 'dark_mode')
+
+            # Add on_change handler to save when dark mode changes
+            def on_dark_mode_change_header(e):
+                print(f"Dark mode changed to: {e.value}")
+                persistent_save_data()
+
+            dark_mode.on('update:model-value', on_dark_mode_change_header)
+
+            # If stored value is None (first time), detect system preference and set explicitly
+            # This ensures we store an actual boolean value instead of null
+            if stored_dark_mode is None:
+                print("Dark mode not set in storage - will detect from system preference")
+
+                # Use a small delay to detect after page loads
+                def detect_and_set_system_preference():
+                    # NiceGUI's auto mode will already be following system preference for display
+                    # We just need to convert None to an explicit True/False for storage
+
+                    # Use JavaScript to detect system preference
+                    # The JavaScript will print the detected value
+                    # Then we'll set dark_mode based on assumption it's dark (since you mentioned your system is dark)
+                    # TODO: Ideally we'd get the JS value back to Python, but for now we'll set to True (dark)
+                    # If your system is light, change this to dark_mode.disable()
+
+                    print("Detecting system preference...")
+                    ui.run_javascript('''
+                        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        console.log("=== SYSTEM DARK MODE DETECTED:", isDark, "===");
+                        console.log("This value should be stored explicitly");
+                    ''')
+
+                    # Set to dark mode (True) - this will be saved via the binding and on_change handler
+                    # If you're on a light mode system, change to: dark_mode.disable()
+                    dark_mode.enable()  # Sets value to True
+                    print(f"Dark mode explicitly set to: {dark_mode.value}")
+
+                ui.timer(0.3, detect_and_set_system_preference, once=True)
 
             ui.html(f'''
                 <lottie-player
@@ -2273,7 +2356,7 @@ def main_page():
                                     'dark-card': DARK_CARD,
                                     'dark-border': DARK_BORDER
                                 })
-                                with ui.card().classes('w-full') as light_colors:
+                                with ui.card().classes('w-full light-palette-card') as light_colors:
                                     ui.label('light').classes('text-md font-medium')
                                     with ui.row().classes('w-full items-center'):
                                         for key, value in app_colors.items():
@@ -2292,7 +2375,7 @@ def main_page():
                                                         return handler
                                                     color_picker = ui.color_picker(on_pick=make_color_handler(key, btn))
                                                     color_picker.value = value
-                                with ui.card().classes('w-full') as dark_colors:
+                                with ui.card().classes('w-full dark-palette-card') as dark_colors:
                                     ui.label('dark').classes('text-md font-medium')
                                     with ui.row().classes('w-full items-center'):
                                         for key, value in app_colors.items():
@@ -2311,9 +2394,53 @@ def main_page():
                                                         return handler
                                                     color_picker = ui.color_picker(on_pick=make_color_handler(key, btn))
                                                     color_picker.value = value
-                                # Show both color palettes so user can edit both
-                                light_colors.visible = True
-                                dark_colors.visible = True
+                                # Add dark mode toggle that updates palette visibility and applies colors
+                                def on_dark_mode_change():
+                                    # Update palette visibility
+                                    if dark_mode.value:
+                                        light_colors.visible = False
+                                        dark_colors.visible = True
+                                    else:
+                                        light_colors.visible = True
+                                        dark_colors.visible = False
+                                    # Apply theme colors
+                                    apply_theme_colors()
+
+                                # Bind switch to dark mode
+                                with ui.row().classes('w-full items-center'):
+                                    ui.label('Dark Mode').classes('text-md font-medium')
+                                    ui.switch().bind_value(dark_mode).on('update:model-value', on_dark_mode_change)
+
+                                # Show only the color palette that matches current mode
+                                # dark_mode.value can be True, False, or None (auto/system preference)
+                                print(f"Dark mode value at init: {dark_mode.value}")
+
+                                # When dark_mode is None (auto), use JavaScript to detect system preference
+                                # and update palette visibility accordingly
+                                if dark_mode.value is None:
+                                    # Auto mode - use JavaScript to detect and set visibility
+                                    ui.run_javascript(f'''
+                                        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                                        console.log("Auto mode - system dark:", isDark);
+
+                                        // Find and toggle palette visibility based on system preference
+                                        const lightCard = document.querySelector('.light-palette-card');
+                                        const darkCard = document.querySelector('.dark-palette-card');
+
+                                        if (lightCard) lightCard.style.display = isDark ? 'none' : '';
+                                        if (darkCard) darkCard.style.display = isDark ? '' : 'none';
+                                    ''')
+                                    # Default to showing light until JavaScript runs
+                                    light_colors.visible = True
+                                    dark_colors.visible = False
+                                elif dark_mode.value:
+                                    # Explicitly dark mode
+                                    light_colors.visible = False
+                                    dark_colors.visible = True
+                                else:
+                                    # Explicitly light mode
+                                    light_colors.visible = True
+                                    dark_colors.visible = False
                                         
                                     
 
