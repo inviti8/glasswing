@@ -321,6 +321,151 @@ async def add_subscriber_dialog(on_save):
     dialog.open()
     return
 
+async def add_subscription_dialog(on_save):
+    """Dialog for adding a subscription to a Pintheon channel."""
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            ui.label('Add Subscription').classes('text-xl font-bold mb-4')
+            ui.label('Subscribe to a Pintheon channel to receive content').classes('text-sm text-gray-500 mb-4')
+
+            with ui.column().classes('w-full gap-4'):
+                name_input = ui.input('Subscription Name',
+                                      placeholder='e.g., My Favorite Channel') \
+                    .classes('w-full')
+
+                url_input = ui.input('Pintheon Node URL',
+                                     placeholder='e.g., https://some-pintheon.com') \
+                    .classes('w-full')
+
+                ipns_input = ui.input('IPNS Hash',
+                                      placeholder='e.g., k51qzi5uqu5d...') \
+                    .classes('w-full')
+
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+                ui.button('Add Subscription', on_click=lambda: (
+                    on_save(name_input.value, url_input.value, ipns_input.value),
+                    dialog.close()
+                )).props('flat color=primary')
+
+    dialog.open()
+    return
+
+def view_subscriptions_dialog():
+    """Dialog for viewing and managing subscriptions."""
+    subscriptions = app.storage.user.get('subscriptions', [])
+
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Subscriptions').classes('text-xl font-bold mb-4')
+
+            if not subscriptions:
+                ui.label('No subscriptions yet. Add one to get started!').classes('text-gray-500')
+            else:
+                with ui.column().classes('w-full gap-2'):
+                    for sub in subscriptions:
+                        with ui.card().classes('w-full'):
+                            with ui.row().classes('w-full items-center justify-between'):
+                                with ui.column().classes('gap-1'):
+                                    ui.label(sub.get('name', 'Unknown')).classes('font-bold')
+                                    ui.label(sub.get('url', '')).classes('text-sm text-gray-500')
+                                    ui.label(f"IPNS: {sub.get('ipns_hash', '')[:20]}...").classes('text-xs text-gray-400')
+                                with ui.row().classes('gap-2'):
+                                    ui.button(icon='sync', on_click=lambda s=sub: fetch_and_notify(s['name'], dialog)).props('flat round').tooltip('Fetch Content')
+                                    ui.button(icon='delete', on_click=lambda s=sub: remove_and_refresh(s['name'], dialog)).props('flat round color=negative').tooltip('Remove')
+
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button('Close', on_click=dialog.close).props('flat')
+
+    dialog.open()
+
+async def fetch_and_notify(name, dialog):
+    """Helper to fetch subscription content and show notification."""
+    from main import fetch_subscription_content
+    dialog.close()
+    await fetch_subscription_content(name)
+
+async def remove_and_refresh(name, dialog):
+    """Helper to remove subscription and refresh dialog."""
+    from main import remove_subscription
+    await remove_subscription(name)
+    dialog.close()
+    view_subscriptions_dialog()
+
+def select_channel_dialog(on_select):
+    """
+    Dialog for selecting a channel (data pod) from a subscription.
+
+    Args:
+        on_select: Callback function(subscription_name, channel_info) when a channel is selected
+    """
+    subscriptions = app.storage.user.get('subscriptions', [])
+    fetched_subscriptions = app.storage.user.get('fetched_subscriptions', {})
+
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Select Channel').classes('text-xl font-bold mb-4')
+
+            if not subscriptions:
+                ui.label('No subscriptions yet. Add a subscription first!').classes('text-gray-500')
+            else:
+                # Subscription selector
+                subscription_names = [s['name'] for s in subscriptions]
+                selected_sub = ui.select(
+                    label='Select Subscription',
+                    options=subscription_names,
+                    value=subscription_names[0] if subscription_names else None
+                ).classes('w-full mb-4')
+
+                # Channel list container
+                channel_container = ui.column().classes('w-full gap-2')
+
+                async def load_channels():
+                    """Load channels for the selected subscription."""
+                    channel_container.clear()
+                    sub_name = selected_sub.value
+                    if not sub_name:
+                        return
+
+                    # Get subscription info
+                    sub = next((s for s in subscriptions if s['name'] == sub_name), None)
+                    if not sub:
+                        return
+
+                    with channel_container:
+                        ui.label('Loading channels...').classes('text-gray-500')
+
+                    # Fetch channels from the subscription
+                    from main import fetch_subscription_channels
+                    channels = await fetch_subscription_channels(sub_name)
+
+                    channel_container.clear()
+                    with channel_container:
+                        if not channels:
+                            ui.label('No channels found. Try fetching the subscription first.').classes('text-gray-500')
+                        else:
+                            for channel in channels:
+                                with ui.card().classes('w-full cursor-pointer hover:bg-gray-100'):
+                                    with ui.row().classes('w-full items-center justify-between'):
+                                        with ui.column().classes('gap-1'):
+                                            ui.label(channel.get('name', 'Unknown Channel')).classes('font-bold')
+                                            ui.label(channel.get('description', '')).classes('text-sm text-gray-500')
+                                        ui.button('Select', on_click=lambda c=channel: (
+                                            on_select(sub_name, c),
+                                            dialog.close()
+                                        )).props('flat color=primary')
+
+                # Load channels when subscription changes
+                selected_sub.on('update:model-value', lambda: load_channels())
+
+                # Initial load
+                ui.timer(0.1, load_channels, once=True)
+
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+
+    dialog.open()
+
 def gallery_info_dialog():
     """Dialog for setting gallery title and description."""
     with ui.dialog() as dialog:

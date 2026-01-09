@@ -1631,22 +1631,266 @@ async def remove_subscriber(name):
 async def get_subscribers():
     return app.storage.user.get('subscribers', [])
 
-async def add_subscription(name, public_key):
+async def add_subscription(name, url, ipns_hash):
+    """
+    Add a subscription to a Pintheon node channel.
+
+    Args:
+        name: User-created name for the subscription
+        url: Pintheon node URL (e.g., 'https://some-pintheon.com')
+        ipns_hash: IPNS hash for the content channel
+    """
     subscriptions = app.storage.user.get('subscriptions', [])
-    subscriptions.append({'name': name, 'public_key': public_key})
+    # Check if subscription with this name already exists
+    for sub in subscriptions:
+        if sub['name'] == name:
+            ui.notify(f'Subscription "{name}" already exists', type='warning')
+            return
+    subscriptions.append({'name': name, 'url': url, 'ipns_hash': ipns_hash})
     app.storage.user['subscriptions'] = subscriptions
     persistent_save_data()
-    ui.notify(f'Added subscription for {name}')
+    ui.notify(f'Added subscription: {name}')
 
 async def remove_subscription(name):
+    """Remove a subscription by name."""
     subscriptions = app.storage.user.get('subscriptions', [])
-    subscriptions = [s for s in subscribers if s['name'] != name]
-    app.storage.user['subscriptions'] = subscribers
+    subscriptions = [s for s in subscriptions if s['name'] != name]
+    app.storage.user['subscriptions'] = subscriptions
     persistent_save_data()
-    ui.notify(f'Removed subscription for {name}')
+    ui.notify(f'Removed subscription: {name}')
 
 async def get_subscriptions():
-    return app.storage.user.get('subscriptions', [])    
+    """Get all subscriptions."""
+    return app.storage.user.get('subscriptions', [])
+
+async def fetch_subscription_content(subscription_name):
+    """
+    Fetch content from a subscription's IPNS address and copy to local IPFS.
+
+    Args:
+        subscription_name: Name of the subscription to fetch
+
+    Returns:
+        List of fetched file info dicts, or None on failure
+    """
+    subscriptions = app.storage.user.get('subscriptions', [])
+    subscription = None
+    for sub in subscriptions:
+        if sub['name'] == subscription_name:
+            subscription = sub
+            break
+
+    if not subscription:
+        ui.notify(f'Subscription "{subscription_name}" not found', type='negative')
+        return None
+
+    url = subscription.get('url')
+    ipns_hash = subscription.get('ipns_hash')
+
+    if not url or not ipns_hash:
+        ui.notify('Invalid subscription data', type='negative')
+        return None
+
+    try:
+        # Resolve IPNS to get the current CID via the Pintheon node's gateway
+        # The Pintheon node acts as an IPFS gateway, serving content at /ipns/<hash>
+        gateway_url = f"{url.rstrip('/')}/ipns/{ipns_hash}"
+
+        ui.notify(f'Fetching content from {subscription_name}...', type='info')
+        print(f"Fetching IPNS content from: {gateway_url}")
+
+        # First, try to resolve the IPNS to get directory listing
+        # We'll fetch the content and copy files to local MFS
+        response = requests.get(gateway_url, timeout=60)
+
+        if response.status_code != 200:
+            ui.notify(f'Failed to fetch content: HTTP {response.status_code}', type='negative')
+            return None
+
+        # Ensure local MFS directory exists for this subscription
+        mfs_folder = f"subscriptions/{subscription_name}"
+        ipns_ensure_folder(mfs_folder)
+
+        # The response should be the directory content
+        # For now, we'll save the raw content and handle it
+        # In a full implementation, we'd parse the directory listing
+
+        content_type = response.headers.get('Content-Type', '')
+        print(f"Content-Type: {content_type}")
+
+        # If it's a UnixFS directory, we need to handle it differently
+        # For now, let's store info about what we fetched
+        fetched_info = {
+            'subscription': subscription_name,
+            'ipns_hash': ipns_hash,
+            'gateway_url': gateway_url,
+            'content_type': content_type,
+            'size': len(response.content)
+        }
+
+        # Store the fetched content info
+        fetched_subscriptions = app.storage.user.get('fetched_subscriptions', {})
+        fetched_subscriptions[subscription_name] = fetched_info
+        app.storage.user['fetched_subscriptions'] = fetched_subscriptions
+
+        ui.notify(f'Fetched content from {subscription_name}', type='positive')
+        return fetched_info
+
+    except requests.exceptions.RequestException as e:
+        ui.notify(f'Error fetching subscription: {str(e)}', type='negative')
+        print(f"Error fetching subscription content: {e}")
+        return None
+
+async def fetch_subscription_channels(subscription_name):
+    """
+    Fetch available channels (data pods) from a subscription.
+
+    Args:
+        subscription_name: Name of the subscription
+
+    Returns:
+        List of channel info dicts, or empty list on failure
+    """
+    subscriptions = app.storage.user.get('subscriptions', [])
+    subscription = None
+    for sub in subscriptions:
+        if sub['name'] == subscription_name:
+            subscription = sub
+            break
+
+    if not subscription:
+        return []
+
+    url = subscription.get('url')
+    ipns_hash = subscription.get('ipns_hash')
+
+    if not url or not ipns_hash:
+        return []
+
+    try:
+        # Fetch the directory listing from the IPNS address
+        gateway_url = f"{url.rstrip('/')}/ipns/{ipns_hash}"
+        print(f"Fetching channels from: {gateway_url}")
+
+        response = requests.get(gateway_url, timeout=60)
+
+        if response.status_code != 200:
+            print(f"Failed to fetch channels: HTTP {response.status_code}")
+            return []
+
+        content_type = response.headers.get('Content-Type', '')
+
+        # If it's JSON, try to parse as a data pod or list of data pods
+        if 'json' in content_type.lower():
+            data = response.json()
+            # If it's a single data pod (NINJS format)
+            if isinstance(data, dict) and 'items' in data:
+                return [{
+                    'name': data.get('uri', 'Channel'),
+                    'description': f"{len(data.get('items', []))} items",
+                    'data': data
+                }]
+            # If it's a list of data pods
+            elif isinstance(data, list):
+                return [{'name': item.get('uri', f'Channel {i}'), 'description': '', 'data': item} for i, item in enumerate(data)]
+
+        # If it's HTML (directory listing), try to parse links
+        if 'html' in content_type.lower():
+            # For now, return a placeholder indicating we need to parse the directory
+            # In a full implementation, we'd parse the HTML for links to data pods
+            return [{
+                'name': subscription_name,
+                'description': 'Directory content available',
+                'url': gateway_url
+            }]
+
+        return []
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching channels: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Error parsing channel data: {e}")
+        return []
+
+async def select_channel(subscription_name, channel_info):
+    """
+    Handle selection of a channel (data pod) from a subscription.
+
+    Args:
+        subscription_name: Name of the subscription
+        channel_info: Channel info dict with name, description, and data/url
+    """
+    global pending_browser_html
+
+    print(f"Selected channel: {channel_info.get('name')} from {subscription_name}")
+
+    # If we have the data pod directly, render it
+    if 'data' in channel_info:
+        data_pod = channel_info['data']
+
+        # Set up Jinja2 environment
+        template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+        jinja_env = Environment(loader=FileSystemLoader(template_dir))
+        template = jinja_env.get_template('gallery.html')
+
+        # Get current color scheme
+        app_colors = app.storage.user.get('app_colors', {})
+        is_dark_mode = app.storage.user.get('dark_mode', None)
+
+        if is_dark_mode:
+            colors = {
+                'primary': app_colors.get('dark-primary', DARK_PRIMARY),
+                'secondary': app_colors.get('dark-secondary', DARK_SECONDARY),
+                'text': app_colors.get('dark-text', DARK_TEXT),
+                'bg': app_colors.get('dark-bg', DARK_BG),
+                'card': app_colors.get('dark-card', DARK_CARD),
+                'border': app_colors.get('dark-border', DARK_BORDER)
+            }
+        else:
+            colors = {
+                'primary': app_colors.get('primary', PRIMARY_COLOR),
+                'secondary': app_colors.get('secondary', SECONDARY_COLOR),
+                'text': app_colors.get('text-color', TEXT_COLOR),
+                'bg': app_colors.get('bg-color', BG_COLOR),
+                'card': app_colors.get('card-bg', CARD_BG),
+                'border': app_colors.get('border-color', BORDER_COLOR)
+            }
+
+        # Get subscription info for gateway URL
+        subscriptions = app.storage.user.get('subscriptions', [])
+        subscription = next((s for s in subscriptions if s['name'] == subscription_name), None)
+        gateway = subscription.get('url', ipfs_webui + ':' + ipfs_webui_port) if subscription else ipfs_webui + ':' + ipfs_webui_port
+
+        # Render the template
+        template_context = {
+            'data_pod': data_pod,
+            'ipfs_gateway': gateway,
+            'ipfs_webui': gateway.split(':')[0] if ':' in gateway else gateway,
+            'ipfs_webui_port': gateway.split(':')[1] if ':' in gateway else '443',
+            'gallery_title': channel_info.get('name', ''),
+            'gallery_description': channel_info.get('description', ''),
+            'colors': colors,
+            'is_dark_mode': is_dark_mode
+        }
+        html_content = template.render(**template_context)
+
+        # Store for browser view
+        pending_browser_html = html_content
+        app.storage.user['current_channel'] = {
+            'subscription': subscription_name,
+            'channel': channel_info.get('name')
+        }
+
+        ui.notify(f'Channel loaded: {channel_info.get("name")}. Switch to BROWSER tab to view.', type='positive')
+
+    elif 'url' in channel_info:
+        # If we have a URL, fetch and display
+        ui.notify(f'Fetching content from {channel_info.get("name")}...', type='info')
+        # Could implement fetching and rendering here
+
+    else:
+        ui.notify('No content available for this channel', type='warning')
 
 async def load_iptc_template():
     try:
@@ -2567,8 +2811,9 @@ def main_page():
         with ui.card().classes('w-full card-no-border') as browser_ctrls:
             with ui.fab('web_stories').classes('q-secondary-color'):
                 if is_ipfs_running():
-                    ui.fab_action('subscriptions', on_click=choose_img)
-                    ui.fab_action('add', on_click=choose_img)
+                    ui.fab_action('subscriptions', on_click=lambda: view_subscriptions_dialog()).tooltip('View Subscriptions')
+                    ui.fab_action('add', on_click=lambda: add_subscription_dialog(add_subscription)).tooltip('Add Subscription')
+                    ui.fab_action('play_circle', on_click=lambda: select_channel_dialog(select_channel)).tooltip('Select Channel')
 
 
     with ui.tab_panels(tabs, value='IMAGES').classes('w-full h-full') as tab_panel:
