@@ -518,6 +518,156 @@ def url_valid(url):
     except (requests.exceptions.RequestException, ValueError):
         return False
 
+def is_pintheon_running():
+    """Check if the Pintheon node is running and accessible."""
+    try:
+        response = requests.get(f'{pintheon_endpoint}:{pintheon_port}/', timeout=5)
+        return response.status_code == 200
+    except (requests.exceptions.RequestException, ValueError):
+        return False
+
+def pintheon_create_directory(name, access_token=None):
+    """
+    Create a directory on the Pintheon node using the API.
+
+    Args:
+        name (str): Name of the directory to create
+        access_token (str): Optional access token. If not provided, will try to get from app storage.
+
+    Returns:
+        dict: Response with success status and directories list, or None on failure
+    """
+    if not is_pintheon_running():
+        print("Error: Pintheon node is not running or not accessible")
+        return None
+
+    if not access_token:
+        access_token = app.storage.user.get('access_token')
+        if not access_token:
+            print("Error: No access token provided for Pintheon API")
+            return None
+
+    try:
+        url = f'{pintheon_endpoint}:{pintheon_port}/api_create_directory'
+        data = {
+            'access_token': access_token,
+            'name': name
+        }
+        response = requests.post(url, data=data, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            print(f"Successfully created directory: {name}")
+            return result
+        elif response.status_code == 403:
+            print("Error: Invalid or unauthorized access token")
+            return None
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            print(f"Error creating directory: {error_msg}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating Pintheon directory: {e}")
+        return None
+
+def pintheon_upload_file(file_path, directory=None, encrypted=False, access_token=None):
+    """
+    Upload a file to the Pintheon node using the API.
+
+    Args:
+        file_path (str): Local file path to upload
+        directory (str): Optional MFS directory path to store file
+        encrypted (bool): Whether to encrypt the file
+        access_token (str): Optional access token. If not provided, will try to get from app storage.
+
+    Returns:
+        dict: File info dict with Name, Type, Hash, Size, or None on failure
+    """
+    if not is_pintheon_running():
+        print("Error: Pintheon node is not running or not accessible")
+        return None
+
+    if not access_token:
+        access_token = app.storage.user.get('access_token')
+        if not access_token:
+            print("Error: No access token provided for Pintheon API")
+            return None
+
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        return None
+
+    try:
+        url = f'{pintheon_endpoint}:{pintheon_port}/api_upload'
+
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f)}
+            data = {
+                'access_token': access_token,
+                'encrypted': 'true' if encrypted else 'false'
+            }
+            if directory:
+                data['directory'] = directory
+
+            response = requests.post(url, files=files, data=data, timeout=60)
+
+        if response.status_code == 200:
+            result = response.json()
+            print(f"Successfully uploaded file: {os.path.basename(file_path)}")
+            return result
+        elif response.status_code == 403:
+            print("Error: Invalid or unauthorized access token")
+            return None
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            print(f"Error uploading file: {error_msg}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error uploading to Pintheon: {e}")
+        return None
+
+def pintheon_list_directories(access_token=None):
+    """
+    List directories on the Pintheon node.
+
+    Args:
+        access_token (str): Optional access token. If not provided, will try to get from app storage.
+
+    Returns:
+        list: List of directory dicts with Name and Path, or None on failure
+    """
+    if not is_pintheon_running():
+        print("Error: Pintheon node is not running or not accessible")
+        return None
+
+    if not access_token:
+        access_token = app.storage.user.get('access_token')
+        if not access_token:
+            print("Error: No access token provided for Pintheon API")
+            return None
+
+    try:
+        url = f'{pintheon_endpoint}:{pintheon_port}/api_list_directories'
+        data = {'access_token': access_token}
+        response = requests.post(url, data=data, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('directories', [])
+        elif response.status_code == 403:
+            print("Error: Invalid or unauthorized access token")
+            return None
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            print(f"Error listing directories: {error_msg}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error listing Pintheon directories: {e}")
+        return None
+
 def ipns_folder_exists(folder):
     """
     Check if a folder exists in IPFS MFS.
@@ -1301,6 +1451,168 @@ async def process_debug_deploy_gallery():
     except Exception as e:
         ui.notify(f'Error processing gallery: {str(e)}', type='negative')
         print(f"Error in process_debug_deploy_gallery: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+async def process_pintheon_deploy_gallery():
+    """
+    Deploy gallery data pod and all associated assets to a local Pintheon node.
+    This performs local IPFS operations AND uploads to Pintheon.
+    """
+    try:
+        # Check if Pintheon is running
+        if not is_pintheon_running():
+            ui.notify('Pintheon node is not running', type='negative')
+            return
+
+        # Check for access token
+        access_token = app.storage.user.get('access_token')
+        if not access_token:
+            ui.notify('No access token configured for Pintheon', type='negative')
+            return
+
+        # Get the current gallery state
+        idex = app.storage.user.get('img_state', 1)
+        state = img_states[idex]
+
+        ui.notify(f'Starting Pintheon deployment for {state} gallery...', type='info')
+
+        # Create the NINJS data pod using the existing function
+        output_path = await create_ninjs_data_pod(state)
+
+        # Perform local IPFS operations (same as debug flow)
+        ipns_clean_folder(state)
+        ipns_add_gallery_to_folder(state)
+
+        if not output_path:
+            ui.notify('No valid images found to create data pods', type='warning')
+            return
+
+        ui.notify(f'Data pod created, uploading to Pintheon...', type='info')
+
+        # Create directory on Pintheon for this gallery state
+        directory_name = f'gallery_{state}'
+        dir_result = pintheon_create_directory(directory_name, access_token)
+        if not dir_result:
+            ui.notify(f'Failed to create directory on Pintheon: {directory_name}', type='warning')
+            # Continue anyway - directory might already exist
+
+        # Upload all gallery images to Pintheon
+        hashes = app.storage.user.get(f'{state}_img_hashes', [])
+        uploaded_files = []
+        failed_uploads = []
+
+        for hash_value in hashes:
+            file_info = app.storage.user.get(hash_value)
+            if not file_info:
+                print(f"No file info found for hash: {hash_value}")
+                failed_uploads.append(hash_value)
+                continue
+
+            file_path = file_info.get('path')
+            if not file_path or not os.path.exists(file_path):
+                print(f"File not found: {file_path}")
+                failed_uploads.append(hash_value)
+                continue
+
+            # Upload to Pintheon with directory
+            result = pintheon_upload_file(file_path, directory=directory_name, access_token=access_token)
+            if result:
+                uploaded_files.append(result)
+                print(f"Uploaded to Pintheon: {file_info.get('name')} -> {result.get('Hash')}")
+            else:
+                failed_uploads.append(hash_value)
+                print(f"Failed to upload: {file_info.get('name')}")
+
+        # Upload the data pod JSON file to Pintheon
+        data_pod_result = pintheon_upload_file(output_path, directory=directory_name, access_token=access_token)
+        if data_pod_result:
+            print(f"Uploaded data pod to Pintheon: {data_pod_result.get('Hash')}")
+            app.storage.user['pintheon_data_pod_hash'] = data_pod_result.get('Hash')
+        else:
+            ui.notify('Failed to upload data pod to Pintheon', type='warning')
+
+        # Load the created JSON data pod for HTML rendering
+        with open(output_path, 'r', encoding='utf-8') as f:
+            data_pod = json.load(f)
+
+        # Set up Jinja2 environment
+        template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+        jinja_env = Environment(loader=FileSystemLoader(template_dir))
+        template = jinja_env.get_template('gallery.html')
+
+        # Get current color scheme
+        app_colors = app.storage.user.get('app_colors', {})
+        is_dark_mode = app.storage.user.get('dark_mode', None)
+
+        # Choose colors based on dark mode setting
+        if is_dark_mode:
+            colors = {
+                'primary': app_colors.get('dark-primary', DARK_PRIMARY),
+                'secondary': app_colors.get('dark-secondary', DARK_SECONDARY),
+                'text': app_colors.get('dark-text', DARK_TEXT),
+                'bg': app_colors.get('dark-bg', DARK_BG),
+                'card': app_colors.get('dark-card', DARK_CARD),
+                'border': app_colors.get('dark-border', DARK_BORDER)
+            }
+        else:
+            colors = {
+                'primary': app_colors.get('primary', PRIMARY_COLOR),
+                'secondary': app_colors.get('secondary', SECONDARY_COLOR),
+                'text': app_colors.get('text-color', TEXT_COLOR),
+                'bg': app_colors.get('bg-color', BG_COLOR),
+                'card': app_colors.get('card-bg', CARD_BG),
+                'border': app_colors.get('border-color', BORDER_COLOR)
+            }
+
+        # Render the template with the data pod and gateway configuration
+        template_context = {
+            'data_pod': data_pod,
+            'ipfs_gateway': f"{ipfs_webui}:{ipfs_webui_port}",
+            'ipfs_webui': ipfs_webui,
+            'ipfs_webui_port': ipfs_webui_port,
+            'gallery_title': app.storage.user.get('gallery_title', ''),
+            'gallery_description': app.storage.user.get('gallery_description', ''),
+            'colors': colors,
+            'is_dark_mode': is_dark_mode
+        }
+        html_content = template.render(**template_context)
+
+        # Save the rendered HTML to temp file then add to IPFS
+        timestamp = app.storage.user.get('latest_data_pod_timestamp', datetime.now().strftime("%Y%m%d_%H%M%S"))
+        html_temp_path = os.path.join(tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.html")
+        with open(html_temp_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+
+        # Add HTML to IPFS
+        html_hash = ipfs_add(html_temp_path)
+        if html_hash:
+            app.storage.user['latest_gallery_html_hash'] = html_hash
+            app.storage.user['tmp_files'].append(html_temp_path)
+            print(f"Saved rendered HTML to IPFS: {html_hash}")
+
+        # Upload HTML to Pintheon
+        html_pintheon_result = pintheon_upload_file(html_temp_path, directory=directory_name, access_token=access_token)
+        if html_pintheon_result:
+            app.storage.user['pintheon_gallery_html_hash'] = html_pintheon_result.get('Hash')
+            print(f"Uploaded gallery HTML to Pintheon: {html_pintheon_result.get('Hash')}")
+
+        # Store content for user to view when they switch to BROWSER tab
+        global pending_browser_html
+        pending_browser_html = html_content
+
+        # Report results
+        if failed_uploads:
+            ui.notify(f'Pintheon deployment complete with {len(failed_uploads)} failures. {len(uploaded_files)} files uploaded.', type='warning')
+        else:
+            ui.notify(f'Successfully deployed {len(uploaded_files)} files to Pintheon!', type='positive')
+
+        ui.notify('Gallery ready - switch to BROWSER tab to view', type='positive')
+        persistent_save_data()
+
+    except Exception as e:
+        ui.notify(f'Error deploying to Pintheon: {str(e)}', type='negative')
+        print(f"Error in process_pintheon_deploy_gallery: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -2249,7 +2561,7 @@ def main_page():
                     ui.fab_action('emoji_nature', on_click=lambda: aposematic_dialog(process_dialog, process_aposematic)).tooltip('Create Aposematic images')
                     ui.fab_action('lock', on_click=lambda: cipher_dialog(process_dialog, process_enciphering)).tooltip('Encipher images')
                     # ui.fab_action('lock_open', on_click=lambda: process_dialog(process_deciphering))
-                    ui.fab_action('cloud_upload', on_click=lambda: ui.notify('Upload to IPFS')).tooltip('Deploy to Pintheon')
+                    ui.fab_action('cloud_upload', on_click=lambda: process_dialog(process_pintheon_deploy_gallery)).tooltip('Deploy to Pintheon')
                     ui.fab_action('drive_folder_upload', on_click=lambda: process_dialog(process_debug_deploy_gallery)).tooltip('Local Debug')
             ui.toggle(img_states, on_change=render_gallery).bind_value(app.storage.user, 'img_state')
         with ui.card().classes('w-full card-no-border') as browser_ctrls:
