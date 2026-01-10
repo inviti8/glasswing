@@ -1,4 +1,4 @@
-# Glasswing Installation Guide
+# Andromica Installation Guide
 
 ## System Requirements
 
@@ -10,7 +10,7 @@
 
 ### Required Native Tools
 
-Glasswing requires these native tools to be installed separately:
+Andromica requires these native tools to be installed separately:
 
 #### Windows
 
@@ -102,7 +102,7 @@ These features are optional - the application will work without them.
 To enable IPFS:
 1. Install IPFS Desktop or IPFS daemon
 2. Start the daemon
-3. Restart Glasswing
+3. Restart Andromica
 
 ### macOS "App is damaged" error
 

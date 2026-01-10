@@ -1,8 +1,8 @@
-# Glasswing Build System
+# Andromica Build System
 
 ## Overview
 
-Glasswing uses PyInstaller for creating cross-platform executables with GitHub Actions for automated builds.
+Andromica uses PyInstaller for creating cross-platform executables with GitHub Actions for automated builds.
 
 ## Local Development Build
 
