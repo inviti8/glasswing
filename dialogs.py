@@ -20,10 +20,29 @@ def create_shared_key(reciever_public_key):
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
 
-    
+
     shared_key = StellarSharedKey(hvym_keys, reciever_public_key)
     app.storage.user['cipher_key'] = shared_key.shared_secret_as_hex()
     return shared_key.shared_secret_as_hex()
+
+def get_recipient_options():
+    """Build recipient options from subscribers list with Debug key at the top."""
+    options = {}
+
+    # Add Debug key first if available
+    debug_public_key = app.storage.user.get('debug_public_key', None)
+    if debug_public_key:
+        options[debug_public_key] = 'Debug (Test Key)'
+
+    # Add subscribers
+    subscribers = app.storage.user.get('subscribers', [])
+    for sub in subscribers:
+        name = sub.get('name', 'Unknown')
+        public_key = sub.get('public_key', '')
+        if public_key:
+            options[public_key] = name
+
+    return options
 
 async def edit_metadata_dialog(file_path, metadata_list, on_save, *args):
     """Dialog to edit metadata with delete functionality for each field.
@@ -226,16 +245,34 @@ def iptc_dialog(iptc_data, on_close):
 
 
 def cipher_dialog(on_close, process_func):
+    recipient_options = get_recipient_options()
+    current_recipient = app.storage.user.get('recipient_public_key', None)
+    # Default to first option (Debug key) if no current recipient or if current isn't in options
+    default_value = current_recipient if current_recipient in recipient_options else (list(recipient_options.keys())[0] if recipient_options else None)
+
     with ui.dialog().on('hide', lambda: on_close(process_func)) as dialog:
         with ui.card().classes('w-full max-w-xl'):
-            ui.label('Recipient Public Key').classes('text-md font-medium')
-            pub = ui.input('Recipient Public Key', value=app.storage.user['recipient_public_key']).bind_value(app.storage.user, 'recipient_public_key').classes('w-full')
+            ui.label('Select Recipient').classes('text-md font-medium')
+            if recipient_options:
+                pub = ui.select(
+                    options=recipient_options,
+                    value=default_value,
+                    on_change=lambda e: app.storage.user.update({'recipient_public_key': e.value})
+                ).classes('w-full')
+            else:
+                ui.label('No subscribers available. Add subscribers first.').classes('text-gray-500')
+                pub = None
             with ui.row().classes('w-full justify-end'):
-                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()]).props('flat')
+                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()] if pub else dialog.close()).props('flat')
     return dialog
 
 def aposematic_dialog(on_close, process_func):
     scramble_modes = {i.value: i.name for i in SCRAMBLE_MODE}
+    recipient_options = get_recipient_options()
+    current_recipient = app.storage.user.get('recipient_public_key', None)
+    # Default to first option (Debug key) if no current recipient or if current isn't in options
+    default_value = current_recipient if current_recipient in recipient_options else (list(recipient_options.keys())[0] if recipient_options else None)
+
     with ui.dialog().on('hide', lambda: on_close(process_func)) as dialog:
         with ui.card().classes('w-full max-w-xl'):
             with ui.row().classes('w-full'):
@@ -249,10 +286,18 @@ def aposematic_dialog(on_close, process_func):
                     on_change=lambda e: app.storage.user.update({'scramble_mode': e.value})
                 ).classes('w-full')
             with ui.row().classes('w-full'):
-                ui.label('Recipient Public Key').classes('text-md font-medium')
-                pub = ui.input('Recipient Public Key', value=app.storage.user['recipient_public_key']).bind_value(app.storage.user, 'recipient_public_key').classes('w-full')
+                ui.label('Select Recipient').classes('text-md font-medium')
+                if recipient_options:
+                    pub = ui.select(
+                        options=recipient_options,
+                        value=default_value,
+                        on_change=lambda e: app.storage.user.update({'recipient_public_key': e.value})
+                    ).classes('w-full')
+                else:
+                    ui.label('No subscribers available. Add subscribers first.').classes('text-gray-500')
+                    pub = None
             with ui.row().classes('w-full justify-end'):
-                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()]).props('flat')
+                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()] if pub else dialog.close()).props('flat')
     return dialog
 
 def assign_iptc_dialog(on_close, process_func):

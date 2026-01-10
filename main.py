@@ -183,6 +183,7 @@ def init():
            app.storage.user['gallery_title'] = data.get('gallery_title', '')
            app.storage.user['gallery_description'] = data.get('gallery_description', '')
            app.storage.user['dark_mode'] = data.get('dark_mode', None)
+           app.storage.user['debug_secret'] = data.get('debug_secret', None)
     else:
         # Initialize app_colors with defaults before calling persistent_save_data()
         app.storage.user['app_colors'] = {
@@ -226,6 +227,7 @@ def init():
            app.storage.user['gallery_title'] = data.get('gallery_title', '')
            app.storage.user['gallery_description'] = data.get('gallery_description', '')
            app.storage.user['dark_mode'] = data.get('dark_mode', None)
+           app.storage.user['debug_secret'] = data.get('debug_secret', None)
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -264,13 +266,16 @@ def init():
 
     remove_tmp_files()
 
-    print('!!------------------------------------!!')
-    test_secret = Keypair.random().secret
-    test_key = Keypair.from_secret(test_secret)
-    test_keys = Stellar25519KeyPair(test_key)
-    test_public_key = test_keys.public_key()
-    print(test_public_key)
-    print('!!------------------------------------!!')
+    # Initialize or load Debug key for testing encryption/aposematic
+    debug_secret = app.storage.user.get('debug_secret', None)
+    if debug_secret is None:
+        debug_secret = Keypair.random().secret
+        app.storage.user['debug_secret'] = debug_secret
+    debug_key = Keypair.from_secret(debug_secret)
+    debug_keys = Stellar25519KeyPair(debug_key)
+    debug_public_key = debug_keys.public_key()
+    app.storage.user['debug_public_key'] = debug_public_key
+    print(f'Debug Public Key: {debug_public_key}')
 
 def persistent_save_data():
     data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
@@ -300,10 +305,11 @@ def persistent_save_data():
     gallery_title = app.storage.user.get('gallery_title', '')
     gallery_description = app.storage.user.get('gallery_description', '')
     dark_mode = app.storage.user.get('dark_mode', None)
+    debug_secret = app.storage.user.get('debug_secret', None)
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, 'w') as f:
-        json.dump({ 'stellar_secret': stellar_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'dark_mode': dark_mode, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)
+        json.dump({ 'stellar_secret': stellar_secret, 'debug_secret': debug_secret, 'artist': artist, 'use_watermark': use_watermark, 'watermark': watermark, 'watermark_size': watermark_size, 'watermark_position': watermark_position, 'watermark_padding': watermark_padding, 'scramble_mode': scramble_mode, 'op_string': op_string, 'tmp_files': tmp_files, 'content_folders': content_folders, 'subscribers': subscribers, 'subscriptions': subscriptions, 'app_mode': app_mode, 'app_colors': app_colors, 'dark_mode': dark_mode, 'use_iptc': use_iptc, 'iptc_data': iptc_data.to_dict(), 'latest_data_pod_hash': latest_data_pod_hash, 'latest_gallery_html_hash': latest_gallery_html_hash, 'latest_data_pod_timestamp': latest_data_pod_timestamp, 'gallery_title': gallery_title, 'gallery_description': gallery_description}, f)
 
 def apply_theme_colors():
     """Apply theme colors using ui.colors() and CSS variables"""
@@ -1301,33 +1307,124 @@ def get_scramble_mode():
         return SCRAMBLE_MODE.QR
 
 async def process_aposematic():
-    app.storage.user.get('aposematic_img_hashes', []).clear()
-    for hash_value in app.storage.user.get('processed_img_hashes', []):
-        img_path = app.storage.user[hash_value]['path']
-        img_name = app.storage.user[hash_value]['name']
-        aposematic = new_aposematic_img(
-            img_path,
-            cipher_key=app.storage.user['cipher_key'],
-            op_string= app.storage.user.get('op_string', '-^+'),
-            scramble_mode=get_scramble_mode()
-        )
-        print(aposematic)
-        aposematic_img_path = aposematic['img_path']
-        ipfs_hash = ipfs_add(aposematic_img_path)
-        app.storage.user.get('aposematic_img_hashes', []).append(ipfs_hash)
-        ui.notify(f'Processed {hash_value}')
+    # Ensure the list exists in storage
+    if 'aposematic_img_hashes' not in app.storage.user:
+        app.storage.user['aposematic_img_hashes'] = []
+    app.storage.user['aposematic_img_hashes'].clear()
+
+    processed_hashes = app.storage.user.get('processed_img_hashes', [])
+    cipher_key = app.storage.user.get('cipher_key')
+
+    if not processed_hashes:
+        ui.notify('No processed images to convert', type='warning')
+        return
+
+    if not cipher_key:
+        ui.notify('No cipher key set. Please select a recipient first.', type='warning')
+        return
+
+    print(f"Processing {len(processed_hashes)} images with cipher_key: {cipher_key[:16]}...")
+
+    for hash_value in processed_hashes:
+        try:
+            img_info = app.storage.user.get(hash_value)
+            if not img_info:
+                print(f"No info found for hash {hash_value}")
+                continue
+
+            img_path = img_info.get('path')
+            img_name = img_info.get('name')
+
+            if not img_path or not os.path.exists(img_path):
+                print(f"Image file not found: {img_path}")
+                continue
+
+            print(f"Processing aposematic for: {img_name}")
+            aposematic = new_aposematic_img(
+                img_path,
+                cipher_key=cipher_key,
+                op_string=app.storage.user.get('op_string', '-^+'),
+                scramble_mode=get_scramble_mode()
+            )
+            print(f"Aposematic result: {aposematic}")
+
+            aposematic_img_path = aposematic['img_path']
+            ipfs_hash = ipfs_add(aposematic_img_path)
+            app.storage.user['aposematic_img_hashes'].append(ipfs_hash)
+
+            # Store info for the new hash
+            app.storage.user[ipfs_hash] = {
+                'path': aposematic_img_path,
+                'name': f"aposematic_{img_name}",
+                'original_hash': hash_value
+            }
+
+            ui.notify(f'Processed {img_name}')
+        except Exception as e:
+            print(f"Error processing {hash_value}: {e}")
+            import traceback
+            traceback.print_exc()
+            ui.notify(f'Error processing image: {e}', type='negative')
+
+    print(f"Aposematic processing complete. {len(app.storage.user['aposematic_img_hashes'])} images created.")
     persistent_save_data()
     render_gallery()
 
 async def process_enciphering():
-    app.storage.user.get('enciphered_img_hashes', []).clear()
-    for hash_value in app.storage.user.get('processed_img_hashes', []):
-        img_path = app.storage.user[hash_value]['path']
-        img_name = app.storage.user[hash_value]['name']
-        enciphered_img_path = await new_enciphered_img(img_name, img_path, app.storage.user['cipher_key'])
-        ipfs_hash = ipfs_add(enciphered_img_path)
-        app.storage.user.get('enciphered_img_hashes', []).append(ipfs_hash)
-        ui.notify(f'Enciphered {hash_value}')
+    # Ensure the list exists in storage
+    if 'enciphered_img_hashes' not in app.storage.user:
+        app.storage.user['enciphered_img_hashes'] = []
+    app.storage.user['enciphered_img_hashes'].clear()
+
+    processed_hashes = app.storage.user.get('processed_img_hashes', [])
+    cipher_key = app.storage.user.get('cipher_key')
+
+    if not processed_hashes:
+        ui.notify('No processed images to encrypt', type='warning')
+        return
+
+    if not cipher_key:
+        ui.notify('No cipher key set. Please select a recipient first.', type='warning')
+        return
+
+    print(f"Enciphering {len(processed_hashes)} images with cipher_key: {cipher_key[:16]}...")
+
+    for hash_value in processed_hashes:
+        try:
+            img_info = app.storage.user.get(hash_value)
+            if not img_info:
+                print(f"No info found for hash {hash_value}")
+                continue
+
+            img_path = img_info.get('path')
+            img_name = img_info.get('name')
+
+            if not img_path or not os.path.exists(img_path):
+                print(f"Image file not found: {img_path}")
+                continue
+
+            print(f"Enciphering: {img_name}")
+            enciphered_img_path = await new_enciphered_img(img_name, img_path, cipher_key)
+            print(f"Enciphered path: {enciphered_img_path}")
+
+            ipfs_hash = ipfs_add(enciphered_img_path)
+            app.storage.user['enciphered_img_hashes'].append(ipfs_hash)
+
+            # Store info for the new hash
+            app.storage.user[ipfs_hash] = {
+                'path': enciphered_img_path,
+                'name': f"enciphered_{img_name}",
+                'original_hash': hash_value
+            }
+
+            ui.notify(f'Enciphered {img_name}')
+        except Exception as e:
+            print(f"Error enciphering {hash_value}: {e}")
+            import traceback
+            traceback.print_exc()
+            ui.notify(f'Error enciphering image: {e}', type='negative')
+
+    print(f"Enciphering complete. {len(app.storage.user['enciphered_img_hashes'])} images created.")
     persistent_save_data()
     render_gallery()
 
@@ -1813,6 +1910,141 @@ async def fetch_subscription_channels(subscription_name):
         print(f"Error parsing channel data: {e}")
         return []
 
+def download_ipfs_image(url):
+    """Download an image from IPFS and return the file path."""
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+
+        # Create temp file with appropriate extension
+        content_type = response.headers.get('content-type', 'image/jpeg')
+        ext = '.jpg' if 'jpeg' in content_type else '.png' if 'png' in content_type else '.jpg'
+        temp_path = os.path.join(tempfile.gettempdir(), f"ipfs_download_{hash(url)}{ext}")
+
+        with open(temp_path, 'wb') as f:
+            f.write(response.content)
+
+        return temp_path
+    except Exception as e:
+        print(f"Error downloading image from {url}: {e}")
+        return None
+
+def image_to_base64_uri(file_path):
+    """Convert an image file to a base64 data URI."""
+    try:
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            mime_type = 'image/jpeg'
+
+        with open(file_path, 'rb') as f:
+            image_data = f.read()
+
+        b64_data = base64.b64encode(image_data).decode('utf-8')
+        return f"data:{mime_type};base64,{b64_data}"
+    except Exception as e:
+        print(f"Error converting image to base64: {e}")
+        return None
+
+def get_scramble_mode_from_value(mode_value):
+    """Convert scramble mode integer to SCRAMBLE_MODE enum."""
+    if mode_value == 1:
+        return SCRAMBLE_MODE.BUTTERFLY
+    elif mode_value == 2:
+        return SCRAMBLE_MODE.BUTTERFLY
+    else:
+        return SCRAMBLE_MODE.QR
+
+async def decode_protected_images(data_pod, stellar_secret):
+    """
+    Decode aposematic or encrypted images and update data_pod with base64 URIs.
+
+    Args:
+        data_pod: The NINJ data pod dictionary
+        stellar_secret: The subscriber's stellar secret key
+
+    Returns:
+        Modified data_pod with base64 image URIs, or original if decoding fails
+    """
+    content_type = data_pod.get('content_type', 'original')
+
+    if content_type == 'original':
+        return data_pod
+
+    recipient_public_key = data_pod.get('recipient_public_key')
+    if not recipient_public_key:
+        print("No recipient_public_key in data pod, cannot decode")
+        return data_pod
+
+    # Generate shared key
+    try:
+        stellar_keys = Keypair.from_secret(stellar_secret)
+        hvym_keys = Stellar25519KeyPair(stellar_keys)
+        shared_key = StellarSharedKey(hvym_keys, recipient_public_key)
+        cipher_key = shared_key.shared_secret_as_hex()
+    except Exception as e:
+        print(f"Error generating shared key: {e}")
+        return data_pod
+
+    # Get aposematic parameters if needed
+    op_string = data_pod.get('op_string', '-^+')
+    scramble_mode = get_scramble_mode_from_value(data_pod.get('scramble_mode', 2))
+
+    # Process each item
+    for item in data_pod.get('items', []):
+        renditions = item.get('renditions', {})
+        original = renditions.get('original', {})
+        href = original.get('href')
+
+        if not href:
+            continue
+
+        try:
+            # Download the image
+            temp_path = download_ipfs_image(href)
+            if not temp_path:
+                continue
+
+            # Decode based on content type
+            if content_type == 'encrypted':
+                from img_edit import new_deciphered_img
+                decoded_path = new_deciphered_img(
+                    os.path.basename(temp_path),
+                    temp_path,
+                    cipher_key
+                )
+            elif content_type == 'aposematic':
+                result = recover_aposematic_img(
+                    temp_path,
+                    cipher_key=cipher_key,
+                    op_string=op_string,
+                    scramble_mode=scramble_mode
+                )
+                decoded_path = result.get('img_path') if isinstance(result, dict) else result
+            else:
+                continue
+
+            if decoded_path and os.path.exists(decoded_path):
+                # Convert to base64 URI
+                base64_uri = image_to_base64_uri(decoded_path)
+                if base64_uri:
+                    original['href'] = base64_uri
+                    original['decoded'] = True
+
+                # Clean up temp files
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                if decoded_path != temp_path and os.path.exists(decoded_path):
+                    os.unlink(decoded_path)
+
+        except Exception as e:
+            print(f"Error decoding image {href}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    return data_pod
+
 async def select_channel(subscription_name, channel_info):
     """
     Handle selection of a channel (data pod) from a subscription.
@@ -1828,6 +2060,16 @@ async def select_channel(subscription_name, channel_info):
     # If we have the data pod directly, render it
     if 'data' in channel_info:
         data_pod = channel_info['data']
+
+        # Decode protected images if necessary (aposematic/encrypted)
+        content_type = data_pod.get('content_type', 'original')
+        if content_type in ('aposematic', 'encrypted'):
+            stellar_secret = app.storage.user.get('stellar_secret')
+            if stellar_secret:
+                ui.notify(f'Decoding {content_type} content...', type='info')
+                data_pod = await decode_protected_images(data_pod, stellar_secret)
+            else:
+                ui.notify('Cannot decode: no stellar secret configured', type='warning')
 
         # Set up Jinja2 environment
         template_dir = os.path.join(os.path.dirname(__file__), 'templates')
@@ -2203,15 +2445,35 @@ async def create_ninjs_data_pod(prefix='processed'):
             ui.notify('No valid news items to export', type='warning')
             return
 
+        # Map prefix to content type for the data pod
+        content_type_map = {
+            'processed': 'original',
+            'aposematic': 'aposematic',
+            'enciphered': 'encrypted'
+        }
+        content_type = content_type_map.get(prefix, 'original')
+
         # Create NINJ package
         ninj_package = {
             "version": "1.0",
             "uri": f"urn:newsml:package:{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
             "type": "package",
+            "content_type": content_type,
             "versioncreated": datetime.utcnow().isoformat() + "Z",
             "language": "en",
             "items": data_items
         }
+
+        # Include recipient public key for encrypted/aposematic content
+        if prefix in ('aposematic', 'enciphered'):
+            recipient_key = app.storage.user.get('recipient_public_key')
+            if recipient_key:
+                ninj_package["recipient_public_key"] = recipient_key
+
+        # Include aposematic parameters for descrambling
+        if prefix == 'aposematic':
+            ninj_package["op_string"] = app.storage.user.get('op_string', '-^+')
+            ninj_package["scramble_mode"] = app.storage.user.get('scramble_mode', 2)
 
         # Save to temp file then add to IPFS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
