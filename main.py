@@ -2,15 +2,19 @@ from nicegui import binding, app, ui
 from nicegui.binding import BindableProperty
 from fastapi.staticfiles import StaticFiles
 import time
-import hashlib
-import multihash
+import base64
 import os
-import base58
-import tempfile
-import os
+import sys
+import http.server
+import socketserver
+import threading
+import webbrowser
+import PIL
 from PIL import Image
-import PIL.Image
-from PIL.Image import UnidentifiedImageError
+import io
+import struct
+import zlib
+import json
 import requests
 import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
@@ -63,7 +67,7 @@ update_browser_content = None
 pending_browser_html = None
 
 app.native.window_args['resizable'] = True
-# app.native.start_args['debug'] = True
+app.native.start_args['debug'] = True
 app.native.settings['ALLOW_DOWNLOADS'] = True
 app.native.window_args['title'] = 'Andromica'
 #app.native.window_args['frameless'] = True
@@ -1313,6 +1317,19 @@ async def process_watermarking():
         print(processed_img_path)
         print('------------------------------------')
         ipfs_hash = ipfs_add(processed_img_path)
+        
+        # Preserve audio metadata when processing
+        app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
+        app.storage.user[ipfs_hash].update({
+            'path': processed_img_path,
+            'name': f'processed_{img_name}',
+            'has_audio': app.storage.user[hash_value].get('has_audio', False),
+            'audio_format': app.storage.user[hash_value].get('audio_format'),
+            'audio_duration': app.storage.user[hash_value].get('audio_duration'),
+            'audio_size': app.storage.user[hash_value].get('audio_size'),
+            'audio_method': app.storage.user[hash_value].get('audio_method')
+        })
+        
         app.storage.user.get('processed_img_hashes', []).append(ipfs_hash)
         ui.notify(f'Processed {hash_value}')
     persistent_save_data()
@@ -1467,6 +1484,19 @@ async def process_shared_iptc_metadata():
         img_name = app.storage.user[hash_value]['name']
         iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data.to_exif_dict())
         ipfs_hash = ipfs_add(iptc_img_path)
+        
+        # Preserve audio metadata when processing
+        app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
+        app.storage.user[ipfs_hash].update({
+            'path': iptc_img_path,
+            'name': f'processed_{img_name}',
+            'has_audio': app.storage.user[hash_value].get('has_audio', False),
+            'audio_format': app.storage.user[hash_value].get('audio_format'),
+            'audio_duration': app.storage.user[hash_value].get('audio_duration'),
+            'audio_size': app.storage.user[hash_value].get('audio_size'),
+            'audio_method': app.storage.user[hash_value].get('audio_method')
+        })
+        
         app.storage.user.get('processed_img_hashes', []).append(ipfs_hash)
         ui.notify(f'Processed {hash_value}')
     persistent_save_data()
@@ -2220,17 +2250,27 @@ def render_gallery(folder=None):
                     img_url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}'
                     if folder:
                         img_url = f'{ipfs_webui}:{ipfs_webui_port}/ipfs/{folder}/{hash_value}'
+                    
+                    # Audio indicator badge (if has audio)
+                    if file_info.get('has_audio', False):
+                        ui.chip('🎵 Audio', icon='music_note', color='blue').classes('absolute top-2 left-2 z-10')
+                    else:
+                        ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10 transparent-chip')
+                    
                     img_container = ui.image(img_url).classes('w-full')
                     
-                    # FAB container positioned absolutely over the image
-                    ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10 transparent-chip')
+                    # FAB container positioned absolutely over image
                     with ui.row().classes('absolute top-2 right-2 z-10'):
                         with ui.fab('edit', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
                                 ui.fab_action('copy_all', on_click=lambda h=hash_value: copy_img(h)).tooltip('Copy image')
-                            if is_ipfs_running():
-                                ui.fab_action('article', on_click=lambda h=hash_value: edit_body_text(h)).tooltip('Edit body text')
-                            if is_ipfs_running():
+                            # NEW: Audio embedding actions
+                            if file_info.get('has_audio', False):
+                                ui.fab_action('music_note', on_click=lambda h=hash_value: play_audio_from_image(h)).tooltip('Play Audio')
+                                ui.fab_action('edit', on_click=lambda h=hash_value: replace_audio_dialog(h)).tooltip('Replace Audio')
+                                ui.fab_action('delete', on_click=lambda h=hash_value: remove_audio_from_image(h), color='negative').tooltip('Remove Audio')
+                            else:
+                                ui.fab_action('music_note', on_click=lambda h=hash_value: edit_audio_info_main(h)).tooltip('Add Audio')
                                 ui.fab_action('delete', on_click=lambda h=hash_value: remove_img(h), color='negative').tooltip('Delete image')
                         with ui.fab('data_object', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
@@ -2422,22 +2462,41 @@ async def create_ninjs_data_pod(prefix='processed'):
                 render_flag = img_info.get('render_metadata', True)
                 print(f"DEBUG: render_metadata for {img_hash} = {render_flag}")
                 
+                # Check if this is an audio image
+                has_audio = img_info.get('has_audio', False)
+                
+                # Set type based on whether it has audio
+                item_type = "audio_image" if has_audio else "picture"
+                
                 data_item = {
                     "uri": f"{app.storage.user.get('gateway_url', '')}:{img_hash}",
-                    "type": "picture",
+                    "type": item_type,
                     "version": "1.0",
                     "versioncreated": datetime.utcnow().isoformat() + "Z",
                     "firstcreated": safe_get(metadata, 'XMP:CreateDate', ''),
                     "pubstatus": "usable",
                     "language": "en",
-                    "headline": safe_get(metadata, 'IPTC:ObjectName', 'Untitled'),
-                    "description_text": safe_get(metadata, 'IPTC:Caption-Abstract', ''),
+                    "headline": safe_get(metadata, 'IPTC:ObjectName', 'Audio Image' if has_audio else 'Untitled'),
+                    "description_text": safe_get(metadata, 'IPTC:Caption-Abstract', 'Audio encoded in image' if has_audio else ''),
                     "keywords": safe_list_from_metadata(metadata, 'IPTC:Keywords'),
                     "copyrightnotice": safe_get(metadata, 'IPTC:CopyrightNotice', ''),
                     "creditline": safe_get(metadata, 'IPTC:Credit', ''),
                     "byline": safe_list_from_metadata(metadata, 'IPTC:By-line'),
                     "render_metadata": render_flag,
                 }
+                
+                # Add audio-specific fields if this is an audio image
+                if has_audio:
+                    # Extract audio data once
+                    audio_data, audio_format = extract_audio_from_image(img_path)
+                    
+                    data_item.update({
+                        "audio_data": base64.b64encode(audio_data).decode() if audio_data else None,
+                        "audio_format": img_info.get('audio_format', audio_format if audio_format else 'wav'),
+                        "audio_duration": img_info.get('audio_duration', 0),
+                        "audio_size": img_info.get('audio_size', 0),
+                        "audio_method": img_info.get('audio_method', 'metadata'),
+                    })
                 
                 # Add renditions with proper MIME type and dimensions
                 width, height = parse_dimensions(safe_get(metadata, 'Composite:ImageSize'))
@@ -3418,6 +3477,385 @@ def check_native_dependencies():
 
     return True
 
+
+# PNG Custom Chunks Audio Implementation
+def extract_audio_from_image(file_path):
+    """Extract audio data from PNG custom chunks using binary parsing"""
+    try:
+        # Read PNG file in binary mode
+        with open(file_path, 'rb') as f:
+            png_data = f.read()
+        
+        # PNG signature: 8 bytes
+        if len(png_data) < 8 or png_data[:8] != b'\x89PNG\r\n\x1a\n':
+            print(f"Invalid PNG file: {file_path}")
+            return None, None
+        
+        # Parse PNG chunks
+        pos = 8  # Skip PNG signature
+        audio_chunks = []
+        
+        while pos < len(png_data):
+            # Read chunk header (8 bytes: 4 length + 4 type)
+            if pos + 8 > len(png_data):
+                break
+                
+            chunk_length = int.from_bytes(png_data[pos:pos+4], byteorder='big')
+            chunk_type = png_data[pos+4:pos+8].decode('ascii')
+            chunk_data = png_data[pos+8:pos+8+chunk_length]
+            
+            # Check if this is an audio chunk
+            if chunk_type.startswith('auD'):
+                audio_chunks.append(chunk_data)
+                print(f"Audio chunk found: {chunk_type}, size: {len(chunk_data)}")
+            
+            # Move to next chunk
+            pos += 8 + chunk_length + 4
+            
+            # Break if we reach IEND chunk
+            if chunk_type == 'IEND':
+                break
+        
+        if not audio_chunks:
+            print(f"No audio chunks found in {file_path}")
+            return None, None
+        
+        # Combine chunks in order
+        combined_audio = b''.join(audio_chunks)
+        print(f"Extracted {len(audio_chunks)} audio chunks, total size: {len(combined_audio)} bytes")
+        
+        # Try to detect format from first few bytes
+        if len(combined_audio) >= 4:
+            first_bytes = combined_audio[:4]
+            if first_bytes == b'RIFF':
+                detected_format = 'wav'
+            elif first_bytes == b'ID3' or (len(combined_audio) >= 10 and combined_audio[0:3] == b'ID3'):
+                detected_format = 'mp3'
+            elif first_bytes == b'OggS':
+                detected_format = 'ogg'
+            elif first_bytes == b'fLaC':
+                detected_format = 'flac'
+            else:
+                detected_format = 'unknown'
+            print(f"Detected audio format: {detected_format}")
+            print(f"First 4 bytes: {first_bytes}")
+            print(f"First 16 bytes (hex): {combined_audio[:16].hex()}")
+        
+        return combined_audio, detected_format if 'detected_format' in locals() else 'wav'
+        
+    except Exception as e:
+        print(f"Error extracting audio: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+async def process_audio(img_name, img_path, hash_value, audio_file):
+    """Process audio embedding using standard Andromica pattern"""
+    try:
+        if not audio_file:
+            ui.notify('Please select an audio file', type='warning')
+            return
+        
+        if not os.path.exists(audio_file):
+            ui.notify('Audio file not found', type='negative')
+            return
+        
+        # Validate audio format
+        if not is_audio(audio_file):
+            ui.notify(f'Unsupported audio format. Please select WAV, MP3, FLAC, or OGG file.', type='negative')
+            return
+        
+        ui.notify('Processing audio embedding...', type='info')
+        
+        # Process audio embedding directly (individual operation pattern)
+        result = await process_audio_embedding(img_name, img_path, hash_value, audio_file)
+        
+        if result:
+            ui.notify('Audio embedded successfully!', type='positive')
+            render_gallery()
+        
+    except Exception as e:
+        ui.notify(f'Error embedding audio: {str(e)}', type='negative')
+        print(f'Audio embedding error: {e}')
+
+async def edit_audio_info_main(hash_value):
+    """Edit audio information using standard dialog with process_dialog"""
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    await edit_audio_info(hash_value, process_audio)
+
+def create_audio_image(audio_file, image_file=None):
+    """Create audio-encoded image using PNG custom chunks with manual chunk writing"""
+    
+    # Read audio data
+    with open(audio_file, 'rb') as f:
+        audio_data = f.read()
+    
+    # Create or use provided image
+    if image_file and os.path.exists(image_file):
+        img = PIL.Image.open(image_file)
+    else:
+        # Generate audio visualization as cover image
+        img = create_audio_visualization(audio_data)
+    
+    # Split audio into optimal chunk sizes (1MB chunks for reliability)
+    chunk_size = 1024 * 1024  # 1MB chunks
+    audio_chunks = []
+    
+    for i in range(0, len(audio_data), chunk_size):
+        chunk = audio_data[i:i + chunk_size]
+        audio_chunks.append(chunk)
+    
+    # Save image normally first to get PNG data
+    temp_path = 'temp_audio_image.png'
+    img.save(temp_path, 'PNG')
+    
+    # Read the PNG and inject custom audio chunks manually
+    with open(temp_path, 'rb') as f:
+        png_data = bytearray(f.read())
+    
+    # Find IEND chunk position
+    pos = 8  # Skip PNG signature
+    iend_pos = len(png_data)
+    
+    while pos < len(png_data):
+        chunk_length = int.from_bytes(png_data[pos:pos+4], byteorder='big')
+        chunk_type = png_data[pos+4:pos+8].decode('ascii')
+        
+        if chunk_type == 'IEND':
+            iend_pos = pos
+            break
+            
+        pos += 8 + chunk_length + 4
+    
+    # Insert audio chunks before IEND
+    insert_pos = iend_pos
+    
+    for i, chunk_data in enumerate(audio_chunks, 1):
+        chunk_name = f'auD{i}'
+        chunk_length = len(chunk_data)
+        
+        # Build chunk: length (4) + type (4) + data + CRC (4)
+        chunk_header = struct.pack('>I', chunk_length) + chunk_name.encode('ascii')
+        chunk_with_data = chunk_header + chunk_data
+        
+        # Calculate CRC for chunk name + data
+        crc = zlib.crc32(chunk_name.encode('ascii') + chunk_data) & 0xffffffff
+        
+        chunk_full = chunk_with_data + struct.pack('>I', crc)
+        
+        # Insert chunk at IEND position
+        png_data[insert_pos:insert_pos] = chunk_full
+        insert_pos += len(chunk_full)
+    
+    # Save with custom audio chunks (preserves original image completely)
+    if image_file:
+        # Use same base name but with _audio suffix
+        base_name = os.path.splitext(os.path.basename(image_file))[0]
+        output_path = os.path.join(os.path.dirname(image_file), f'{base_name}_audio.png')
+    else:
+        # Use audio file base name
+        base_name = os.path.splitext(os.path.basename(audio_file))[0]
+        output_path = f'{base_name}_audio.png'
+    
+    # Write the modified PNG with audio chunks
+    with open(output_path, 'wb') as f:
+        f.write(png_data)
+    
+    # Clean up temp file
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+    
+    return output_path
+
+def create_audio_visualization(audio_data):
+    """Generate a visual representation of audio (spectrogram/waveform)"""
+    try:
+        import numpy as np
+        from scipy import signal
+        import matplotlib.pyplot as plt
+        import matplotlib
+        matplotlib.use('Agg')  # Use non-interactive backend
+        
+        # Create spectrogram visualization
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Convert audio data to numpy array if needed
+        if isinstance(audio_data, bytes):
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        else:
+            audio_array = np.array(audio_data, dtype=np.int16)
+        
+        # Create spectrogram
+        f, t, Sxx = signal.spectrogram(audio_array, 44100)
+        ax.pcolormesh(t, f, 10 * np.log10(Sxx), shading='gouraud')
+        ax.set_ylabel('Frequency [Hz]')
+        ax.set_xlabel('Time [sec]')
+        ax.set_title('Audio Spectrogram')
+        
+        # Save to PIL Image
+        fig.canvas.draw()
+        img_array = np.array(fig.canvas.renderer.buffer_rgba())
+        plt.close(fig)
+        
+        # Convert to PIL Image (remove alpha channel)
+        img = PIL.Image.fromarray(img_array[..., :3], 'RGB')
+        return img
+        
+    except ImportError as e:
+        print(f"Missing dependencies for spectrogram generation: {e}")
+        # Fallback: create a simple gradient image
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (800, 600), color='#25F5F8')
+        draw = ImageDraw.Draw(img)
+        
+        # Try to use a nicer font, fallback to default
+        try:
+            font = ImageFont.truetype("arial.ttf", 40)
+        except:
+            font = ImageFont.load_default()
+        
+        draw.text((400, 280), "🎵 Audio Image", fill='white', anchor='mm', font=font)
+        return img
+        
+    except Exception as e:
+        print(f"Error creating audio visualization: {e}")
+        # Fallback: simple colored image
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (800, 600), color='#25F5F8')
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font = ImageFont.truetype("arial.ttf", 40)
+        except:
+            font = ImageFont.load_default()
+        
+        draw.text((400, 280), "🎵 Audio Image", fill='white', anchor='mm', font=font)
+        return img
+
+@app.post('/extract-audio-chunks')
+async def extract_audio_chunks_endpoint():
+    """Extract audio data from PNG custom chunks"""
+    try:
+        data = await ui.request.body()
+        img_path = data.get('imagePath')
+        
+        if not img_path or not os.path.exists(img_path):
+            return {'error': 'Image not found'}
+        
+        audio_data, audio_format = extract_audio_from_image(img_path)
+        
+        if audio_data:
+            return {
+                'audioData': base64.b64encode(audio_data).decode(),
+                'audioFormat': audio_format,
+                'success': True
+            }
+        else:
+            return {'error': 'No audio data found'}
+    except Exception as e:
+        return {'error': str(e)}
+
+async def process_audio_embedding(img_name, img_path, hash_value, audio_file):
+    """Process audio embedding using standard Andromica pattern"""
+    try:
+        if not audio_file:
+            ui.notify('Please select an audio file', type='warning')
+            return None, None
+        
+        if not os.path.exists(audio_file):
+            ui.notify('Audio file not found', type='negative')
+            return None, None
+        
+        # Validate audio format
+        file_ext = os.path.splitext(audio_file)[1].lower()
+        supported_formats = ['.wav', '.mp3', '.flac', '.ogg']
+        if file_ext not in supported_formats:
+            ui.notify(f'Unsupported audio format: {file_ext}', type='negative')
+            return None, None
+        
+        ui.notify('Processing audio embedding...', type='info')
+        
+        # Create audio image using PNG custom chunks
+        if app.storage.user.get('generate_spectrogram_cover', True):
+            # Generate new spectrogram image
+            output_path = create_audio_image(audio_file, None)
+        else:
+            # Use original image as cover
+            output_path = create_audio_image(audio_file, img_path)
+        
+        # Update file info with audio metadata
+        audio_data, audio_format = extract_audio_from_image(output_path)
+        
+        # Update storage
+        app.storage.user[hash_value].update({
+            'path': output_path,
+            'has_audio': True,
+            'audio_format': audio_format,
+            'audio_duration': len(audio_data) / 44100 if audio_data else 0,
+            'audio_size': len(audio_data) if audio_data else 0,
+            'audio_method': 'metadata'
+        })
+        
+        # Get the IPFS hash of the final image
+        new_hash = ipfs_add(output_path)
+        app.storage.user['tmp_files'].append(output_path)
+        
+        # STANDARD: Use global img_states like other process_* functions
+        idex = app.storage.user.get('img_state', 1)
+        state = img_states[idex]
+        
+        if state == 'raw':
+            # DESTRUCTIVE: Update existing hash entry in raw_img_hashes to point to audio version
+            raw_hashes = app.storage.user.get('raw_img_hashes', [])
+            
+            try:
+                # Find and update existing hash entry
+                index = raw_hashes.index(hash_value)
+                raw_hashes[index] = new_hash
+                app.storage.user['raw_img_hashes'] = raw_hashes
+                
+                # Update storage to point to audio version
+                app.storage.user[new_hash] = app.storage.user[hash_value].copy()
+                app.storage.user[new_hash].update({
+                    'path': output_path,
+                    'name': f'audio_{img_name}',  # Add audio_ prefix
+                    'has_audio': True,
+                    'audio_format': audio_format,
+                    'audio_duration': len(audio_data) / 44100 if audio_data else 0,
+                    'audio_size': len(audio_data) if audio_data else 0,
+                    'audio_method': 'metadata'
+                })
+                
+                # Remove old hash entry (DESTRUCTIVE)
+                del app.storage.user[hash_value]
+                
+            except ValueError:
+                # Fallback: add to raw hashes if not found
+                raw_hashes.append(new_hash)
+                app.storage.user['raw_img_hashes'] = raw_hashes
+        else:
+            # For non-raw states, use existing logic
+            remove_img_by_name_from_storage(img_name, f'{state}_img_hashes')
+            processed_hashes = app.storage.user.get(f'{state}_img_hashes', [])
+            
+            try:
+                index = processed_hashes.index(hash_value)
+                processed_hashes[index] = new_hash
+            except ValueError:
+                processed_hashes.append(new_hash)
+
+            app.storage.user[f'{state}_img_hashes'] = processed_hashes
+        
+        ui.notify(f'Audio embedded: {new_hash}')
+        render_gallery()
+        
+        return new_hash, output_path
+        
+    except Exception as e:
+        ui.notify(f'Error processing audio: {str(e)}', type='negative')
+        print(f'Audio processing error: {e}')
+        raise
 
 # Check native dependencies before running the app
 if __name__ in {"__main__", "__mp_main__"}:

@@ -14,6 +14,7 @@ import exiv2
 import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
+from main import choose_files
 
 def create_shared_key(reciever_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
@@ -520,6 +521,76 @@ def select_channel_dialog(on_select):
                 ui.button('Cancel', on_click=dialog.close).props('flat')
 
     dialog.open()
+
+async def edit_audio_info(hash_value, on_save):
+    """Dialog for embedding audio into an existing image"""
+    
+    # Get image info
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    
+    with ui.dialog() as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            ui.label('Add Audio to Image').classes('text-lg font-semibold mb-4')
+            ui.label(f'Image: {img_name}').classes('text-sm mb-4')
+            
+            # Audio file selection - following Andromica pattern
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.label('Audio File:').classes('font-medium')
+                audio_input = ui.input(
+                    placeholder='Select audio file (WAV, MP3, FLAC, OGG)',
+                    value=''
+                ).props('clearable').classes('flex-grow')
+                ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input)).props('flat')
+            
+            # Preview section
+            with ui.column().classes('w-full mb-4'):
+                ui.label('Preview:').classes('font-medium mb-2')
+                audio_info = ui.label('No audio file selected').classes('text-sm text-gray-600')
+            
+            # Options
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.checkbox('Generate spectrogram cover').bind_value(app.storage.user, 'generate_spectrogram_cover')
+                ui.checkbox('Keep original image').bind_value(app.storage.user, 'keep_original_image')
+            
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
+                ui.button('Embed Audio', on_click=lambda: on_save(img_name, img_path, hash_value, audio_input.value)).props('color=primary')
+    
+    dialog.open()
+
+def is_audio(file):
+    """Check if file is an audio format"""
+    audio_extensions = ['.wav', '.mp3', '.flac', '.ogg']
+    return any(file.lower().endswith(ext) for ext in audio_extensions)
+
+async def handle_audio_selection(input_field):
+    """Handle audio file selection following Andromica pattern"""
+    try:
+        files = await choose_files()
+        audio_files = [file for file in files if is_audio(file)]
+        if audio_files:
+            input_field.value = audio_files[0]
+        else:
+            ui.notify('Please select a valid audio file (WAV, MP3, FLAC, OGG)', type='warning')
+    except Exception as e:
+        ui.notify(f'Error selecting file: {str(e)}', type='negative')
+
+def browse_audio_file(input_field):
+    """Browse for audio file following Andromica pattern"""
+    async def handle_file_selection():
+        try:
+            files = await choose_files()
+            audio_files = [file for file in files if is_audio(file)]
+            if audio_files:
+                input_field.value = audio_files[0]
+            else:
+                ui.notify('Please select a valid audio file (WAV, MP3, FLAC, OGG)', type='warning')
+        except Exception as e:
+            ui.notify(f'Error selecting file: {str(e)}', type='negative')
+    
+    return handle_file_selection
 
 def gallery_info_dialog():
     """Dialog for setting gallery title and description."""

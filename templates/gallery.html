@@ -97,6 +97,71 @@
             object-fit: contain;
         }
 
+        .audio-container {
+            position: relative;
+            width: 100%;
+            background: #f0f0f0;
+            overflow: hidden;
+        }
+
+        .audio-image {
+            width: 100%;
+            height: auto;
+            display: block;
+            object-fit: contain;
+        }
+
+        .audio-controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            padding: 20px 15px 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .audio-play-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.9);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .audio-play-btn:hover {
+            background: white;
+            transform: scale(1.1);
+        }
+
+        .audio-info {
+            flex: 1;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .audio-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
         .image-placeholder {
             position: absolute;
             top: 50%;
@@ -232,6 +297,308 @@
             opacity: 0.7;
         }
     </style>
+    <script>
+    function extractAudioFromImage(imageSrc, callback) {
+        console.log('Extracting audio from image:', imageSrc);
+        
+        fetch(imageSrc)
+            .then(response => response.arrayBuffer())
+            .then(buffer => {
+                const uint8Array = new Uint8Array(buffer);
+                const audioData = extractAudioChunks(uint8Array);
+                
+                if (audioData && audioData.length > 0) {
+                    // Convert to base64
+                    const base64Audio = arrayBufferToBase64(audioData);
+                    const audioFormat = detectAudioFormat(audioData);
+                    
+                    console.log('Audio extracted successfully:', {
+                        format: audioFormat,
+                        size: audioData.length,
+                        base64Length: base64Audio.length
+                    });
+                    
+                    callback(base64Audio, audioFormat);
+                } else {
+                    console.error('No audio data found in image');
+                    callback(null, null);
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching image:', error);
+                callback(null, null);
+            });
+    }
+
+    function extractAudioChunks(pngData) {
+        // Check PNG signature
+        if (pngData.length < 8 || 
+            pngData[0] !== 0x89 || pngData[1] !== 0x50 || pngData[2] !== 0x4E || pngData[3] !== 0x47) {
+            console.error('Not a valid PNG file');
+            return null;
+        }
+        
+        let offset = 8; // Skip PNG signature
+        let audioChunks = [];
+        
+        while (offset < pngData.length) {
+            // Read chunk header (4 bytes length + 4 bytes type)
+            if (offset + 8 > pngData.length) break;
+            
+            const length = (pngData[offset] << 24) | (pngData[offset + 1] << 16) | 
+                           (pngData[offset + 2] << 8) | pngData[offset + 3];
+            const type = String.fromCharCode(pngData[offset + 4], pngData[offset + 5], 
+                                           pngData[offset + 6], pngData[offset + 7]);
+            
+            // Check if this is an audio chunk
+            if (type.startsWith('auD')) {
+                const chunkData = pngData.slice(offset + 8, offset + 8 + length);
+                audioChunks.push(chunkData);
+                console.log(`Found audio chunk: ${type}, size: ${length}`);
+            }
+            
+            // Move to next chunk
+            offset += 8 + length + 4; // length + type + data + CRC
+            
+            // Stop at IEND chunk
+            if (type === 'IEND') break;
+        }
+        
+        if (audioChunks.length === 0) {
+            console.log('No audio chunks found in PNG');
+            return null;
+        }
+        
+        // Combine all audio chunks
+        const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const combinedAudio = new Uint8Array(totalLength);
+        let writeOffset = 0;
+        
+        for (const chunk of audioChunks) {
+            combinedAudio.set(chunk, writeOffset);
+            writeOffset += chunk.length;
+        }
+        
+        console.log(`Combined ${audioChunks.length} audio chunks, total size: ${totalLength} bytes`);
+        return combinedAudio;
+    }
+
+    function detectAudioFormat(data) {
+        if (data.length < 4) return 'unknown';
+        
+        // Check for common audio file signatures
+        const header = data.slice(0, 4);
+        
+        // WAV: 'RIFF'
+        if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46) {
+            return 'wav';
+        }
+        // MP3: 'ID3' or MPEG frame sync
+        else if ((header[0] === 0x49 && header[1] === 0x44 && header[2] === 0x33) || 
+                 (header[0] === 0xFF && (header[1] & 0xE0) === 0xE0)) {
+            return 'mp3';
+        }
+        // OGG: 'OggS'
+        else if (header[0] === 0x4F && header[1] === 0x67 && header[2] === 0x67 && header[3] === 0x53) {
+            return 'ogg';
+        }
+        // FLAC: 'fLaC'
+        else if (header[0] === 0x66 && header[1] === 0x4C && header[2] === 0x61 && header[3] === 0x43) {
+            return 'flac';
+        }
+        
+        return 'unknown';
+    }
+
+    function arrayBufferToBase64(buffer) {
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    function playAudioFromImage(imageSrc) {
+        console.log('Initiating audio playback from image:', imageSrc);
+        
+        // Show loading state
+        const playButton = event.target.closest('.audio-play-btn');
+        if (playButton) {
+            playButton.disabled = true;
+            playButton.innerHTML = '⏳';
+        }
+        
+        // Extract and play audio
+        extractAudioFromImage(imageSrc, function(audioData, audioFormat) {
+            if (!audioData || !audioFormat) {
+                console.error('No audio data found in image');
+                alert('No audio data found in this image');
+                if (playButton) {
+                    playButton.disabled = false;
+                    playButton.innerHTML = '▶️';
+                }
+                return;
+            }
+            
+            console.log('Audio extracted successfully, format:', audioFormat);
+            
+            // Play the extracted audio
+            playExtractedAudio(audioData, audioFormat, playButton);
+        });
+    }
+
+    function playExtractedAudio(audioData, audioFormat, playButton) {
+        console.log('Playing extracted audio, format:', audioFormat);
+        
+        // Try data URI method first
+        const dataUri = `data:audio/${audioFormat};base64,${audioData}`;
+        const audio = new Audio(dataUri);
+        
+        audio.oncanplay = function() {
+            console.log('Audio is ready to play');
+            if (playButton) {
+                playButton.disabled = false;
+                playButton.innerHTML = '⏸️';
+            }
+            
+            // Set up play/pause toggle
+            playButton.onclick = function() {
+                if (audio.paused) {
+                    audio.play();
+                    playButton.innerHTML = '⏸️';
+                } else {
+                    audio.pause();
+                    playButton.innerHTML = '▶️';
+                }
+            };
+            
+            // Play the audio
+            audio.play().catch(error => {
+                console.error('Error playing audio with data URI:', error);
+                // Fallback to blob method
+                tryBlobMethod(audioData, audioFormat, playButton);
+            });
+        };
+        
+        audio.onerror = function() {
+            console.error('Error with audio element');
+            // Fallback to blob method
+            tryBlobMethod(audioData, audioFormat, playButton);
+        };
+        
+        audio.onended = function() {
+            console.log('Playback finished');
+            if (playButton) {
+                playButton.innerHTML = '▶️';
+            }
+        };
+    }
+
+    function tryBlobMethod(audioData, audioFormat, playButton) {
+        console.log('Trying blob method for audio playback');
+        
+        try {
+            // Decode base64 to binary
+            const byteCharacters = atob(audioData);
+            const byteNumbers = new Array(byteCharacters.length);
+            
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            
+            const byteArray = new Uint8Array(byteNumbers);
+            
+            // Try different MIME types
+            const mimeTypes = [`audio/${audioFormat}`, 'audio/wav', 'audio/mp3', 'audio/ogg', 'audio/mpeg'];
+            let audioBlob = null;
+            let audioUrl = null;
+            
+            for (const mimeType of mimeTypes) {
+                try {
+                    audioBlob = new Blob([byteArray], { type: mimeType });
+                    audioUrl = URL.createObjectURL(audioBlob);
+                    console.log(`✅ Blob created with MIME: ${mimeType}`);
+                    break;
+                } catch (e) {
+                    console.log(`❌ MIME ${mimeType} failed: ${e.message}`);
+                    continue;
+                }
+            }
+            
+            if (!audioUrl) {
+                console.error('Could not create blob with any MIME type');
+                alert('Failed to create audio blob');
+                if (playButton) {
+                    playButton.disabled = false;
+                    playButton.innerHTML = '▶️';
+                }
+                return;
+            }
+            
+            console.log(`Blob size: ${audioBlob.size} bytes`);
+            
+            // Create audio player with blob
+            const audio = new Audio(audioUrl);
+            
+            audio.oncanplay = function() {
+                console.log('Blob audio is ready to play');
+                if (playButton) {
+                    playButton.disabled = false;
+                    playButton.innerHTML = '⏸️';
+                }
+                
+                // Set up play/pause toggle
+                playButton.onclick = function() {
+                    if (audio.paused) {
+                        audio.play();
+                        playButton.innerHTML = '⏸️';
+                    } else {
+                        audio.pause();
+                        playButton.innerHTML = '▶️';
+                    }
+                };
+                
+                // Play the audio
+                audio.play().catch(error => {
+                    console.error('Error playing blob audio:', error);
+                    alert('Failed to play audio');
+                    if (playButton) {
+                        playButton.disabled = false;
+                        playButton.innerHTML = '▶️';
+                    }
+                });
+            };
+            
+            audio.onerror = function() {
+                console.error('Error with blob audio element');
+                alert('Failed to load audio');
+                if (playButton) {
+                    playButton.disabled = false;
+                    playButton.innerHTML = '▶️';
+                }
+            };
+            
+            audio.onended = function() {
+                console.log('Blob audio playback finished');
+                if (playButton) {
+                    playButton.innerHTML = '▶️';
+                }
+                // Clean up blob URL
+                URL.revokeObjectURL(audioUrl);
+            };
+            
+        } catch (error) {
+            console.error('Blob method failed:', error);
+            alert('Failed to play audio: ' + error.message);
+            if (playButton) {
+                playButton.disabled = false;
+                playButton.innerHTML = '▶️';
+            }
+        }
+    }
+    </script>
 </head>
 <body>
     <div class="container">
@@ -251,16 +618,55 @@
             <div class="gallery">
                 {% for item in data_pod['items'] %}
                 <div class="gallery-item">
-                    <div class="image-container">
-                        {% if item.renditions and item.renditions.original %}
-                            <img src="{{ item.renditions.original.href }}"
-                                 alt="{{ item.headline }}"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                            <div class="image-placeholder" style="display:none;">🖼️</div>
-                        {% else %}
-                            <div class="image-placeholder">🖼️</div>
-                        {% endif %}
-                    </div>
+                    {% if item.type == 'audio_image' %}
+                        <!-- Audio Image Container -->
+                        <div class="audio-container">
+                            {% if item.renditions and item.renditions.original %}
+                                <img src="{{ item.renditions.original.href }}"
+                                     alt="{{ item.headline }}"
+                                     class="audio-image"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                <div class="image-placeholder" style="display:none;">🖼️</div>
+                                
+                                <!-- Audio Badge -->
+                                <div class="audio-badge">
+                                    🎵 Audio
+                                </div>
+                                
+                                <!-- Audio Controls -->
+                                <div class="audio-controls">
+                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions.original.href }}')">
+                                        ▶️
+                                    </button>
+                                    <div class="audio-info">
+                                        {% if item.audio_duration %}
+                                        Duration: {{ "%.1f"|format(item.audio_duration) }}s
+                                        {% endif %}
+                                        {% if item.audio_format %}
+                                        • Format: {{ item.audio_format.upper() }}
+                                        {% endif %}
+                                        {% if item.audio_size %}
+                                        • Size: {{ "%.1f"|format(item.audio_size / 1024 / 1024) }}MB
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="image-placeholder">🖼️</div>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <!-- Regular Image Container -->
+                        <div class="image-container">
+                            {% if item.renditions and item.renditions.original %}
+                                <img src="{{ item.renditions.original.href }}"
+                                     alt="{{ item.headline }}"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                <div class="image-placeholder" style="display:none;">🖼️</div>
+                            {% else %}
+                                <div class="image-placeholder">🖼️</div>
+                            {% endif %}
+                        </div>
+                    {% endif %}
 
                     <div class="item-content">
                         <div class="item-title">{{ item.headline or 'Untitled' }}</div>

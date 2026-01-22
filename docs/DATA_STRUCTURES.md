@@ -28,7 +28,8 @@ For `aposematic` or `encrypted` content:
     "uri": "urn:newsml:package:20260110123456",
     "type": "package",
     "content_type": "aposematic",
-    "recipient_public_key": "GABCDEFGHIJKLMNOP...",
+    "creator_public_key": "BASE64_CREATOR_PUBLIC_KEY...",
+    "recipient_public_key": "BASE64_RECIPIENT_PUBLIC_KEY...",
     "op_string": "-^+",
     "scramble_mode": 2,
     "versioncreated": "2026-01-10T12:34:56Z",
@@ -36,6 +37,11 @@ For `aposematic` or `encrypted` content:
     "items": [...]
 }
 ```
+
+| Field | Purpose |
+|-------|---------|
+| `creator_public_key` | Used by subscriber for ECDH shared key derivation |
+| `recipient_public_key` | Identifies authorized subscriber (verification) |
 
 ### Item Structure
 
