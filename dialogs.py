@@ -44,6 +44,16 @@ def get_recipient_options():
 
     return options
 
+def markdown_block_dialog(on_save, process_func):
+
+    with ui.dialog().on('hide', lambda: on_save()) as dialog:
+        with ui.card().classes('w-full max-w-xl'):
+            ui.label('Add Markdown Block').classes('text-lg font-semibold')
+            markdown_input = ui.textarea(value='some text').props('clearable')
+            ui.button('Save', on_click=lambda: pr(markdown_input.value)).props('flat')
+
+    dialog.open()
+
 async def edit_metadata_dialog(file_path, metadata_list, on_save, *args):
     """Dialog to edit metadata with delete functionality for each field.
     

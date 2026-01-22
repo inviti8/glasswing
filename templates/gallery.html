@@ -245,15 +245,6 @@
             {% if gallery_description %}
             <p style="margin-top: 15px; color: #555; line-height: 1.6;">{{ gallery_description }}</p>
             {% endif %}
-
-            {% if not gallery_title and not gallery_description %}
-            <div class="meta">
-                <strong>URI:</strong> {{ data_pod.uri }}<br>
-                <strong>Version:</strong> {{ data_pod.version }} |
-                <strong>Language:</strong> {{ data_pod.language }} |
-                <strong>Created:</strong> {{ data_pod.versioncreated }}
-            </div>
-            {% endif %}
         </div>
 
         {% if data_pod['items'] %}
@@ -277,6 +268,9 @@
                         {% if item.description_text %}
                         <div class="item-description">{{ item.description_text }}</div>
                         {% endif %}
+
+                        <!-- DEBUG: render_metadata = {{ item.render_metadata }} -->
+                        {% if item.render_metadata %}
 
                         <div class="item-meta">
                             {% if item.byline %}
@@ -324,12 +318,6 @@
                             </div>
                             {% endif %}
 
-                            {% if item.renditions and item.renditions.original %}
-                            <a href="{{ item.renditions.original.href }}" target="_blank" class="ipfs-link">
-                                View on IPFS
-                            </a>
-                            {% endif %}
-
                             {% if item.restrictions %}
                             <div class="restrictions">
                                 <strong>⚠️ Restrictions:</strong><br>
@@ -337,6 +325,7 @@
                             </div>
                             {% endif %}
                         </div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}

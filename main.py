@@ -16,6 +16,7 @@ import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
 from stellar_sdk import Keypair
 import json
+import asyncio
 from dialogs import *
 from metadata import IPTC
 from img_edit import *
@@ -500,6 +501,12 @@ def apply_theme_colors():
                     background: linear-gradient(90deg, ${{activeColors.primary}}, ${{activeColors.secondary}}) !important;
                     color: white !important;
                 }}
+
+                /* Transparent chip background */
+                .transparent-chip {{
+                    background-color: transparent !important;
+                    backdrop-filter: blur(2px);
+                }}
             `;
 
             console.log("Dynamic CSS injected");
@@ -868,7 +875,8 @@ def ipns_add_to_folder(folder, file_path):
                 'name': os.path.basename(file_path),
                 'path': file_path,
                 'ipns_path': f'/{folder}/{hash_value}',
-                'extension': os.path.splitext(file_path)[1]
+                'extension': os.path.splitext(file_path)[1],
+                'render_metadata': False
             }
             app.storage.user[hash_value] = file_info
             
@@ -946,7 +954,7 @@ def ipfs_add(file_path):
             response.raise_for_status()
             result = response.json()
             hash_value = result.get('Hash')
-            app.storage.user[hash_value] = {'name': os.path.basename(file_path), 'path': file_path, 'ipns_path': None, 'extension': os.path.splitext(file_path)[1]}
+            app.storage.user[hash_value] = {'name': os.path.basename(file_path), 'path': file_path, 'ipns_path': None, 'extension': os.path.splitext(file_path)[1], 'render_metadata': False}
             return hash_value
     except requests.exceptions.RequestException as e:
         print(f"Error uploading to IPFS: {e}")
@@ -1230,7 +1238,20 @@ async def edit_body_text(hash_value):
     img_path = app.storage.user[hash_value]['path']
     img_name = app.storage.user[hash_value]['name']
     await add_body_text_dialog(img_name, img_path, hash_value, process_body_text)
+
+async def update_render_metadata(hash_value, render_metadata):
+    """Update the render metadata flag for an image"""
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
     
+    # Store the render metadata flag in the image's metadata
+    if 'render_metadata' not in app.storage.user[hash_value]:
+        app.storage.user[hash_value]['render_metadata'] = True
+    
+    app.storage.user[hash_value]['render_metadata'] = render_metadata
+    persistent_save_data()
+    
+    print(f"Updated render_metadata for {img_name}: {render_metadata}")
 
 async def process_metadata(img_name, img_path, hash_value, metadata):
     try:
@@ -1450,6 +1471,10 @@ async def process_shared_iptc_metadata():
         ui.notify(f'Processed {hash_value}')
     persistent_save_data()
     render_gallery()
+
+async def process_add_mardown_file(text):
+    # TODO: Implement markdown file addition
+    ui.notify('Markdown file addition not yet implemented')
 
 async def process_debug_deploy_gallery():
     try:
@@ -1971,16 +1996,30 @@ async def decode_protected_images(data_pod, stellar_secret):
     if content_type == 'original':
         return data_pod
 
-    recipient_public_key = data_pod.get('recipient_public_key')
-    if not recipient_public_key:
-        print("No recipient_public_key in data pod, cannot decode")
+    # Get creator's public key for ECDH shared key derivation
+    creator_public_key = data_pod.get('creator_public_key')
+    if not creator_public_key:
+        print("No creator_public_key in data pod, cannot decode")
         return data_pod
 
-    # Generate shared key
+    # Optional: verify subscriber is authorized (their public key matches recipient_public_key)
+    recipient_public_key = data_pod.get('recipient_public_key')
+    if recipient_public_key:
+        try:
+            subscriber_keys = Keypair.from_secret(stellar_secret)
+            subscriber_hvym = Stellar25519KeyPair(subscriber_keys)
+            subscriber_public = subscriber_hvym.public_key()
+            if subscriber_public != recipient_public_key:
+                print(f"Warning: Subscriber key mismatch. This content may not have been shared with you.")
+                # Continue anyway - decryption will fail if keys don't match
+        except Exception as e:
+            print(f"Could not verify subscriber authorization: {e}")
+
+    # Generate shared key using ECDH: subscriber_private × creator_public
     try:
         stellar_keys = Keypair.from_secret(stellar_secret)
         hvym_keys = Stellar25519KeyPair(stellar_keys)
-        shared_key = StellarSharedKey(hvym_keys, recipient_public_key)
+        shared_key = StellarSharedKey(hvym_keys, creator_public_key)
         cipher_key = shared_key.shared_secret_as_hex()
     except Exception as e:
         print(f"Error generating shared key: {e}")
@@ -2184,7 +2223,7 @@ def render_gallery(folder=None):
                     img_container = ui.image(img_url).classes('w-full')
                     
                     # FAB container positioned absolutely over the image
-                    ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10')
+                    ui.chip(file_info.get('name', 'Unknown'), icon='image', color='white').props('square').classes('absolute top-2 left-2 z-10 transparent-chip')
                     with ui.row().classes('absolute top-2 right-2 z-10'):
                         with ui.fab('edit', direction='left').classes('q-secondary-color'):
                             if is_ipfs_running():
@@ -2200,6 +2239,13 @@ def render_gallery(folder=None):
                                 ui.fab_action('edit', label='XMP', on_click=lambda h=hash_value: edit_xmp_info(h)).tooltip('Edit XMP metadata')
                                 ui.fab_action('edit', label='EXIF', on_click=lambda h=hash_value: edit_exif_info(h)).tooltip('Edit EXIF metadata')
                                 ui.fab_action('delete', label='ALL', on_click=lambda h=hash_value: remove_img(h), color='negative').tooltip('Delete metadata')
+
+                    with ui.row().classes('absolute bottom-2 right-2 z-10'):
+                        def handle_checkbox_change(val):
+                            print(f"Checkbox changed for {hash_value}: {val}")
+                            asyncio.create_task(update_render_metadata(hash_value, val))
+                        
+                        checkbox = ui.checkbox('render metadata', value=app.storage.user[hash_value].get('render_metadata', True)).on('update:model-value', lambda e: handle_checkbox_change(checkbox.value))
                 # Add some spacing between cards
                 ui.space().classes('h-4')
                 
@@ -2373,6 +2419,9 @@ async def create_ninjs_data_pod(prefix='processed'):
                     continue
                 
                 # Build news item with safe defaults
+                render_flag = img_info.get('render_metadata', True)
+                print(f"DEBUG: render_metadata for {img_hash} = {render_flag}")
+                
                 data_item = {
                     "uri": f"{app.storage.user.get('gateway_url', '')}:{img_hash}",
                     "type": "picture",
@@ -2387,6 +2436,7 @@ async def create_ninjs_data_pod(prefix='processed'):
                     "copyrightnotice": safe_get(metadata, 'IPTC:CopyrightNotice', ''),
                     "creditline": safe_get(metadata, 'IPTC:Credit', ''),
                     "byline": safe_list_from_metadata(metadata, 'IPTC:By-line'),
+                    "render_metadata": render_flag,
                 }
                 
                 # Add renditions with proper MIME type and dimensions
@@ -2464,8 +2514,13 @@ async def create_ninjs_data_pod(prefix='processed'):
             "items": data_items
         }
 
-        # Include recipient public key for encrypted/aposematic content
+        # Include keys for encrypted/aposematic content
+        # creator_public_key: needed by subscriber for ECDH shared key derivation
+        # recipient_public_key: identifies who the content was shared with (for verification)
         if prefix in ('aposematic', 'enciphered'):
+            creator_key = app.storage.user.get('hvym_public_key')
+            if creator_key:
+                ninj_package["creator_public_key"] = creator_key
             recipient_key = app.storage.user.get('recipient_public_key')
             if recipient_key:
                 ninj_package["recipient_public_key"] = recipient_key
@@ -3060,7 +3115,8 @@ def main_page():
             with ui.fab('image').classes('q-secondary-color'):
                 if is_ipfs_running():
                     ui.fab_action('info', on_click=gallery_info_dialog).tooltip('Set Gallery Info')
-                    ui.fab_action('add_photo_alternate', on_click=choose_img).tooltip('Choose images')
+                    ui.fab_action('add_photo_alternate', on_click=choose_img).tooltip('Add images')
+                    # ui.fab_action('text_snippet', on_click=lambda: markdown_block_dialog( update_from_storage, process_add_mardown_file)).tooltip('Add Markdown Block')
                     ui.fab_action('person_add', on_click=lambda: add_subscriber_dialog(add_subscriber)).tooltip('Add Subscriber')
                     ui.fab_action('approval', on_click=lambda: process_dialog(process_watermarking)).tooltip('Add watermark to images')
                     ui.fab_action('dataset', on_click=lambda: assign_iptc_dialog(process_dialog, process_shared_iptc_metadata)).tooltip('Assign Shared IPTC metadata')
@@ -3373,5 +3429,5 @@ app.on_shutdown(on_close)
 ui.run(
     native=True,
     storage_secret='your-secret-key-here',  # Replace with a secure secret key in production
-    favicon='/static/icon.png'
+    favicon=os.path.join(static_dir, 'icon.png')
 )
