@@ -1,6 +1,7 @@
-from nicegui import binding, app, ui
-from nicegui.binding import BindableProperty
-from fastapi.staticfiles import StaticFiles
+"""
+Andromica - Audio Image Processing with Token Support
+"""
+
 import time
 import base64
 import os
@@ -19,8 +20,40 @@ import requests
 import wand
 from hvym_stellar import  Stellar25519KeyPair, StellarSharedKeyTokenBuilder, TokenType
 from stellar_sdk import Keypair
-import json
 import asyncio
+
+# Define app early to avoid circular imports
+from nicegui import app, ui
+from fastapi.staticfiles import StaticFiles
+
+# Define choose_files early to avoid circular imports
+async def choose_files():
+    files = await app.native.main_window.create_file_dialog(allow_multiple=True)
+    return files
+
+# Audio Token Integration
+from audio_tokens import (
+    get_current_user_stellar_keypair,
+    get_current_user_stellar_public_key,
+    create_audio_token,
+    extract_audio_from_token,
+    embed_audio_token_in_image,
+    extract_token_from_png,
+    detect_audio_format,
+    create_shared_audio_image
+)
+from data_pod_audio import (
+    create_ninjs_data_pod_with_encrypted_tokens,
+    process_data_pod_locally,
+    determine_image_type
+)
+from client_rendering import (
+    render_processed_data_pod,
+    save_gallery_html
+)
+
+from nicegui import binding
+from nicegui.binding import BindableProperty
 from dialogs import *
 from metadata import IPTC
 from img_edit import *
@@ -29,11 +62,9 @@ from iptcinfo3 import IPTCInfo
 import exiv2
 import shutil
 import tempfile
-import os
 from datetime import datetime
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
-import base64
 
 #APP NAME: Andromicae
 
@@ -245,6 +276,14 @@ def init():
         print(f"IPFS folder already exists: {hvym_public_key}")
 
     app.storage.user['hvym_public_key'] = hvym_public_key
+
+    # Import audio workflows after initialization to avoid circular imports
+    global process_audio_embedding_with_tokens, process_aposematic_with_shared_audio, process_enciphering_with_shared_audio
+    from audio_workflows import (
+        process_audio_embedding_with_tokens,
+        process_aposematic_with_shared_audio,
+        process_enciphering_with_shared_audio
+    )
     app.storage.user['img_state'] = app.storage.user.get('img_state', 1)
     app.storage.user['raw_img_hashes'] = app.storage.user.get('raw_img_hashes', [])
     app.storage.user['processed_img_hashes'] = app.storage.user.get('processed_img_hashes', [])
@@ -1545,8 +1584,96 @@ async def process_debug_deploy_gallery():
         idex = app.storage.user.get('img_state', 1)
         state = img_states[idex]
 
-        # Create the NINJS data pod using the existing function
-        output_path = await create_ninjs_data_pod(state)
+        # Create the NINJS data pod using the enhanced function with encryption support
+        # 🎯 CRITICAL: Debug flow always uses debug key as recipient
+        current_public_key = app.storage.user.get('debug_public_key', '')
+        print(f"🔍 Debug flow using debug public key for recipient: {current_public_key[:16]}...")
+        
+        # 🎯 CRITICAL: Recreate aposematic images with correct shared key
+        if state == 'aposematic':
+            from stellar_sdk.keypair import Keypair
+            from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
+            
+            stellar_secret = app.storage.user.get('stellar_secret', '')
+            print(f"🔐 Creator stellar secret (first 16): {stellar_secret[:16]}...")
+            
+            # Create the key pair ONCE and reuse it
+            stellar_kp = Keypair.from_secret(stellar_secret)
+            creator_keys = Stellar25519KeyPair(stellar_kp)
+            
+            print(f"🔍 DEBUG: creator_keys.public_key(): {creator_keys.public_key()}")
+            print(f"🔍 DEBUG: current_public_key (recipient): {current_public_key}")
+            print(f"🔍 DEBUG: creator_keys.public_key() == current_public_key: {creator_keys.public_key() == current_public_key}")
+            
+            # Generate shared key (now consistent across instances!)
+            shared_key = StellarSharedKey(creator_keys, current_public_key)
+            cipher_key = shared_key.shared_secret().hex()  # Uses deterministic derivation
+            
+            print(f"🔑 Recreating aposematic images with shared key: {cipher_key[:16]}...")
+            print(f"🔐 Using app secret + debug public key: {current_public_key[:16]}...")
+            
+            # Recreate all aposematic images with the correct shared key
+            processed_hashes = app.storage.user.get('processed_img_hashes', [])
+            if processed_hashes:
+                app.storage.user['aposematic_img_hashes'].clear()
+                
+                for hash_value in processed_hashes:
+                    try:
+                        img_info = app.storage.user.get(hash_value)
+                        if not img_info:
+                            continue
+                            
+                        img_path = img_info.get('path')
+                        img_name = img_info.get('name')
+                        
+                        if not img_path or not os.path.exists(img_path):
+                            continue
+                        
+                        print(f"Recreating aposematic for: {img_name}")
+                        from aiposematic import new_aposematic_img, SCRAMBLE_MODE
+                        aposematic = new_aposematic_img(
+                            img_path,
+                            cipher_key=cipher_key,
+                            op_string=app.storage.user.get('op_string', '-^+'),
+                            scramble_mode=SCRAMBLE_MODE.BUTTERFLY
+                        )
+                        
+                        aposematic_img_path = aposematic['img_path']
+                        
+                        # Re-embed audio if the original image had audio
+                        audio_path = img_info.get('audio_path')
+                        if audio_path and os.path.exists(audio_path):
+                            print(f"🔍 Skipping audio re-embedding for aposematic image (audio already embedded)")
+                            print(f"🔍 Aposematic images contain embedded audio data")
+                            # 🎯 CRITICAL: Do NOT re-embed audio for aposematic images
+                            # create_audio_image() would overwrite and destroy aposematic data
+                            # aposematic_img_path = reembed_audio_if_needed(aposematic_img_path, audio_path)
+                        
+                        ipfs_hash = ipfs_add(aposematic_img_path)
+                        app.storage.user['aposematic_img_hashes'].append(ipfs_hash)
+                        
+                        # Update info for the new hash
+                        app.storage.user[ipfs_hash] = {
+                            'path': aposematic_img_path,
+                            'name': f"aposematic_{img_name}",
+                            'original_hash': hash_value,
+                            'has_audio': img_info.get('has_audio', False),
+                            'audio_path': img_info.get('audio_path'),
+                            'audio_format': img_info.get('audio_format'),
+                            'audio_duration': img_info.get('audio_duration'),
+                            'audio_size': img_info.get('audio_size'),
+                            'audio_method': img_info.get('audio_method')
+                        }
+                        
+                    except Exception as e:
+                        print(f"Error recreating aposematic {hash_value}: {e}")
+                        continue
+                
+                print(f"Recreated {len(app.storage.user['aposematic_img_hashes'])} aposematic images")
+        
+        output_path = await create_ninjs_data_pod_with_encrypted_tokens(
+            app, state, current_public_key
+        )
 
         ipns_clean_folder(state)
         ipns_add_gallery_to_folder(state)
@@ -1554,9 +1681,30 @@ async def process_debug_deploy_gallery():
         if output_path:
             ui.notify(f'Successfully created data pod at: {output_path}')
 
-            # Load the created JSON data pod
-            with open(output_path, 'r', encoding='utf-8') as f:
-                data_pod = json.load(f)
+            # Process data pod locally to decrypt images before rendering
+            # 🎯 CRITICAL: Debug flow always uses debug secret as subscriber
+            subscriber_secret = app.storage.user.get('debug_secret', '')
+            print(f"🔍 Debug flow using debug secret for subscriber: {subscriber_secret[:16]}...")
+            
+            if not subscriber_secret:
+                ui.notify('No debug secret found - cannot decrypt images', type='warning')
+                return
+            
+            ui.notify('Processing data pod locally to decrypt images...', type='info')
+            processed_data_pod = await process_data_pod_locally(
+                output_path, 
+                subscriber_secret,
+                app
+            )
+            
+            if processed_data_pod:
+                ui.notify('Successfully processed and decrypted data pod', type='positive')
+                data_pod = processed_data_pod
+            else:
+                ui.notify('Failed to process data pod, using original', type='warning')
+                # Load the original JSON data pod as fallback
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    data_pod = json.load(f)
 
             # Set up Jinja2 environment
             template_dir = os.path.join(os.path.dirname(__file__), 'templates')
@@ -2001,18 +2149,52 @@ async def fetch_subscription_channels(subscription_name):
 def download_ipfs_image(url):
     """Download an image from IPFS and return the file path."""
     try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
+        # Extract IPFS hash from URL
+        if '/ipfs/' in url:
+            ipfs_hash = url.split('/ipfs/')[-1]
+        else:
+            ipfs_hash = url
+        
+        print(f"🔍 DEBUG: IPFS hash extracted: {ipfs_hash}")
+        
+        # Try IPFS API first (preserves metadata)
+        try:
+            # Use IPFS HTTP API with ?format=raw to get raw file
+            api_url = f"http://localhost:5001/api/v0/cat?arg={ipfs_hash}"
+            print(f"🔍 DEBUG: Trying IPFS API: {api_url}")
+            
+            response = requests.post(api_url, timeout=30)
+            response.raise_for_status()
+            
+            # Create temp file with appropriate extension
+            ext = '.png'  # Assume PNG for aposematic images
+            temp_path = os.path.join(tempfile.gettempdir(), f"ipfs_download_{hash(url)}{ext}")
+            
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
+            
+            print(f"🔍 DEBUG: Downloaded via IPFS API, size: {len(response.content)} bytes")
+            return temp_path
+            
+        except Exception as api_error:
+            print(f"🔍 DEBUG: IPFS API failed: {api_error}")
+            
+            # Fallback to HTTP gateway (might strip metadata)
+            print(f"🔍 DEBUG: Falling back to HTTP gateway: {url}")
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
 
-        # Create temp file with appropriate extension
-        content_type = response.headers.get('content-type', 'image/jpeg')
-        ext = '.jpg' if 'jpeg' in content_type else '.png' if 'png' in content_type else '.jpg'
-        temp_path = os.path.join(tempfile.gettempdir(), f"ipfs_download_{hash(url)}{ext}")
+            # Create temp file with appropriate extension
+            content_type = response.headers.get('content-type', 'image/jpeg')
+            ext = '.jpg' if 'jpeg' in content_type else '.png' if 'png' in content_type else '.jpg'
+            temp_path = os.path.join(tempfile.gettempdir(), f"ipfs_download_{hash(url)}{ext}")
 
-        with open(temp_path, 'wb') as f:
-            f.write(response.content)
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
 
-        return temp_path
+            print(f"🔍 DEBUG: Downloaded via HTTP gateway, size: {len(response.content)} bytes")
+            return temp_path
+            
     except Exception as e:
         print(f"Error downloading image from {url}: {e}")
         return None
@@ -3635,8 +3817,8 @@ def reembed_audio_if_needed(image_path, audio_path):
         return create_audio_image(audio_path, image_path)
     return image_path
 
-async def process_audio(img_name, img_path, hash_value, audio_file):
-    """Process audio embedding using standard Andromica pattern"""
+async def process_audio(img_name, img_path, hash_value, audio_file, audio_method='metadata', receiver_public_key=None, expiry_hours=1):
+    """Process audio embedding using standard Andromica pattern with token support"""
     try:
         if not audio_file:
             ui.notify('Please select an audio file', type='warning')
@@ -3651,10 +3833,10 @@ async def process_audio(img_name, img_path, hash_value, audio_file):
             ui.notify(f'Unsupported audio format. Please select WAV, MP3, FLAC, or OGG file.', type='negative')
             return
         
-        ui.notify('Processing audio embedding...', type='info')
+        ui.notify(f'Processing audio embedding ({audio_method} method)...', type='info')
         
         # Process audio embedding directly (individual operation pattern)
-        result = await process_audio_embedding(img_name, img_path, hash_value, audio_file)
+        result = await process_audio_embedding(img_name, img_path, hash_value, audio_file, audio_method, receiver_public_key)
         
         if result:
             ui.notify('Audio embedded successfully!', type='positive')
@@ -3677,12 +3859,21 @@ def create_audio_image(audio_file, image_file=None):
     with open(audio_file, 'rb') as f:
         audio_data = f.read()
     
-    # Create or use provided image
+    # Always use provided image as cover (no visualization needed)
     if image_file and os.path.exists(image_file):
         img = PIL.Image.open(image_file)
     else:
-        # Generate audio visualization as cover image
-        img = create_audio_visualization(audio_data)
+        # Create a simple placeholder image if no cover provided
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (800, 600), color='#25F5F8')
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font = ImageFont.truetype("arial.ttf", 40)
+        except:
+            font = ImageFont.load_default()
+        
+        draw.text((400, 300), "🎵 Audio Embedded", fill='white', anchor='mm', font=font)
     
     # Encode audio data as base64 text for ExifTool compatibility
     audio_base64 = base64.b64encode(audio_data).decode('ascii')
@@ -3851,8 +4042,8 @@ async def extract_audio_chunks_endpoint():
     except Exception as e:
         return {'error': str(e)}
 
-async def process_audio_embedding(img_name, img_path, hash_value, audio_file):
-    """Process audio embedding using standard Andromica pattern"""
+async def process_audio_embedding(img_name, img_path, hash_value, audio_file, audio_method='metadata', receiver_public_key=None):
+    """Enhanced audio embedding with token support"""
     try:
         if not audio_file:
             ui.notify('Please select an audio file', type='warning')
@@ -3869,90 +4060,31 @@ async def process_audio_embedding(img_name, img_path, hash_value, audio_file):
             ui.notify(f'Unsupported audio format: {file_ext}', type='negative')
             return None, None
         
-        ui.notify('Processing audio embedding...', type='info')
+        # Validate token method requirements
+        if audio_method == 'token' and not receiver_public_key:
+            ui.notify('Receiver public key required for token-based sharing', type='negative')
+            return None, None
         
-        # Create audio image using PNG custom chunks
-        if app.storage.user.get('generate_spectrogram_cover', True):
-            # Generate new spectrogram image
-            output_path = create_audio_image(audio_file, None)
+        ui.notify(f'Processing audio embedding ({audio_method} method)...', type='info')
+        
+        # Use enhanced audio embedding workflow
+        new_hash, output_path = await process_audio_embedding_with_tokens(
+            app, img_name, img_path, hash_value, audio_file, 
+            audio_method, receiver_public_key
+        )
+        
+        if new_hash and output_path:
+            ui.notify(f'Audio embedded ({audio_method}): {new_hash}', type='positive')
+            render_gallery()
         else:
-            # Use original image as cover
-            output_path = create_audio_image(audio_file, img_path)
-        
-        # Update file info with audio metadata
-        audio_data, audio_format = extract_audio_from_image(output_path)
-        
-        # Update storage
-        app.storage.user[hash_value].update({
-            'path': output_path,
-            'has_audio': True,
-            'audio_path': audio_file,  # Store original audio file path for re-embedding
-            'audio_format': audio_format,
-            'audio_duration': len(audio_data) / 44100 if audio_data else 0,
-            'audio_size': len(audio_data) if audio_data else 0,
-            'audio_method': 'metadata'
-        })
-        
-        # Get the IPFS hash of the final image
-        new_hash = ipfs_add(output_path)
-        app.storage.user['tmp_files'].append(output_path)
-        
-        # STANDARD: Use global img_states like other process_* functions
-        idex = app.storage.user.get('img_state', 1)
-        state = img_states[idex]
-        
-        if state == 'raw':
-            # DESTRUCTIVE: Update existing hash entry in raw_img_hashes to point to audio version
-            raw_hashes = app.storage.user.get('raw_img_hashes', [])
-            
-            try:
-                # Find and update existing hash entry
-                index = raw_hashes.index(hash_value)
-                raw_hashes[index] = new_hash
-                app.storage.user['raw_img_hashes'] = raw_hashes
-                
-                # Update storage to point to audio version
-                app.storage.user[new_hash] = app.storage.user[hash_value].copy()
-                app.storage.user[new_hash].update({
-                    'path': output_path,
-                    'name': f'audio_{img_name}',  # Add audio_ prefix
-                    'has_audio': True,
-                    'audio_path': audio_file,  # Store original audio file path for re-embedding
-                    'audio_format': audio_format,
-                    'audio_duration': len(audio_data) / 44100 if audio_data else 0,
-                    'audio_size': len(audio_data) if audio_data else 0,
-                    'audio_method': 'metadata'
-                })
-                
-                # Remove old hash entry (DESTRUCTIVE)
-                del app.storage.user[hash_value]
-                
-            except ValueError:
-                # Fallback: add to raw hashes if not found
-                raw_hashes.append(new_hash)
-                app.storage.user['raw_img_hashes'] = raw_hashes
-        else:
-            # For non-raw states, use existing logic
-            remove_img_by_name_from_storage(img_name, f'{state}_img_hashes')
-            processed_hashes = app.storage.user.get(f'{state}_img_hashes', [])
-            
-            try:
-                index = processed_hashes.index(hash_value)
-                processed_hashes[index] = new_hash
-            except ValueError:
-                processed_hashes.append(new_hash)
-
-            app.storage.user[f'{state}_img_hashes'] = processed_hashes
-        
-        ui.notify(f'Audio embedded: {new_hash}')
-        render_gallery()
+            ui.notify('Failed to embed audio', type='negative')
         
         return new_hash, output_path
         
     except Exception as e:
         ui.notify(f'Error processing audio: {str(e)}', type='negative')
-        print(f'Audio processing error: {e}')
-        raise
+        print(f"Error in process_audio_embedding: {e}")
+        return None, None
 
 # Check native dependencies before running the app
 if __name__ in {"__main__", "__mp_main__"}:

@@ -648,8 +648,8 @@
                     {% if item.type == 'audio_image' %}
                         <!-- Audio Image Container -->
                         <div class="audio-container">
-                            {% if item.renditions and item.renditions.original %}
-                                <img src="{{ item.renditions.original.href }}"
+                            {% if item.renditions and item.renditions|length > 0 %}
+                                <img src="{{ item.renditions[0].href }}"
                                      alt="{{ item.headline }}"
                                      class="audio-image"
                                      onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
@@ -662,7 +662,7 @@
                                 
                                 <!-- Audio Controls -->
                                 <div class="audio-controls">
-                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions.original.href }}')">
+                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions[0].href }}')">
                                         ▶️
                                     </button>
                                     <div class="audio-info">
@@ -684,8 +684,8 @@
                     {% else %}
                         <!-- Regular Image Container -->
                         <div class="image-container">
-                            {% if item.renditions and item.renditions.original %}
-                                <img src="{{ item.renditions.original.href }}"
+                            {% if item.renditions and item.renditions|length > 0 %}
+                                <img src="{{ item.renditions[0].href }}"
                                      alt="{{ item.headline }}"
                                      onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                                 <div class="image-placeholder" style="display:none;">🖼️</div>
