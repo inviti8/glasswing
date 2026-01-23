@@ -14,7 +14,7 @@ import exiv2
 import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
-from main import choose_files
+from main import choose_files, process_audio
 
 def create_shared_key(reciever_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
@@ -522,17 +522,40 @@ def select_channel_dialog(on_select):
 
     dialog.open()
 
+async def edit_audio_info_main(hash_value):
+    """Edit audio information using standard dialog with process_dialog"""
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+    
+    # Create a wrapper function that matches the expected signature
+    async def process_audio_with_params(img_name, img_path, hash_value, audio_file, audio_method='metadata', receiver_public_key=None, expiry_hours=1):
+        return await process_audio(img_name, img_path, hash_value, audio_file)
+    
+    await edit_audio_info(hash_value, process_audio_with_params)
+
+
 async def edit_audio_info(hash_value, on_save):
-    """Dialog for embedding audio into an existing image"""
+    """Enhanced dialog for embedding audio into an existing image with token support"""
     
     # Get image info
     img_path = app.storage.user[hash_value]['path']
     img_name = app.storage.user[hash_value]['name']
     
+    # Get recipient options for token sharing
+    recipient_options = get_recipient_options()
+    
     with ui.dialog() as dialog:
-        with ui.card().classes('w-full max-w-xl'):
+        with ui.card().classes('w-full max-w-2xl'):
             ui.label('Add Audio to Image').classes('text-lg font-semibold mb-4')
             ui.label(f'Image: {img_name}').classes('text-sm mb-4')
+            
+            # Audio method selection
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.label('Audio Method:').classes('font-medium')
+                audio_method = ui.select(
+                    options={'metadata': 'Metadata (Standard)', 'token': 'Token (Secure Sharing)'},
+                    value='metadata'
+                ).classes('flex-grow')
             
             # Audio file selection - following Andromica pattern
             with ui.row().classes('w-full gap-4 mb-4'):
@@ -543,20 +566,50 @@ async def edit_audio_info(hash_value, on_save):
                 ).props('clearable').classes('flex-grow')
                 ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input)).props('flat')
             
+            # Token sharing options (shown only when token method is selected)
+            with ui.column().classes('w-full mb-4') as token_options:
+                ui.label('Token Sharing Options').classes('font-medium mb-2')
+                
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Recipient:').classes('font-medium')
+                    recipient_select = ui.select(
+                        options=recipient_options,
+                        value=list(recipient_options.keys())[0] if recipient_options else ''
+                    ).classes('flex-grow')
+                
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Token Expiry:').classes('font-medium')
+                    expiry_hours = ui.number(
+                        value=1,
+                        min=1,
+                        max=24,
+                        step=1
+                    ).props('suffix="hours').classes('flex-grow')
+                
+                ui.label(' Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
+            
             # Preview section
             with ui.column().classes('w-full mb-4'):
                 ui.label('Preview:').classes('font-medium mb-2')
                 audio_info = ui.label('No audio file selected').classes('text-sm text-gray-600')
             
-            # Options
-            with ui.row().classes('w-full gap-4 mb-4'):
-                ui.checkbox('Generate spectrogram cover').bind_value(app.storage.user, 'generate_spectrogram_cover')
-                ui.checkbox('Keep original image').bind_value(app.storage.user, 'keep_original_image')
+            # Update token options visibility based on method selection
+            def update_token_options():
+                if audio_method.value == 'token':
+                    token_options.classes('remove', 'hidden')
+                else:
+                    token_options.classes('add', 'hidden')
+            
+            audio_method.on('change', update_token_options)
             
             # Action buttons
             with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
-                ui.button('Embed Audio', on_click=lambda: on_save(img_name, img_path, hash_value, audio_input.value)).props('color=primary')
+                ui.button('Embed Audio', on_click=lambda: on_save(
+                    img_name, img_path, hash_value, audio_input.value, 
+                    audio_method.value, recipient_select.value if audio_method.value == 'token' else None,
+                    expiry_hours.value if audio_method.value == 'token' else 1
+                )).props('color=primary')
     
     dialog.open()
 

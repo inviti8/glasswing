@@ -1508,9 +1508,12 @@ async def process_enciphering():
             # Re-embed audio if the original image had audio
             audio_path = img_info.get('audio_path')
             if audio_path and os.path.exists(audio_path):
-                print(f"Re-embedding audio from {audio_path} into enciphered image")
-                enciphered_img_path = reembed_audio_if_needed(enciphered_img_path, audio_path)
-
+                print(f"🔍 Skipping audio re-embedding for enciphered image (preserves encryption)")
+                print(f"🔍 Enciphered images should not be modified after encryption")
+                # 🎯 CRITICAL: Do NOT re-embed audio for enciphered images
+                # create_audio_image() would overwrite and destroy enciphered data
+                # enciphered_img_path = reembed_audio_if_needed(enciphered_img_path, audio_path)
+            
             ipfs_hash = ipfs_add(enciphered_img_path)
             app.storage.user['enciphered_img_hashes'].append(ipfs_hash)
 
@@ -1542,7 +1545,11 @@ async def process_deciphering():
     app.storage.user.get('deciphered_img_hashes', []).clear()
     for hash_value in app.storage.user.get('enciphered_img_hashes', []):
         img_path = app.storage.user[hash_value]['path']
-        deciphered_img_path = await new_deciphered_img(img_path, app.storage.user['cipher_key'])
+        deciphered_img_path = new_deciphered_img(
+            os.path.basename(img_path),  # file_name
+            img_path,                   # encrypted_img_path
+            app.storage.user['cipher_key']  # cipher_key
+        )
         ipfs_hash = ipfs_add(deciphered_img_path)
         app.storage.user.get('deciphered_img_hashes', []).append(ipfs_hash)
         ui.notify(f'Deciphered {hash_value}')
