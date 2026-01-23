@@ -1316,6 +1316,13 @@ async def process_watermarking():
         print('------------------------------------')
         print(processed_img_path)
         print('------------------------------------')
+        
+        # Re-embed audio if the original image had audio
+        audio_path = app.storage.user[hash_value].get('audio_path')
+        if audio_path and os.path.exists(audio_path):
+            print(f"Re-embedding audio from {audio_path} into watermarked image")
+            processed_img_path = reembed_audio_if_needed(processed_img_path, audio_path)
+        
         ipfs_hash = ipfs_add(processed_img_path)
         
         # Preserve audio metadata when processing
@@ -1324,6 +1331,7 @@ async def process_watermarking():
             'path': processed_img_path,
             'name': f'processed_{img_name}',
             'has_audio': app.storage.user[hash_value].get('has_audio', False),
+            'audio_path': app.storage.user[hash_value].get('audio_path'),  # Preserve audio_path
             'audio_format': app.storage.user[hash_value].get('audio_format'),
             'audio_duration': app.storage.user[hash_value].get('audio_duration'),
             'audio_size': app.storage.user[hash_value].get('audio_size'),
@@ -1387,6 +1395,13 @@ async def process_aposematic():
             print(f"Aposematic result: {aposematic}")
 
             aposematic_img_path = aposematic['img_path']
+            
+            # Re-embed audio if the original image had audio
+            audio_path = img_info.get('audio_path')
+            if audio_path and os.path.exists(audio_path):
+                print(f"Re-embedding audio from {audio_path} into aposematic image")
+                aposematic_img_path = reembed_audio_if_needed(aposematic_img_path, audio_path)
+            
             ipfs_hash = ipfs_add(aposematic_img_path)
             app.storage.user['aposematic_img_hashes'].append(ipfs_hash)
 
@@ -1394,7 +1409,13 @@ async def process_aposematic():
             app.storage.user[ipfs_hash] = {
                 'path': aposematic_img_path,
                 'name': f"aposematic_{img_name}",
-                'original_hash': hash_value
+                'original_hash': hash_value,
+                'has_audio': img_info.get('has_audio', False),
+                'audio_path': img_info.get('audio_path'),  # Preserve audio_path
+                'audio_format': img_info.get('audio_format'),
+                'audio_duration': img_info.get('audio_duration'),
+                'audio_size': img_info.get('audio_size'),
+                'audio_method': img_info.get('audio_method')
             }
 
             ui.notify(f'Processed {img_name}')
@@ -1444,6 +1465,12 @@ async def process_enciphering():
             print(f"Enciphering: {img_name}")
             enciphered_img_path = await new_enciphered_img(img_name, img_path, cipher_key)
             print(f"Enciphered path: {enciphered_img_path}")
+            
+            # Re-embed audio if the original image had audio
+            audio_path = img_info.get('audio_path')
+            if audio_path and os.path.exists(audio_path):
+                print(f"Re-embedding audio from {audio_path} into enciphered image")
+                enciphered_img_path = reembed_audio_if_needed(enciphered_img_path, audio_path)
 
             ipfs_hash = ipfs_add(enciphered_img_path)
             app.storage.user['enciphered_img_hashes'].append(ipfs_hash)
@@ -1452,7 +1479,13 @@ async def process_enciphering():
             app.storage.user[ipfs_hash] = {
                 'path': enciphered_img_path,
                 'name': f"enciphered_{img_name}",
-                'original_hash': hash_value
+                'original_hash': hash_value,
+                'has_audio': img_info.get('has_audio', False),
+                'audio_path': img_info.get('audio_path'),  # Preserve audio_path
+                'audio_format': img_info.get('audio_format'),
+                'audio_duration': img_info.get('audio_duration'),
+                'audio_size': img_info.get('audio_size'),
+                'audio_method': img_info.get('audio_method')
             }
 
             ui.notify(f'Enciphered {img_name}')
@@ -2450,13 +2483,42 @@ async def create_ninjs_data_pod(prefix='processed'):
                     metadata_list = await get_img_metadata(img_path)
                     if not metadata_list or not isinstance(metadata_list, list) or not metadata_list[0]:
                         print(f"Warning: No metadata found for {img_path}")
-                        error_count += 1
-                        continue
-                    metadata = metadata_list[0]
+                        # For audio images, create basic metadata if ExifTool fails
+                        if img_info.get('has_audio', False):
+                            print(f"Creating basic metadata for audio image: {img_path}")
+                            metadata = {
+                                'FileName': os.path.basename(img_path),
+                                'FileSize': os.path.getsize(img_path),
+                                'FileType': 'PNG',
+                                'has_audio': True,
+                                'audio_format': img_info.get('audio_format', 'unknown'),
+                                'audio_duration': img_info.get('audio_duration', 0),
+                                'audio_size': img_info.get('audio_size', 0),
+                                'audio_method': img_info.get('audio_method', 'metadata')
+                            }
+                        else:
+                            error_count += 1
+                            continue
+                    else:
+                        metadata = metadata_list[0]
                 except Exception as e:
                     print(f"Error getting metadata for {img_path}: {str(e)}")
-                    error_count += 1
-                    continue
+                    # For audio images, create basic metadata if ExifTool fails
+                    if img_info.get('has_audio', False):
+                        print(f"Creating basic metadata for audio image due to ExifTool error: {img_path}")
+                        metadata = {
+                            'FileName': os.path.basename(img_path),
+                            'FileSize': os.path.getsize(img_path),
+                            'FileType': 'PNG',
+                            'has_audio': True,
+                            'audio_format': img_info.get('audio_format', 'unknown'),
+                            'audio_duration': img_info.get('audio_duration', 0),
+                            'audio_size': img_info.get('audio_size', 0),
+                            'audio_method': img_info.get('audio_method', 'metadata')
+                        }
+                    else:
+                        error_count += 1
+                        continue
                 
                 # Build news item with safe defaults
                 render_flag = img_info.get('render_metadata', True)
@@ -3480,7 +3542,7 @@ def check_native_dependencies():
 
 # PNG Custom Chunks Audio Implementation
 def extract_audio_from_image(file_path):
-    """Extract audio data from PNG custom chunks using binary parsing"""
+    """Extract and decode base64 audio data from PNG tEXt chunks"""
     try:
         # Read PNG file in binary mode
         with open(file_path, 'rb') as f:
@@ -3493,7 +3555,7 @@ def extract_audio_from_image(file_path):
         
         # Parse PNG chunks
         pos = 8  # Skip PNG signature
-        audio_chunks = []
+        audio_chunks = {}
         
         while pos < len(png_data):
             # Read chunk header (8 bytes: 4 length + 4 type)
@@ -3504,10 +3566,18 @@ def extract_audio_from_image(file_path):
             chunk_type = png_data[pos+4:pos+8].decode('ascii')
             chunk_data = png_data[pos+8:pos+8+chunk_length]
             
-            # Check if this is an audio chunk
-            if chunk_type.startswith('auD'):
-                audio_chunks.append(chunk_data)
-                print(f"Audio chunk found: {chunk_type}, size: {len(chunk_data)}")
+            # Check if this is a tEXt chunk with audio data
+            if chunk_type == 'tEXt' and b'\x00' in chunk_data:
+                keyword, data = chunk_data.split(b'\x00', 1)
+                keyword_str = keyword.decode('ascii')
+                
+                # Check if this is a base64 audio chunk
+                if keyword_str.startswith('audio_base64_'):
+                    # Extract chunk number from keyword (audio_base64_001 -> 001)
+                    chunk_num = int(keyword_str.split('_')[-1])
+                    base64_text = data.decode('ascii')
+                    audio_chunks[chunk_num] = base64_text
+                    print(f"Base64 audio chunk found: {keyword_str}, size: {len(base64_text)} chars")
             
             # Move to next chunk
             pos += 8 + chunk_length + 4
@@ -3517,12 +3587,21 @@ def extract_audio_from_image(file_path):
                 break
         
         if not audio_chunks:
-            print(f"No audio chunks found in {file_path}")
+            print(f"No audio base64 chunks found in {file_path}")
             return None, None
         
-        # Combine chunks in order
-        combined_audio = b''.join(audio_chunks)
-        print(f"Extracted {len(audio_chunks)} audio chunks, total size: {len(combined_audio)} bytes")
+        # Combine base64 chunks in order (sorted by chunk number)
+        sorted_chunks = [audio_chunks[i] for i in sorted(audio_chunks.keys())]
+        combined_base64 = ''.join(sorted_chunks)
+        print(f"Combined {len(audio_chunks)} base64 chunks, total length: {len(combined_base64)}")
+        
+        # Decode base64 to get original audio data
+        try:
+            combined_audio = base64.b64decode(combined_base64)
+            print(f"Successfully decoded {len(combined_audio)} bytes of audio data")
+        except Exception as e:
+            print(f"Base64 decode error: {e}")
+            return None, None
         
         # Try to detect format from first few bytes
         if len(combined_audio) >= 4:
@@ -3548,6 +3627,13 @@ def extract_audio_from_image(file_path):
         import traceback
         traceback.print_exc()
         return None, None
+
+def reembed_audio_if_needed(image_path, audio_path):
+    """Re-embed audio from stored audio_path if available"""
+    if audio_path and os.path.exists(audio_path):
+        print(f"Re-embedding audio from {audio_path} into {image_path}")
+        return create_audio_image(audio_path, image_path)
+    return image_path
 
 async def process_audio(img_name, img_path, hash_value, audio_file):
     """Process audio embedding using standard Andromica pattern"""
@@ -3585,7 +3671,7 @@ async def edit_audio_info_main(hash_value):
     await edit_audio_info(hash_value, process_audio)
 
 def create_audio_image(audio_file, image_file=None):
-    """Create audio-encoded image using PNG custom chunks with manual chunk writing"""
+    """Create audio-encoded image using base64-encoded tEXt chunks for ImageMagick and ExifTool compatibility"""
     
     # Read audio data
     with open(audio_file, 'rb') as f:
@@ -3598,19 +3684,25 @@ def create_audio_image(audio_file, image_file=None):
         # Generate audio visualization as cover image
         img = create_audio_visualization(audio_data)
     
-    # Split audio into optimal chunk sizes (1MB chunks for reliability)
-    chunk_size = 1024 * 1024  # 1MB chunks
-    audio_chunks = []
+    # Encode audio data as base64 text for ExifTool compatibility
+    audio_base64 = base64.b64encode(audio_data).decode('ascii')
+    print(f"Audio data size: {len(audio_data)} bytes, Base64 size: {len(audio_base64)} chars")
     
-    for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i + chunk_size]
-        audio_chunks.append(chunk)
+    # Split base64 into chunks (8KB chunks for conservative tEXt compatibility)
+    chunk_size = 8192  # 8KB chunks
+    base64_chunks = []
+    
+    for i in range(0, len(audio_base64), chunk_size):
+        chunk = audio_base64[i:i + chunk_size]
+        base64_chunks.append(chunk)
+    
+    print(f"Creating {len(base64_chunks)} base64 tEXt chunks")
     
     # Save image normally first to get PNG data
     temp_path = 'temp_audio_image.png'
     img.save(temp_path, 'PNG')
     
-    # Read the PNG and inject custom audio chunks manually
+    # Read the PNG and inject base64 tEXt chunks manually
     with open(temp_path, 'rb') as f:
         png_data = bytearray(f.read())
     
@@ -3628,19 +3720,22 @@ def create_audio_image(audio_file, image_file=None):
             
         pos += 8 + chunk_length + 4
     
-    # Insert audio chunks before IEND
+    # Insert base64 tEXt chunks before IEND
     insert_pos = iend_pos
     
-    for i, chunk_data in enumerate(audio_chunks, 1):
-        chunk_name = f'auD{i}'
-        chunk_length = len(chunk_data)
+    for i, chunk_data in enumerate(base64_chunks, 1):
+        # Use standard PNG tEXt chunks with base64-encoded audio data
+        chunk_name = 'tEXt'
+        keyword = f'audio_base64_{i:03d}'  # audio_base64_001, audio_base64_002...
+        text_data = keyword.encode('ascii') + b'\x00' + chunk_data.encode('ascii')  # tEXt format: keyword\x00data
+        chunk_length = len(text_data)
         
         # Build chunk: length (4) + type (4) + data + CRC (4)
         chunk_header = struct.pack('>I', chunk_length) + chunk_name.encode('ascii')
-        chunk_with_data = chunk_header + chunk_data
+        chunk_with_data = chunk_header + text_data
         
         # Calculate CRC for chunk name + data
-        crc = zlib.crc32(chunk_name.encode('ascii') + chunk_data) & 0xffffffff
+        crc = zlib.crc32(chunk_name.encode('ascii') + text_data) & 0xffffffff
         
         chunk_full = chunk_with_data + struct.pack('>I', crc)
         
@@ -3791,6 +3886,7 @@ async def process_audio_embedding(img_name, img_path, hash_value, audio_file):
         app.storage.user[hash_value].update({
             'path': output_path,
             'has_audio': True,
+            'audio_path': audio_file,  # Store original audio file path for re-embedding
             'audio_format': audio_format,
             'audio_duration': len(audio_data) / 44100 if audio_data else 0,
             'audio_size': len(audio_data) if audio_data else 0,
@@ -3821,6 +3917,7 @@ async def process_audio_embedding(img_name, img_path, hash_value, audio_file):
                     'path': output_path,
                     'name': f'audio_{img_name}',  # Add audio_ prefix
                     'has_audio': True,
+                    'audio_path': audio_file,  # Store original audio file path for re-embedding
                     'audio_format': audio_format,
                     'audio_duration': len(audio_data) / 44100 if audio_data else 0,
                     'audio_size': len(audio_data) if audio_data else 0,

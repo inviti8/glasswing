@@ -339,7 +339,7 @@
         }
         
         let offset = 8; // Skip PNG signature
-        let audioChunks = [];
+        let audioChunks = {};
         
         while (offset < pngData.length) {
             // Read chunk header (4 bytes length + 4 bytes type)
@@ -350,11 +350,31 @@
             const type = String.fromCharCode(pngData[offset + 4], pngData[offset + 5], 
                                            pngData[offset + 6], pngData[offset + 7]);
             
-            // Check if this is an audio chunk
-            if (type.startsWith('auD')) {
+            // Check if this is a tEXt chunk with audio data
+            if (type === 'tEXt') {
                 const chunkData = pngData.slice(offset + 8, offset + 8 + length);
-                audioChunks.push(chunkData);
-                console.log(`Found audio chunk: ${type}, size: ${length}`);
+                
+                // Parse tEXt chunk: keyword\x00data
+                let nullByteIndex = -1;
+                for (let i = 0; i < chunkData.length; i++) {
+                    if (chunkData[i] === 0) {
+                        nullByteIndex = i;
+                        break;
+                    }
+                }
+                
+                if (nullByteIndex !== -1) {
+                    const keyword = String.fromCharCode(...chunkData.slice(0, nullByteIndex));
+                    const data = chunkData.slice(nullByteIndex + 1);
+                    
+                    // Check if this is an audio base64 chunk
+                    if (keyword.startsWith('audio_base64_')) {
+                        const chunkNum = parseInt(keyword.split('_').pop());
+                        const base64Text = String.fromCharCode(...data);
+                        audioChunks[chunkNum] = base64Text;
+                        console.log(`Found base64 audio chunk: ${keyword}, size: ${data.length} chars`);
+                    }
+                }
             }
             
             // Move to next chunk
@@ -364,23 +384,30 @@
             if (type === 'IEND') break;
         }
         
-        if (audioChunks.length === 0) {
-            console.log('No audio chunks found in PNG');
+        if (Object.keys(audioChunks).length === 0) {
+            console.log('No audio base64 chunks found in PNG');
             return null;
         }
         
-        // Combine all audio chunks
-        const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        const combinedAudio = new Uint8Array(totalLength);
-        let writeOffset = 0;
+        // Combine base64 chunks in order
+        const sortedKeys = Object.keys(audioChunks).map(k => parseInt(k)).sort((a, b) => a - b);
+        const combinedBase64 = sortedKeys.map(k => audioChunks[k]).join('');
         
-        for (const chunk of audioChunks) {
-            combinedAudio.set(chunk, writeOffset);
-            writeOffset += chunk.length;
+        console.log(`Combined ${sortedKeys.length} base64 chunks, total length: ${combinedBase64.length}`);
+        
+        // Decode base64 to binary audio data
+        try {
+            const binaryString = atob(combinedBase64);
+            const audioBytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                audioBytes[i] = binaryString.charCodeAt(i);
+            }
+            console.log(`Successfully decoded ${audioBytes.length} bytes of audio data`);
+            return audioBytes;
+        } catch (error) {
+            console.error('Base64 decode error:', error);
+            return null;
         }
-        
-        console.log(`Combined ${audioChunks.length} audio chunks, total size: ${totalLength} bytes`);
-        return combinedAudio;
     }
 
     function detectAudioFormat(data) {
