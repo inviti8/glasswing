@@ -2,7 +2,7 @@ from nicegui import binding, app, ui, run
 from typing import Callable, Awaitable, Any, Union
 import asyncio
 from stellar_sdk import Keypair
-from hvym_stellar import  Stellar25519KeyPair, StellarSharedKey
+from hvym_stellar import Stellar25519KeyPair, StellarSharedKey
 from img_edit import iptc_set_field_value, iptc_get_field_value, iptc_delete_field, new_iptc_img, IPTC_FIELD_CONFIG
 from iptcinfo3 import IPTCInfo
 import os
@@ -14,15 +14,16 @@ import exiv2
 import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
-from main import choose_files, process_audio
+from main import choose_files
+from audio_tokens import is_audio_file
 
-def create_shared_key(reciever_public_key):
+def create_shared_key(receiver_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
 
 
-    shared_key = StellarSharedKey(hvym_keys, reciever_public_key)
+    shared_key = StellarSharedKey(hvym_keys, receiver_public_key)
     app.storage.user['cipher_key'] = shared_key.shared_secret_as_hex()
     return shared_key.shared_secret_as_hex()
 
@@ -522,33 +523,62 @@ def select_channel_dialog(on_select):
 
     dialog.open()
 
-async def edit_audio_info_main(hash_value):
-    """Edit audio information using standard dialog with process_dialog"""
-    img_path = app.storage.user[hash_value]['path']
-    img_name = app.storage.user[hash_value]['name']
-    
-    # Create a wrapper function that matches the expected signature
-    async def process_audio_with_params(img_name, img_path, hash_value, audio_file, audio_method='metadata', receiver_public_key=None, expiry_hours=1):
-        return await process_audio(img_name, img_path, hash_value, audio_file)
-    
-    await edit_audio_info(hash_value, process_audio_with_params)
 
+def edit_audio_info(hash_value, on_close, process_func):
+    """Enhanced dialog for embedding audio into an existing image with token support.
 
-async def edit_audio_info(hash_value, on_save):
-    """Enhanced dialog for embedding audio into an existing image with token support"""
-    
+    Follows the process_dialog pattern used by aposematic_dialog and cipher_dialog.
+
+    Args:
+        hash_value: Image hash to embed audio into
+        on_close: Callback when dialog closes (typically process_dialog)
+        process_func: Function to process the audio embedding
+    """
     # Get image info
     img_path = app.storage.user[hash_value]['path']
     img_name = app.storage.user[hash_value]['name']
-    
+
     # Get recipient options for token sharing
     recipient_options = get_recipient_options()
-    
-    with ui.dialog() as dialog:
+
+    # Track if user confirmed (vs cancelled)
+    confirmed = {'value': False}
+
+    def on_confirm():
+        """Store values and mark as confirmed before closing."""
+        # Validate audio file
+        if not audio_input.value:
+            ui.notify('Please select an audio file', type='warning')
+            return
+
+        # Validate recipient for token method
+        if audio_method.value == 'token' and not recipient_select.value:
+            ui.notify('Please select a recipient for token sharing', type='warning')
+            return
+
+        # Store values for process_func to use
+        app.storage.user['_audio_embed_params'] = {
+            'img_name': img_name,
+            'img_path': img_path,
+            'hash_value': hash_value,
+            'audio_file': audio_input.value,
+            'audio_method': audio_method.value,
+            'receiver_public_key': recipient_select.value if audio_method.value == 'token' else None,
+            'expiry_hours': expiry_hours.value if audio_method.value == 'token' else 1
+        }
+        confirmed['value'] = True
+        dialog.close()
+
+    async def on_dialog_hide():
+        """Called when dialog closes - trigger processing if confirmed."""
+        if confirmed['value']:
+            await on_close(process_func)
+
+    with ui.dialog().on('hide', on_dialog_hide) as dialog:
         with ui.card().classes('w-full max-w-2xl'):
             ui.label('Add Audio to Image').classes('text-lg font-semibold mb-4')
             ui.label(f'Image: {img_name}').classes('text-sm mb-4')
-            
+
             # Audio method selection
             with ui.row().classes('w-full gap-4 mb-4'):
                 ui.label('Audio Method:').classes('font-medium')
@@ -556,7 +586,7 @@ async def edit_audio_info(hash_value, on_save):
                     options={'metadata': 'Metadata (Standard)', 'token': 'Token (Secure Sharing)'},
                     value='metadata'
                 ).classes('flex-grow')
-            
+
             # Audio file selection - following Andromica pattern
             with ui.row().classes('w-full gap-4 mb-4'):
                 ui.label('Audio File:').classes('font-medium')
@@ -565,18 +595,18 @@ async def edit_audio_info(hash_value, on_save):
                     value=''
                 ).props('clearable').classes('flex-grow')
                 ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input)).props('flat')
-            
+
             # Token sharing options (shown only when token method is selected)
             with ui.column().classes('w-full mb-4') as token_options:
                 ui.label('Token Sharing Options').classes('font-medium mb-2')
-                
+
                 with ui.row().classes('w-full gap-4 mb-4'):
                     ui.label('Recipient:').classes('font-medium')
                     recipient_select = ui.select(
                         options=recipient_options,
                         value=list(recipient_options.keys())[0] if recipient_options else ''
                     ).classes('flex-grow')
-                
+
                 with ui.row().classes('w-full gap-4 mb-4'):
                     ui.label('Token Expiry:').classes('font-medium')
                     expiry_hours = ui.number(
@@ -585,38 +615,34 @@ async def edit_audio_info(hash_value, on_save):
                         max=24,
                         step=1
                     ).props('suffix="hours').classes('flex-grow')
-                
-                ui.label(' Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
-            
+
+                ui.label('Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
+
             # Preview section
             with ui.column().classes('w-full mb-4'):
                 ui.label('Preview:').classes('font-medium mb-2')
                 audio_info = ui.label('No audio file selected').classes('text-sm text-gray-600')
-            
+
             # Update token options visibility based on method selection
             def update_token_options():
                 if audio_method.value == 'token':
                     token_options.classes('remove', 'hidden')
                 else:
                     token_options.classes('add', 'hidden')
-            
+
             audio_method.on('change', update_token_options)
-            
+
             # Action buttons
             with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
-                ui.button('Embed Audio', on_click=lambda: on_save(
-                    img_name, img_path, hash_value, audio_input.value, 
-                    audio_method.value, recipient_select.value if audio_method.value == 'token' else None,
-                    expiry_hours.value if audio_method.value == 'token' else 1
-                )).props('color=primary')
-    
+                ui.button('Embed Audio', on_click=on_confirm).props('color=primary')
+
     dialog.open()
+    return dialog
 
 def is_audio(file):
-    """Check if file is an audio format"""
-    audio_extensions = ['.wav', '.mp3', '.flac', '.ogg']
-    return any(file.lower().endswith(ext) for ext in audio_extensions)
+    """Check if file is an audio format."""
+    return is_audio_file(file)
 
 async def handle_audio_selection(input_field):
     """Handle audio file selection following Andromica pattern"""

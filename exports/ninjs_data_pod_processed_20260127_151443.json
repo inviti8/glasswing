@@ -1,0 +1,49 @@
+{
+  "uri": "urn:ninjs:v2:com.example.gallery:processed",
+  "version": "http://iptc.org/std/ninjs/2.1",
+  "content_created": "2026-01-27T15:14:43.507977",
+  "items": [
+    {
+      "type": "audio_image",
+      "guid": "urn:uuid:QmUDSRhvGJCK4isK6nPeCoEA7YuQRGbaXT6VysXFQRX6rC",
+      "version": "1",
+      "language": "en",
+      "pubstatus": "usable",
+      "title": "processed_audio_app.png",
+      "byline": "",
+      "creditline": "",
+      "copyright": "",
+      "ednote": "Type: raw, Audio method: token",
+      "renditions": [
+        {
+          "name": "original",
+          "href": "http://localhost:8080/ipfs/QmUDSRhvGJCK4isK6nPeCoEA7YuQRGbaXT6VysXFQRX6rC",
+          "mimetype": "image/png",
+          "width": 0,
+          "height": 0
+        }
+      ],
+      "imageType": "raw",
+      "hasAudio": true,
+      "audioMethod": "token",
+      "audioTokenInfo": {
+        "receiverPublicKey": "G_488aba4EwMBibjH9DrAjlvSeUcxWgCwF5nzNqgWR4=",
+        "tokenExpiry": 1769559283.5079618
+      }
+    }
+  ],
+  "creator_public_key": "0RshUIagFTbChGfVP_M6d1f-33i8Ztt_0czmqTbs-3s=",
+  "recipient_public_key": "G_488aba4EwMBibjH9DrAjlvSeUcxWgCwF5nzNqgWR4=",
+  "content_type": "mixed",
+  "audio_token_images": [
+    "QmUDSRhvGJCK4isK6nPeCoEA7YuQRGbaXT6VysXFQRX6rC"
+  ],
+  "type_distribution": {
+    "raw": 1,
+    "processed": 0,
+    "aposematic": 0,
+    "enciphered": 0,
+    "total_with_audio": 1,
+    "audio_token_count": 1
+  }
+}

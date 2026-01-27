@@ -1,0 +1,18 @@
+{
+  "uri": "urn:ninjs:v2:com.example.gallery:enciphered",
+  "version": "http://iptc.org/std/ninjs/2.1",
+  "content_created": "2026-01-22T22:37:29.107489",
+  "items": [],
+  "creator_public_key": "9SMsIWB5N9VB-vigR4G3JeKVG4CQUynS1dGbuI-4JAA=",
+  "recipient_public_key": "ugWvOpLNTce3XQuxNC9vyVwLmr9j5Vp3eFuVktiNfF4=",
+  "content_type": "mixed",
+  "audio_token_images": [],
+  "type_distribution": {
+    "raw": 0,
+    "processed": 0,
+    "aposematic": 0,
+    "enciphered": 0,
+    "total_with_audio": 0,
+    "audio_token_count": 0
+  }
+}

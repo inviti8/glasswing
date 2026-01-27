@@ -447,17 +447,40 @@
         return btoa(binary);
     }
 
-    function playAudioFromImage(imageSrc) {
-        console.log('Initiating audio playback from image:', imageSrc);
-        
+    function playPreExtractedAudio(audioData, audioFormat, playButton) {
+        // For token-based audio that was pre-extracted during data pod processing
+        console.log('Playing pre-extracted audio, format:', audioFormat);
+
+        if (playButton) {
+            playButton.disabled = true;
+            playButton.innerHTML = '⏳';
+        }
+
+        playExtractedAudio(audioData, audioFormat || 'wav', playButton);
+    }
+
+    function playAudioFromImage(imageSrc, audioMethod) {
+        console.log('Initiating audio playback from image:', imageSrc, 'method:', audioMethod);
+
         // Show loading state
         const playButton = event.target.closest('.audio-play-btn');
         if (playButton) {
             playButton.disabled = true;
             playButton.innerHTML = '⏳';
         }
-        
-        // Extract and play audio
+
+        // Token-based audio requires server-side decryption
+        if (audioMethod === 'token') {
+            console.warn('Token-based audio requires decryption - should be pre-extracted');
+            alert('Token audio requires decryption. Please ensure the data pod was processed correctly.');
+            if (playButton) {
+                playButton.disabled = false;
+                playButton.innerHTML = '▶️';
+            }
+            return;
+        }
+
+        // Extract and play audio (metadata/base64 method)
         extractAudioFromImage(imageSrc, function(audioData, audioFormat) {
             if (!audioData || !audioFormat) {
                 console.error('No audio data found in image');
@@ -468,9 +491,9 @@
                 }
                 return;
             }
-            
+
             console.log('Audio extracted successfully, format:', audioFormat);
-            
+
             // Play the extracted audio
             playExtractedAudio(audioData, audioFormat, playButton);
         });
@@ -645,32 +668,34 @@
             <div class="gallery">
                 {% for item in data_pod['items'] %}
                 <div class="gallery-item">
-                    {% if item.type == 'audio_image' %}
+                    {% if item.type == 'audio_image' or item.hasAudio %}
                         <!-- Audio Image Container -->
                         <div class="audio-container">
                             {% if item.renditions and item.renditions|length > 0 %}
                                 <img src="{{ item.renditions[0].href }}"
                                      alt="{{ item.headline }}"
                                      class="audio-image"
+                                     id="audio-img-{{ loop.index }}"
                                      onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                                 <div class="image-placeholder" style="display:none;">🖼️</div>
-                                
+
                                 <!-- Audio Badge -->
                                 <div class="audio-badge">
-                                    🎵 Audio
+                                    🎵 Audio{% if item.audioMethod %} ({{ item.audioMethod }}){% endif %}
                                 </div>
-                                
+
                                 <!-- Audio Controls -->
                                 <div class="audio-controls">
-                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions[0].href }}')">
+                                    <!-- Audio is extracted from image via JavaScript (avoids large HTML files) -->
+                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions[0].href }}', '{{ item.audioMethod }}')">
                                         ▶️
                                     </button>
                                     <div class="audio-info">
-                                        {% if item.audio_duration %}
-                                        Duration: {{ "%.1f"|format(item.audio_duration) }}s
-                                        {% endif %}
                                         {% if item.audio_format %}
-                                        • Format: {{ item.audio_format.upper() }}
+                                        Format: {{ item.audio_format.upper() }}
+                                        {% endif %}
+                                        {% if item.audio_duration %}
+                                        • Duration: {{ "%.1f"|format(item.audio_duration) }}s
                                         {% endif %}
                                         {% if item.audio_size %}
                                         • Size: {{ "%.1f"|format(item.audio_size / 1024 / 1024) }}MB
@@ -727,18 +752,18 @@
                             </div>
                             {% endif %}
 
-                            {% if item.renditions and item.renditions.original %}
-                                {% if item.renditions.original.width and item.renditions.original.height %}
+                            {% if item.renditions and item.renditions|length > 0 %}
+                                {% if item.renditions[0].width and item.renditions[0].height %}
                                 <div class="meta-row">
                                     <span class="meta-label">Dimensions:</span>
-                                    <span class="meta-value">{{ item.renditions.original.width }} × {{ item.renditions.original.height }}px</span>
+                                    <span class="meta-value">{{ item.renditions[0].width }} × {{ item.renditions[0].height }}px</span>
                                 </div>
                                 {% endif %}
 
-                                {% if item.renditions.original.mimetype %}
+                                {% if item.renditions[0].mimetype %}
                                 <div class="meta-row">
                                     <span class="meta-label">Format:</span>
-                                    <span class="meta-value">{{ item.renditions.original.mimetype }}</span>
+                                    <span class="meta-value">{{ item.renditions[0].mimetype }}</span>
                                 </div>
                                 {% endif %}
                             {% endif %}

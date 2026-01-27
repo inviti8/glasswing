@@ -1,0 +1,45 @@
+{
+  "uri": "urn:ninjs:v2:com.example.gallery:aposematic",
+  "version": "http://iptc.org/std/ninjs/2.1",
+  "content_created": "2026-01-22T20:57:12.627797",
+  "items": [
+    {
+      "type": "aposematic",
+      "guid": "urn:uuid:QmfLGh6GqxfmJpnL3xhdr6LMPvfRf2USdtXaeAxe3iCjcJ",
+      "version": "1",
+      "language": "en",
+      "pubstatus": "usable",
+      "title": "aposematic_processed_app.png",
+      "byline": "",
+      "creditline": "",
+      "copyright": "",
+      "ednote": "Type: aposematic, Audio method: None",
+      "renditions": [
+        {
+          "name": "original",
+          "href": "http://localhost:8080/ipfs/QmfLGh6GqxfmJpnL3xhdr6LMPvfRf2USdtXaeAxe3iCjcJ",
+          "mimetype": "image/png",
+          "width": 0,
+          "height": 0
+        }
+      ],
+      "imageType": "aposematic",
+      "hasAudio": false,
+      "audioMethod": null
+    }
+  ],
+  "creator_public_key": "LIYCpH4ZVCRrASRgfwDEXINJ8C_S0GbC-VXbrayWhAA=",
+  "recipient_public_key": "LIYCpH4ZVCRrASRgfwDEXINJ8C_S0GbC-VXbrayWhAA=",
+  "content_type": "mixed",
+  "audio_token_images": [],
+  "type_distribution": {
+    "raw": 0,
+    "processed": 0,
+    "aposematic": 1,
+    "enciphered": 0,
+    "total_with_audio": 0,
+    "audio_token_count": 0
+  },
+  "op_string": "-^+",
+  "scramble_mode": 2
+}

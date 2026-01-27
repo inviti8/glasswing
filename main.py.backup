@@ -1247,7 +1247,7 @@ async def choose_img():
         ipfs_hash = ipfs_add(img)
         print(ipfs_hash)
 
-        # CRITICAL: Initialize metadata structure for raw image
+        # 🎯 CRITICAL: Initialize metadata structure for raw image
         app.storage.user[ipfs_hash] = {
             "name": os.path.basename(img),
             "path": img,
@@ -2763,7 +2763,6 @@ def render_gallery(folder=None):
     idex = app.storage.user.get("img_state", 1)
     state = img_states[idex]
     hashes = app.storage.user.get(f"{state}_img_hashes", [])
-    print(f"[DEBUG render_gallery] state={state}, hashes={hashes}")
 
     render_state(hashes)
 
@@ -2778,31 +2777,19 @@ def render_gallery(folder=None):
                     "relative overflow-visible w-full max-w-2xl mx-auto"
                 ):
                     file_info = app.storage.user.get(hash_value, {})
-                    print(f"[DEBUG render_gallery] hash={hash_value}, file_info={file_info}")
-                    print(f"[DEBUG render_gallery] has_audio={file_info.get('has_audio', False)}")
                     img_url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}"
                     if folder:
                         img_url = (
                             f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{folder}/{hash_value}"
                         )
                     else:
-                        # Show audio indicator chip if has_audio, otherwise show filename
-                        if file_info.get("has_audio", False):
-                            ui.chip(
-                                "Audio",
-                                icon="music_note",
-                                color="blue",
-                            ).props("square").classes(
-                                "absolute top-2 left-2 z-10"
-                            )
-                        else:
-                            ui.chip(
-                                file_info.get("name", "Unknown"),
-                                icon="image",
-                                color="white",
-                            ).props("square").classes(
-                                "absolute top-2 left-2 z-10 transparent-chip"
-                            )
+                        ui.chip(
+                            file_info.get("name", "Unknown"),
+                            icon="image",
+                            color="white",
+                        ).props("square").classes(
+                            "absolute top-2 left-2 z-10 transparent-chip"
+                        )
 
                     img_container = ui.image(img_url).classes("w-full")
 
@@ -2817,9 +2804,7 @@ def render_gallery(folder=None):
                                     on_click=lambda h=hash_value: copy_img(h),
                                 ).tooltip("Copy image")
                             # NEW: Audio embedding actions
-                            has_audio_flag = file_info.get("has_audio", False)
-                            print(f"[DEBUG render_gallery] Audio check for {hash_value}: has_audio={has_audio_flag}")
-                            if has_audio_flag:
+                            if file_info.get("has_audio", False):
                                 ui.fab_action(
                                     "music_note",
                                     on_click=lambda h=hash_value: play_audio_from_image(
@@ -3162,18 +3147,19 @@ async def create_ninjs_data_pod(prefix="processed"):
 
                 # Add audio-specific fields if this is an audio image
                 if has_audio:
-                    # Get audio format from image (don't embed full audio data in HTML - too large)
+                    # Extract audio data once
                     audio_data, audio_format = extract_audio_from_image(img_path)
 
                     data_item.update(
                         {
-                            # Don't embed audio_data inline - let JavaScript extract from image
-                            # This prevents 30MB+ HTML files for large audio
+                            "audio_data": base64.b64encode(audio_data).decode()
+                            if audio_data
+                            else None,
                             "audio_format": img_info.get(
                                 "audio_format", audio_format if audio_format else "wav"
                             ),
                             "audio_duration": img_info.get("audio_duration", 0),
-                            "audio_size": len(audio_data) if audio_data else img_info.get("audio_size", 0),
+                            "audio_size": img_info.get("audio_size", 0),
                             "audio_method": img_info.get("audio_method", "metadata"),
                         }
                     )
@@ -3187,16 +3173,17 @@ async def create_ninjs_data_pod(prefix="processed"):
                 # Use the IPFS gateway URL for browser access
                 # This allows the HTML to display images when loaded in a browser
                 gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
-                rendition = {
-                    "href": f"{gateway_base}/ipfs/{img_hash}",
-                    "ipfs_hash": img_hash,  # Store the hash separately for reference
-                    "mimetype": mimetype,
+                renditions = {
+                    "original": {
+                        "href": f"{gateway_base}/ipfs/{img_hash}",
+                        "ipfs_hash": img_hash,  # Store the hash separately for reference
+                        "mimetype": mimetype,
+                    }
                 }
                 if width and height:
-                    rendition["width"] = width
-                    rendition["height"] = height
-                # Template expects renditions as a list, accessed via renditions[0]
-                data_item["renditions"] = [rendition]
+                    renditions["original"]["width"] = width
+                    renditions["original"]["height"] = height
+                data_item["renditions"] = renditions
 
                 # Add place information if available
                 city = safe_get(metadata, "IPTC:City")
@@ -3786,15 +3773,13 @@ def main_page():
             if pending_browser_html and update_browser_content:
                 print("Loading pending HTML content into iframe")
 
-                # Use process_dialog to show loading indicator
-                async def load_browser_content():
+                # Small delay to ensure iframe is in DOM after tab switch
+                def load_content():
                     global pending_browser_html
-                    # Small delay to ensure iframe is in DOM after tab switch
-                    await asyncio.sleep(0.1)
                     update_browser_content(pending_browser_html)
                     pending_browser_html = None
 
-                await process_dialog(load_browser_content)
+                ui.timer(0.1, load_content, once=True)
 
     with ui.header().classes(
         "row items-center justify-between p-0 gradient-background transition-all duration-300 transform"
@@ -4495,12 +4480,6 @@ async def process_audio_from_storage():
         receiver_public_key = params.get("receiver_public_key")
         expiry_hours = params.get("expiry_hours", 1)
 
-        # DEBUG: Log parameters
-        print(f"[DEBUG process_audio_from_storage] img_name={img_name}")
-        print(f"[DEBUG process_audio_from_storage] hash_value={hash_value}")
-        print(f"[DEBUG process_audio_from_storage] audio_method={audio_method}")
-        print(f"[DEBUG process_audio_from_storage] receiver_public_key={receiver_public_key[:20] if receiver_public_key else None}...")
-
         if not audio_file:
             ui.notify("Please select an audio file", type="warning")
             return
@@ -4518,7 +4497,7 @@ async def process_audio_from_storage():
             return
 
         # Process audio embedding
-        expires_in = int(expiry_hours * 3600)  # Convert hours to seconds (must be int for Biscuit)
+        expires_in = expiry_hours * 3600  # Convert hours to seconds
         result = await process_audio_embedding(
             img_name,
             img_path,
@@ -4529,16 +4508,9 @@ async def process_audio_from_storage():
             expires_in,
         )
 
-        # DEBUG: Log result
-        print(f"[DEBUG process_audio_from_storage] result={result}")
         if result:
-            print(f"[DEBUG process_audio_from_storage] new_hash={result[0]}, output_path={result[1]}")
-
-        if result and result[0] is not None:
             ui.notify("Audio embedded successfully!", type="positive")
             render_gallery()
-        else:
-            ui.notify("Failed to embed audio", type="negative")
 
     except Exception as e:
         ui.notify(f"Error embedding audio: {str(e)}", type="negative")
@@ -4734,77 +4706,57 @@ async def process_audio_embedding(
             return None, None
 
         # Create audio image based on method
-        print(f"[DEBUG process_audio_embedding] audio_method={audio_method}")
         if audio_method == "token":
             sender_kp = get_user_keypair(app)
-            print(f"[DEBUG process_audio_embedding] Creating token audio image...")
             output_path = create_token_audio_image(
                 audio_file, img_path, sender_kp, receiver_public_key, expires_in
             )
         else:
-            print(f"[DEBUG process_audio_embedding] Creating metadata audio image...")
             output_path = create_audio_image(audio_file, img_path)
 
-        print(f"[DEBUG process_audio_embedding] output_path={output_path}")
         if not output_path:
-            print(f"[DEBUG process_audio_embedding] output_path is None, returning failure")
             return None, None
 
         # Add to IPFS and update storage
         new_hash = ipfs_add(output_path)
-        print(f"[DEBUG process_audio_embedding] new_hash={new_hash}")
         app.storage.user["tmp_files"].append(output_path)
 
         # Update storage with new image info
         old_info = app.storage.user.get(hash_value, {})
-        print(f"[DEBUG process_audio_embedding] old_info for {hash_value}={old_info}")
-
-        new_info = {
+        app.storage.user[new_hash] = {
             "name": f"audio_{img_name}",
             "path": output_path,
             "has_audio": True,
             "audio_method": audio_method,
-            "audio_path": audio_file,  # Set to current audio file
+            "audio_path": old_info.get("audio_path"),  # ✅ PRESERVE
             "audio_format": old_info.get("audio_format"),  # ✅ PRESERVE
             "audio_duration": old_info.get("audio_duration"),  # ✅ PRESERVE
             "audio_size": old_info.get("audio_size"),  # ✅ PRESERVE
             "image_type": old_info.get("image_type", "raw"),
         }
-        app.storage.user[new_hash] = new_info
-        print(f"[DEBUG process_audio_embedding] Stored new_info for {new_hash}: {new_info}")
 
         # Update hash list for current state
         state_idx = app.storage.user.get("img_state", 1)
         state_names = ["raw", "processed", "aposematic", "enciphered"]
         state = state_names[state_idx - 1] if state_idx <= 4 else "raw"
         hash_list_key = f"{state}_img_hashes"
-        print(f"[DEBUG process_audio_embedding] state={state}, hash_list_key={hash_list_key}")
 
         hash_list = app.storage.user.get(hash_list_key, [])
-        print(f"[DEBUG process_audio_embedding] hash_list BEFORE update: {hash_list}")
         if hash_value in hash_list:
             idx = hash_list.index(hash_value)
             hash_list[idx] = new_hash
-            print(f"[DEBUG process_audio_embedding] Replaced hash at index {idx}")
         else:
             hash_list.append(new_hash)
-            print(f"[DEBUG process_audio_embedding] Appended new_hash to list")
         app.storage.user[hash_list_key] = hash_list
-        print(f"[DEBUG process_audio_embedding] hash_list AFTER update: {app.storage.user.get(hash_list_key)}")
 
         # Clean up old entry
         if hash_value in app.storage.user:
             del app.storage.user[hash_value]
-            print(f"[DEBUG process_audio_embedding] Deleted old entry for {hash_value}")
-
-        # Verify storage
-        print(f"[DEBUG process_audio_embedding] VERIFY: app.storage.user[{new_hash}] = {app.storage.user.get(new_hash)}")
 
         return new_hash, output_path
 
     except Exception as e:
         print(f"Error in process_audio_embedding: {e}")
-        ui.notify(f"Audio embedding failed: {str(e)}", type="negative")
         return None, None
 
 
