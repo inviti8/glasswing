@@ -459,7 +459,7 @@ async def process_data_pod_locally(
                     print(f"🔍 Audio check: has_audio={has_audio}, actual_method={actual_method}")
 
                     # Try token extraction first if that's what we expect
-                    if actual_method == "token" or audio_method == "token":
+                    if actual_method == "token" or item.get("audioMethod") == "token":
                         try:
                             serialized_token = extract_audio_token(decoded_path)
                             if serialized_token:

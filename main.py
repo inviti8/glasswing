@@ -1261,7 +1261,10 @@ async def choose_img():
             "audio_method": None,
         }
 
-        app.storage.user.get("raw_img_hashes", []).append(ipfs_hash)
+        # Ensure the list exists, then append
+        if "raw_img_hashes" not in app.storage.user:
+            app.storage.user["raw_img_hashes"] = []
+        app.storage.user["raw_img_hashes"].append(ipfs_hash)
         ui.notify(f"Added {img}")
         render_gallery()
 
@@ -1507,7 +1510,11 @@ async def process_watermarking():
         ui.notify("Watermarking is disabled")
         return
 
-    app.storage.user.get("processed_img_hashes", []).clear()
+    # Ensure the list exists in storage, then clear it
+    if "processed_img_hashes" not in app.storage.user:
+        app.storage.user["processed_img_hashes"] = []
+    app.storage.user["processed_img_hashes"].clear()
+
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
         img_name = app.storage.user[hash_value]["name"]
@@ -1548,7 +1555,7 @@ async def process_watermarking():
             }
         )
 
-        app.storage.user.get("processed_img_hashes", []).append(ipfs_hash)
+        app.storage.user["processed_img_hashes"].append(ipfs_hash)
         ui.notify(f"Processed {hash_value}")
     persistent_save_data()
     render_gallery()
@@ -1733,7 +1740,11 @@ async def process_enciphering():
 
 
 async def process_deciphering():
-    app.storage.user.get("deciphered_img_hashes", []).clear()
+    # Ensure the list exists in storage, then clear it
+    if "deciphered_img_hashes" not in app.storage.user:
+        app.storage.user["deciphered_img_hashes"] = []
+    app.storage.user["deciphered_img_hashes"].clear()
+
     for hash_value in app.storage.user.get("enciphered_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
         deciphered_img_path = new_deciphered_img(
@@ -1742,14 +1753,18 @@ async def process_deciphering():
             app.storage.user["cipher_key"],  # cipher_key
         )
         ipfs_hash = ipfs_add(deciphered_img_path)
-        app.storage.user.get("deciphered_img_hashes", []).append(ipfs_hash)
+        app.storage.user["deciphered_img_hashes"].append(ipfs_hash)
         ui.notify(f"Deciphered {hash_value}")
     persistent_save_data()
     render_gallery()
 
 
 async def process_shared_iptc_metadata():
-    app.storage.user.get("processed_img_hashes", []).clear()
+    # Ensure the list exists in storage, then clear it
+    if "processed_img_hashes" not in app.storage.user:
+        app.storage.user["processed_img_hashes"] = []
+    app.storage.user["processed_img_hashes"].clear()
+
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
         img_name = app.storage.user[hash_value]["name"]
@@ -1770,7 +1785,7 @@ async def process_shared_iptc_metadata():
             }
         )
 
-        app.storage.user.get("processed_img_hashes", []).append(ipfs_hash)
+        app.storage.user["processed_img_hashes"].append(ipfs_hash)
         ui.notify(f"Processed {hash_value}")
     persistent_save_data()
     render_gallery()
