@@ -686,10 +686,17 @@
 
                                 <!-- Audio Controls -->
                                 <div class="audio-controls">
-                                    <!-- Audio is extracted from image via JavaScript (avoids large HTML files) -->
+                                    {% if item.audio and item.audio.data %}
+                                    <!-- Pre-extracted audio (token method - decrypted server-side) -->
+                                    <button class="audio-play-btn" onclick="playPreExtractedAudio('{{ item.audio.data }}', '{{ item.audio.format }}', this)">
+                                        ▶️
+                                    </button>
+                                    {% else %}
+                                    <!-- Extract from image via JavaScript (metadata method) -->
                                     <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions[0].href }}', '{{ item.audioMethod }}')">
                                         ▶️
                                     </button>
+                                    {% endif %}
                                     <div class="audio-info">
                                         {% if item.audio_format %}
                                         Format: {{ item.audio_format.upper() }}

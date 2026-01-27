@@ -20,7 +20,7 @@ from audio_tokens import (
     extract_audio_from_token,
     detect_audio_format,
 )
-from png_chunks import extract_audio_token
+from png_chunks import extract_audio_token, extract_audio_base64, has_audio_data
 
 
 def determine_image_type(img_hash: str, img_info: Dict[str, Any], app) -> str:
@@ -452,61 +452,74 @@ async def process_data_pod_locally(
                 # Extract audio tokens if present (NEW - audio token processing)
                 if item.get("hasAudio") and item.get("audioMethod") == "token":
                     print(f"🎵 Extracting audio token from: {item.get('title')}")
-                    try:
-                        # Extract token from PNG
-                        serialized_token = extract_audio_token(decoded_path)
-                        if serialized_token:
-                            # Extract audio using new API (returns raw bytes and metadata)
-                            audio_bytes, metadata = extract_audio_from_token(
-                                subscriber_keys, serialized_token, verify_hash=True
-                            )
+                    audio_extracted = False
 
-                            if audio_bytes:
-                                # Convert to base64 for storage in data pod
-                                audio_base64 = base64.b64encode(audio_bytes).decode(
-                                    "ascii"
+                    # First, check what type of audio is actually in the image
+                    has_audio, actual_method = has_audio_data(decoded_path)
+                    print(f"🔍 Audio check: has_audio={has_audio}, actual_method={actual_method}")
+
+                    # Try token extraction first if that's what we expect
+                    if actual_method == "token" or audio_method == "token":
+                        try:
+                            serialized_token = extract_audio_token(decoded_path)
+                            if serialized_token:
+                                audio_bytes, metadata = extract_audio_from_token(
+                                    subscriber_keys, serialized_token, verify_hash=True
                                 )
 
-                                # Use metadata from token or detect format
-                                # Metadata uses 'filename' key (not 'file_type')
-                                audio_format = None
-                                if metadata:
-                                    filename = metadata.get("filename", "")
-                                    if filename and "." in filename:
-                                        audio_format = filename.rsplit(".", 1)[
-                                            -1
-                                        ].lower()
-                                if not audio_format:
-                                    audio_format = detect_audio_format(audio_bytes)
+                                if audio_bytes:
+                                    audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+                                    audio_format = None
+                                    if metadata:
+                                        filename = metadata.get("filename", "")
+                                        if filename and "." in filename:
+                                            audio_format = filename.rsplit(".", 1)[-1].lower()
+                                    if not audio_format:
+                                        audio_format = detect_audio_format(audio_bytes)
+
+                                    item["audio"] = {
+                                        "data": audio_base64,
+                                        "format": audio_format,
+                                        "extractedAt": time.time(),
+                                        "method": "token",
+                                        "metadata": {
+                                            "fileSize": metadata.get("size") if metadata else len(audio_bytes),
+                                            "fileHash": metadata.get("hash") if metadata else None,
+                                            "fileName": metadata.get("filename") if metadata else None,
+                                            "verified": metadata is not None,
+                                        },
+                                    }
+                                    print(f"✅ Audio extracted from token ({len(audio_base64)} chars)")
+                                    audio_extracted = True
+                        except Exception as e:
+                            print(f"⚠️ Token extraction failed: {e}")
+
+                    # Fallback: try base64/metadata extraction
+                    if not audio_extracted and (actual_method == "base64" or has_audio):
+                        try:
+                            audio_base64 = extract_audio_base64(decoded_path)
+                            if audio_base64:
+                                # Decode to detect format
+                                audio_bytes = base64.b64decode(audio_base64)
+                                audio_format = detect_audio_format(audio_bytes)
 
                                 item["audio"] = {
                                     "data": audio_base64,
                                     "format": audio_format,
                                     "extractedAt": time.time(),
-                                    "method": "token",
-                                    # New: include token metadata
+                                    "method": "metadata",
                                     "metadata": {
-                                        "fileSize": metadata.get("size")
-                                        if metadata
-                                        else len(audio_bytes),
-                                        "fileHash": metadata.get("hash")
-                                        if metadata
-                                        else None,
-                                        "fileName": metadata.get("filename")
-                                        if metadata
-                                        else None,
-                                        "verified": metadata is not None,
+                                        "fileSize": len(audio_bytes),
+                                        "verified": True,
                                     },
                                 }
-                                print(
-                                    f"✅ Audio extracted successfully ({len(audio_base64)} chars)"
-                                )
-                            else:
-                                print(f"❌ Audio token extraction failed")
-                        else:
-                            print(f"❌ No audio token found in image")
-                    except Exception as e:
-                        print(f"❌ Failed to extract audio token: {e}")
+                                print(f"✅ Audio extracted from metadata ({len(audio_base64)} chars)")
+                                audio_extracted = True
+                        except Exception as e:
+                            print(f"⚠️ Metadata extraction failed: {e}")
+
+                    if not audio_extracted:
+                        print(f"❌ No audio could be extracted from image")
 
                 # Convert image to base64 for display (only if requested)
                 # For local preview with IPFS running, skip this to avoid huge HTML files
