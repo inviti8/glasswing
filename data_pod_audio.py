@@ -64,7 +64,9 @@ def determine_image_type(img_hash: str, img_info: Dict[str, Any], app) -> str:
 
 
 async def create_ninjs_data_pod_with_encrypted_tokens(
-    app, prefix: str = "processed", receiver_public_key: Optional[str] = None
+    app, prefix: str = "processed",
+    receiver_public_key: Optional[str] = None,
+    creator_public_key: Optional[str] = None  # NEW: Allow override for debug flow
 ) -> Optional[str]:
     """
     Create data pod with encrypted audio tokens (subscriber decrypts locally)
@@ -205,7 +207,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
             "content_created": datetime.now().isoformat(),
             "items": data_items,
             # CRITICAL: Encryption metadata for subscriber decryption (per ENCRYPTION.md)
-            "creator_public_key": get_user_public_key(app),
+            "creator_public_key": creator_public_key or get_user_public_key(app),
             "recipient_public_key": receiver_public_key,  # Subscriber's key
             "content_type": "mixed",  # May contain original, aposematic, enciphered
             "audio_token_images": audio_token_images,  # NEW: Track token-based images
@@ -346,6 +348,9 @@ async def process_data_pod_locally(
         new_deciphered_img = getattr(main, "new_deciphered_img", None)
         recover_aposematic_img = getattr(main, "recover_aposematic_img", None)
         image_to_base64_uri = getattr(main, "image_to_base64_uri", None)
+        ipfs_add = getattr(main, "ipfs_add", None)
+        ipfs_webui = getattr(main, "ipfs_webui", "http://localhost")
+        ipfs_webui_port = getattr(main, "ipfs_webui_port", "8080")
 
         if not all(
             [
@@ -542,8 +547,38 @@ async def process_data_pod_locally(
                         print(f"❌ Error converting image to base64: {e}")
                         raise
                 else:
-                    # Keep IPFS URL - works for local preview when IPFS is running
-                    print(f"🖼️ Keeping IPFS URL for image (embed_images_as_base64=False)")
+                    # For encrypted/aposematic images, make decrypted version accessible
+                    if image_type in ("aposematic", "encrypted"):
+                        try:
+                            # Use the already imported functions
+                            if ipfs_add:
+                                decrypted_hash = ipfs_add(decoded_path)
+                                if decrypted_hash:
+                                    gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
+                                    item["renditions"][0]["href"] = f"{gateway_base}/ipfs/{decrypted_hash}"
+                                    item["renditions"][0]["ipfs_hash"] = decrypted_hash
+                                    item["renditions"][0]["decrypted"] = True
+                                    print(f"✅ Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
+                                else:
+                                    raise ValueError("ipfs_add returned None")
+                            else:
+                                raise ValueError("ipfs_add function not available")
+                        except Exception as e:
+                            print(f"⚠️ Failed to add decrypted image to IPFS: {e}")
+                            # Fallback to base64
+                            try:
+                                base64_uri = image_to_base64_uri(decoded_path)
+                                if base64_uri and base64_uri.startswith("data:image"):
+                                    item["renditions"][0]["href"] = base64_uri
+                                    print(f"⚠️ Using base64 fallback for decrypted image")
+                                else:
+                                    print(f"❌ Base64 fallback failed: {base64_uri[:100] if base64_uri else 'None'}")
+                            except Exception as fallback_e:
+                                print(f"❌ Base64 fallback error: {fallback_e}")
+                                raise
+                    else:
+                        # Original images don't need decryption - keep IPFS URL
+                        print(f"🖼️ Keeping IPFS URL for original image (embed_images_as_base64=False)")
 
                 processed_items.append(item)
                 print(f"✅ Processed item: {item.get('title')}")

@@ -1929,10 +1929,11 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Invalid image state: {idex}", type="negative")
             return
 
-        # 🎯 CRITICAL: Debug flow always uses debug key as recipient
-        current_public_key = app.storage.user.get("debug_public_key", "")
+        # 🎯 CRITICAL: Debug flow: debug key = creator, app key = recipient
+        hvym_public_key = app.storage.user.get("hvym_public_key", "")
+        current_public_key = hvym_public_key
         print(
-            f"🔍 Debug flow using debug public key for recipient: {current_public_key[:16]}..."
+            f"🔍 Debug flow using app public key as recipient: {current_public_key[:16]}..."
         )
 
         # 🎯 CRITICAL: Recreate aposematic images with correct shared key
@@ -1940,11 +1941,12 @@ async def process_debug_deploy_gallery():
             from stellar_sdk.keypair import Keypair
             from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
 
-            stellar_secret = app.storage.user.get("stellar_secret", "")
-            print(f"🔐 Creator stellar secret (first 16): {stellar_secret[:16]}...")
+            # 🎯 CRITICAL: For debugging, use debug secret key (not app's stellar_secret)
+            debug_secret = app.storage.user.get("debug_secret", "")
+            print(f"🔐 Debug stellar secret (first 16): {debug_secret[:16]}...")
 
             # Create the key pair ONCE and reuse it
-            stellar_kp = Keypair.from_secret(stellar_secret)
+            stellar_kp = Keypair.from_secret(debug_secret)
             creator_keys = Stellar25519KeyPair(stellar_kp)
 
             print(f"🔍 DEBUG: creator_keys.public_key(): {creator_keys.public_key()}")
@@ -2031,8 +2033,11 @@ async def process_debug_deploy_gallery():
                     f"Recreated {len(app.storage.user.get('aposematic_img_hashes', []))} aposematic images"
                 )
 
+        debug_public_key = app.storage.user.get("debug_public_key", "")
         output_path = await create_ninjs_data_pod_with_encrypted_tokens(
-            app, state, current_public_key
+            app, state,
+            receiver_public_key=current_public_key,  # App's hvym_public_key
+            creator_public_key=debug_public_key      # Debug as creator
         )
 
         ipns_clean_folder(state)
@@ -2042,10 +2047,10 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Successfully created data pod at: {output_path}")
 
             # Process data pod locally to decrypt images before rendering
-            # 🎯 CRITICAL: Debug flow always uses debug secret as subscriber
-            subscriber_secret = app.storage.user.get("debug_secret", "")
+            # 🎯 CRITICAL: Debug flow: app acts as subscriber to decrypt
+            subscriber_secret = app.storage.user.get("stellar_secret", "")
             print(
-                f"🔍 Debug flow using debug secret for subscriber: {subscriber_secret[:16]}..."
+                f"🔍 Debug flow using app secret as subscriber: {subscriber_secret[:16]}..."
             )
 
             if not subscriber_secret:
@@ -2203,54 +2208,10 @@ async def process_pintheon_deploy_gallery():
         if data_pod_result:
             print(f"Uploaded data pod to Pintheon: {data_pod_result.get('Hash')}")
             app.storage.user["pintheon_data_pod_hash"] = data_pod_result.get("Hash")
+            print(f"📦 Pintheon: Deployed encrypted data pod to production: {data_pod_result.get('Hash')}")
+            ui.notify(f"Successfully deployed data pod to Pintheon: {data_pod_result.get('Hash')}", type="positive")
         else:
             ui.notify("Failed to upload data pod to Pintheon", type="warning")
-
-        # Process data pod locally for decrypted preview (unified with debug flow)
-        # Use debug secret for local preview decryption
-        subscriber_secret = app.storage.user.get("debug_secret", "")
-        if subscriber_secret:
-            print(f"🔍 Pintheon: Processing data pod for local preview...")
-            processed_data_pod = await process_data_pod_locally(
-                output_path, subscriber_secret, app
-            )
-            if processed_data_pod:
-                data_pod = processed_data_pod
-                print(f"✅ Pintheon: Successfully decrypted data pod for preview")
-            else:
-                # Fall back to raw data pod
-                with open(output_path, "r", encoding="utf-8") as f:
-                    data_pod = json.load(f)
-                print(f"⚠️ Pintheon: Using raw data pod (decryption failed)")
-        else:
-            # No debug secret, load raw data pod
-            with open(output_path, "r", encoding="utf-8") as f:
-                data_pod = json.load(f)
-            print(f"⚠️ Pintheon: No debug secret, using raw data pod")
-
-        # Render gallery HTML using helper function
-        html_content = render_gallery_html(data_pod)
-
-        # Save to IPFS using helper function
-        html_temp_path, html_hash = save_gallery_to_ipfs(html_content)
-        if html_hash:
-            print(f"Saved rendered HTML to IPFS: {html_hash}")
-
-        # Upload HTML to Pintheon
-        html_pintheon_result = pintheon_upload_file(
-            html_temp_path, directory=directory_name, access_token=access_token
-        )
-        if html_pintheon_result:
-            app.storage.user["pintheon_gallery_html_hash"] = html_pintheon_result.get(
-                "Hash"
-            )
-            print(
-                f"Uploaded gallery HTML to Pintheon: {html_pintheon_result.get('Hash')}"
-            )
-
-        # Store content for user to view when they switch to BROWSER tab
-        global pending_browser_html
-        pending_browser_html = html_content
 
         # Report results
         if failed_uploads:

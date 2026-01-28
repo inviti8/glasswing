@@ -40,7 +40,9 @@ Primary application entry point and UI orchestration.
 - `render_gallery()` - Display images based on current view state
 - `process_aposematic()` - Generate scrambled images
 - `process_enciphering()` - Generate encrypted images
-- `create_ninjs_data_pod()` - Create NINJS-format data pods
+- `create_ninjs_data_pod_with_encrypted_tokens()` - Create NINJS-format data pods with audio tokens
+- `process_debug_deploy_gallery()` - Debug deployment with local decryption
+- `process_pintheon_deploy_gallery()` - Production deployment to Pintheon node
 - `select_channel()` - Browser mode channel rendering
 - `decode_protected_images()` - Decrypt/descramble for viewing
 
@@ -76,17 +78,57 @@ IPTC metadata management and data classes.
 ### Creator Flow (Image Mode)
 
 ```
-┌─────────┐    ┌───────────┐    ┌─────────────┐    ┌──────────┐
-│  RAW    │───▶│ PROCESSED │───▶│ APOSEMATIC  │───▶│  DEPLOY  │
-│ Images  │    │  Images   │    │ or ENCRYPTED│    │  to IPFS │
-└─────────┘    └───────────┘    └─────────────┘    └──────────┘
-     │              │                  │                 │
-     ▼              ▼                  ▼                 ▼
-  Import      Watermark,          Select            Create
-  from        resize,             recipient,        data pod,
-  folder      metadata            generate          upload to
-                                  shared key        Pintheon
+┌─────────┐    ┌───────────┐    ┌─────────────┐    ┌─────────────────┐
+│  RAW    │───▶│ PROCESSED │───▶│ APOSEMATIC  │───▶│   DEPLOY       │
+│ Images  │    │  Images   │    │ or ENCRYPTED│    │   (Choose One)  │
+└─────────┘    └───────────┘    └─────────────┘    └─────────────────┘
+     │              │                  │                      │
+     ▼              ▼                  ▼                      ▼
+  Import      Watermark,          Select            ┌────────────────┐
+  from        resize,             recipient,        │                │
+  folder      metadata            generate          │   LOCAL DEBUG  │
+                                  shared key        │                │
+                                                     │   + DECRYPT   │
+                                                     │   + RENDER    │
+                                                     └────────────────┘
+                                                                │
+                                                                ▼
+                                                         Local Gallery
+                                                                │
+                                                     ┌────────────────┐
+                                                     │                │
+                                                     │  PINTHEON PROD │
+                                                     │                │
+                                                     │  DEPLOYMENT    │
+                                                     │  ONLY          │
+                                                     └────────────────┘
+                                                                │
+                                                                ▼
+                                                        Data Pod Hash
 ```
+
+### Debug Flow (Local Testing)
+
+```
+┌─────────────┐    ┌───────────┐    ┌─────────────┐    ┌──────────┐
+│   CREATE    │───▶│  DEPLOY   │───▶│   DECRYPT   │───▶│  RENDER  │
+│ DATA POD    │    │  locally  │    │   locally   │    │  gallery │
+│ with debug  │    │           │    │             │    │          │
+│   keys      │    │           │    │             │    │          │
+└─────────────┘    └───────────┘    └─────────────┘    └──────────┘
+      │                  │                 │                 │
+      ▼                  ▼                 ▼                 ▼
+   Debug key        Debug key        App's secret      Local preview
+   as creator       as recipient    decrypts         with href fix
+   + app key         + debug key     shared key        applied
+```
+
+**Debug Flow Characteristics:**
+- **Creator**: Uses `debug_secret` for aposematic/encryption
+- **Recipient**: Uses app's `hvym_public_key` 
+- **Data Pod**: Contains `debug_public_key` as creator
+- **Decryption**: App's `stellar_secret` decrypts locally
+- **Purpose**: Test complete flow with decrypted image href fix
 
 ### Consumer Flow (Browser Mode)
 
@@ -102,6 +144,24 @@ IPTC metadata management and data classes.
    node URL                          decrypt/           display in
                                      descramble         template
 ```
+
+## Deployment Options
+
+### Debug Deployment (Local Testing)
+- **Function**: `process_debug_deploy_gallery()`
+- **Target**: Local IPFS instance + local decryption
+- **Keys**: Debug key as creator, app key as recipient
+- **Purpose**: Test complete flow including href fix
+- **Output**: Local gallery with decrypted images
+
+### Pintheon Deployment (Production)
+- **Function**: `process_pintheon_deploy_gallery()`
+- **Target**: Pintheon production node only
+- **Keys**: Creator's actual keys
+- **Purpose**: Deploy encrypted content for subscribers
+- **Output**: Data pod hash for subscriber access
+
+**Key Difference**: Debug flow includes local decryption and rendering, while Pintheon flow is deployment-only.
 
 ## Storage Schema
 
