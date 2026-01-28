@@ -134,6 +134,141 @@ DARK_CARD = "#625146"
 DARK_BORDER = "#EFF1C6"
 
 
+# ============================================================================
+# HELPER FUNCTIONS FOR DEPLOY FLOWS
+# ============================================================================
+
+def get_gallery_colors() -> dict:
+    """Get current color scheme based on dark mode setting."""
+    app_colors = app.storage.user.get("app_colors", {})
+    is_dark_mode = app.storage.user.get("dark_mode", None)
+
+    if is_dark_mode:
+        return {
+            "primary": app_colors.get("dark-primary", DARK_PRIMARY),
+            "secondary": app_colors.get("dark-secondary", DARK_SECONDARY),
+            "text": app_colors.get("dark-text", DARK_TEXT),
+            "bg": app_colors.get("dark-bg", DARK_BG),
+            "card": app_colors.get("dark-card", DARK_CARD),
+            "border": app_colors.get("dark-border", DARK_BORDER),
+        }
+    else:
+        return {
+            "primary": app_colors.get("primary", PRIMARY_COLOR),
+            "secondary": app_colors.get("secondary", SECONDARY_COLOR),
+            "text": app_colors.get("text-color", TEXT_COLOR),
+            "bg": app_colors.get("bg-color", BG_COLOR),
+            "card": app_colors.get("card-bg", CARD_BG),
+            "border": app_colors.get("border-color", BORDER_COLOR),
+        }
+
+
+def render_gallery_html(data_pod: dict) -> str:
+    """
+    Render gallery HTML from data pod using Jinja2 template.
+
+    Args:
+        data_pod: Processed data pod dictionary
+
+    Returns:
+        str: Rendered HTML content
+    """
+    template_dir = os.path.join(os.path.dirname(__file__), "templates")
+    jinja_env = Environment(loader=FileSystemLoader(template_dir))
+    template = jinja_env.get_template("gallery.html")
+
+    colors = get_gallery_colors()
+    is_dark_mode = app.storage.user.get("dark_mode", None)
+
+    template_context = {
+        "data_pod": data_pod,
+        "ipfs_gateway": f"{ipfs_webui}:{ipfs_webui_port}",
+        "ipfs_webui": ipfs_webui,
+        "ipfs_webui_port": ipfs_webui_port,
+        "gallery_title": app.storage.user.get("gallery_title", ""),
+        "gallery_description": app.storage.user.get("gallery_description", ""),
+        "colors": colors,
+        "is_dark_mode": is_dark_mode,
+    }
+    return template.render(**template_context)
+
+
+def save_gallery_to_ipfs(html_content: str) -> tuple:
+    """
+    Save rendered gallery HTML to temp file and IPFS.
+
+    Args:
+        html_content: Rendered HTML string
+
+    Returns:
+        tuple: (html_temp_path, html_hash) - hash is None if IPFS add failed
+    """
+    timestamp = app.storage.user.get(
+        "latest_data_pod_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
+    html_temp_path = os.path.join(
+        tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.html"
+    )
+    with open(html_temp_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    html_hash = ipfs_add(html_temp_path)
+    if html_hash:
+        app.storage.user["latest_gallery_html_hash"] = html_hash
+        # Fix: Properly persist tmp_files list
+        tmp_files = app.storage.user.get("tmp_files", [])
+        tmp_files.append(html_temp_path)
+        app.storage.user["tmp_files"] = tmp_files
+        print(f"Saved rendered HTML to IPFS: {html_hash}")
+    else:
+        print(f"Failed to add HTML to IPFS, saved locally at: {html_temp_path}")
+
+    return html_temp_path, html_hash
+
+
+def ensure_storage_list(key: str) -> list:
+    """
+    Ensure a storage list exists and return it.
+    This avoids the bug where app.storage.user.get("key", []).append() doesn't persist.
+
+    Args:
+        key: Storage key name
+
+    Returns:
+        list: The storage list (creates empty list if doesn't exist)
+    """
+    if key not in app.storage.user:
+        app.storage.user[key] = []
+    return app.storage.user[key]
+
+
+def append_to_storage_list(key: str, value) -> None:
+    """
+    Safely append a value to a storage list with proper persistence.
+
+    Args:
+        key: Storage key name
+        value: Value to append
+    """
+    lst = app.storage.user.get(key, [])
+    lst.append(value)
+    app.storage.user[key] = lst
+
+
+def validate_img_state() -> tuple:
+    """
+    Validate and return the current image state.
+
+    Returns:
+        tuple: (state_index, state_name) or (None, None) if invalid
+    """
+    img_states = {1: "raw", 2: "processed", 3: "aposematic", 4: "enciphered"}
+    idex = app.storage.user.get("img_state", 1)
+    if idex not in img_states:
+        return None, None
+    return idex, img_states[idex]
+
+
 def init():
     global _INITIALIZED
     if _INITIALIZED:
@@ -1510,10 +1645,8 @@ async def process_watermarking():
         ui.notify("Watermarking is disabled")
         return
 
-    # Ensure the list exists in storage, then clear it
-    if "processed_img_hashes" not in app.storage.user:
-        app.storage.user["processed_img_hashes"] = []
-    app.storage.user["processed_img_hashes"].clear()
+    # Reset the processed image list (assignment ensures NiceGUI detects the change)
+    app.storage.user["processed_img_hashes"] = []
 
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
@@ -1572,10 +1705,8 @@ def get_scramble_mode():
 
 
 async def process_aposematic():
-    # Ensure the list exists in storage
-    if "aposematic_img_hashes" not in app.storage.user:
-        app.storage.user["aposematic_img_hashes"] = []
-    app.storage.user["aposematic_img_hashes"].clear()
+    # Reset the aposematic image list (assignment ensures NiceGUI detects the change)
+    app.storage.user["aposematic_img_hashes"] = []
 
     processed_hashes = app.storage.user.get("processed_img_hashes", [])
     cipher_key = app.storage.user.get("cipher_key")
@@ -1657,10 +1788,8 @@ async def process_aposematic():
 
 
 async def process_enciphering():
-    # Ensure the list exists in storage
-    if "enciphered_img_hashes" not in app.storage.user:
-        app.storage.user["enciphered_img_hashes"] = []
-    app.storage.user["enciphered_img_hashes"].clear()
+    # Reset the enciphered image list (assignment ensures NiceGUI detects the change)
+    app.storage.user["enciphered_img_hashes"] = []
 
     processed_hashes = app.storage.user.get("processed_img_hashes", [])
     cipher_key = app.storage.user.get("cipher_key")
@@ -1740,10 +1869,8 @@ async def process_enciphering():
 
 
 async def process_deciphering():
-    # Ensure the list exists in storage, then clear it
-    if "deciphered_img_hashes" not in app.storage.user:
-        app.storage.user["deciphered_img_hashes"] = []
-    app.storage.user["deciphered_img_hashes"].clear()
+    # Reset the deciphered image list (assignment ensures NiceGUI detects the change)
+    app.storage.user["deciphered_img_hashes"] = []
 
     for hash_value in app.storage.user.get("enciphered_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
@@ -1760,10 +1887,8 @@ async def process_deciphering():
 
 
 async def process_shared_iptc_metadata():
-    # Ensure the list exists in storage, then clear it
-    if "processed_img_hashes" not in app.storage.user:
-        app.storage.user["processed_img_hashes"] = []
-    app.storage.user["processed_img_hashes"].clear()
+    # Reset the processed image list (assignment ensures NiceGUI detects the change)
+    app.storage.user["processed_img_hashes"] = []
 
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
@@ -1798,11 +1923,12 @@ async def process_add_mardown_file(text):
 
 async def process_debug_deploy_gallery():
     try:
-        # Get the current gallery state
-        idex = app.storage.user.get("img_state", 1)
-        state = img_states[idex]
+        # Validate image state
+        idex, state = validate_img_state()
+        if state is None:
+            ui.notify(f"Invalid image state: {idex}", type="negative")
+            return
 
-        # Create the NINJS data pod using the enhanced function with encryption support
         # 🎯 CRITICAL: Debug flow always uses debug key as recipient
         current_public_key = app.storage.user.get("debug_public_key", "")
         print(
@@ -1843,7 +1969,8 @@ async def process_debug_deploy_gallery():
             # Recreate all aposematic images with the correct shared key
             processed_hashes = app.storage.user.get("processed_img_hashes", [])
             if processed_hashes:
-                app.storage.user["aposematic_img_hashes"].clear()
+                # Fix: Properly clear and manage the aposematic hash list
+                app.storage.user["aposematic_img_hashes"] = []
 
                 for hash_value in processed_hashes:
                     try:
@@ -1878,10 +2005,10 @@ async def process_debug_deploy_gallery():
                             print(f"🔍 Aposematic images contain embedded audio data")
                             # 🎯 CRITICAL: Do NOT re-embed audio for aposematic images
                             # create_audio_image() would overwrite and destroy aposematic data
-                            # aposematic_img_path = reembed_audio_if_needed(aposematic_img_path, audio_path)
 
                         ipfs_hash = ipfs_add(aposematic_img_path)
-                        app.storage.user["aposematic_img_hashes"].append(ipfs_hash)
+                        # Fix: Use helper for proper persistence
+                        append_to_storage_list("aposematic_img_hashes", ipfs_hash)
 
                         # Update info for the new hash
                         app.storage.user[ipfs_hash] = {
@@ -1901,7 +2028,7 @@ async def process_debug_deploy_gallery():
                         continue
 
                 print(
-                    f"Recreated {len(app.storage.user['aposematic_img_hashes'])} aposematic images"
+                    f"Recreated {len(app.storage.user.get('aposematic_img_hashes', []))} aposematic images"
                 )
 
         output_path = await create_ninjs_data_pod_with_encrypted_tokens(
@@ -1943,67 +2070,14 @@ async def process_debug_deploy_gallery():
                 with open(output_path, "r", encoding="utf-8") as f:
                     data_pod = json.load(f)
 
-            # Set up Jinja2 environment
-            template_dir = os.path.join(os.path.dirname(__file__), "templates")
-            jinja_env = Environment(loader=FileSystemLoader(template_dir))
-            template = jinja_env.get_template("gallery.html")
+            # Render gallery HTML using helper function
+            html_content = render_gallery_html(data_pod)
 
-            # Get current color scheme
-            app_colors = app.storage.user.get("app_colors", {})
-            is_dark_mode = app.storage.user.get("dark_mode", None)
-
-            # Choose colors based on dark mode setting
-            if is_dark_mode:
-                colors = {
-                    "primary": app_colors.get("dark-primary", DARK_PRIMARY),
-                    "secondary": app_colors.get("dark-secondary", DARK_SECONDARY),
-                    "text": app_colors.get("dark-text", DARK_TEXT),
-                    "bg": app_colors.get("dark-bg", DARK_BG),
-                    "card": app_colors.get("dark-card", DARK_CARD),
-                    "border": app_colors.get("dark-border", DARK_BORDER),
-                }
-            else:
-                colors = {
-                    "primary": app_colors.get("primary", PRIMARY_COLOR),
-                    "secondary": app_colors.get("secondary", SECONDARY_COLOR),
-                    "text": app_colors.get("text-color", TEXT_COLOR),
-                    "bg": app_colors.get("bg-color", BG_COLOR),
-                    "card": app_colors.get("card-bg", CARD_BG),
-                    "border": app_colors.get("border-color", BORDER_COLOR),
-                }
-
-            # Render the template with the data pod and gateway configuration
-            template_context = {
-                "data_pod": data_pod,
-                "ipfs_gateway": f"{ipfs_webui}:{ipfs_webui_port}",
-                "ipfs_webui": ipfs_webui,
-                "ipfs_webui_port": ipfs_webui_port,
-                "gallery_title": app.storage.user.get("gallery_title", ""),
-                "gallery_description": app.storage.user.get("gallery_description", ""),
-                "colors": colors,
-                "is_dark_mode": is_dark_mode,
-            }
-            html_content = template.render(**template_context)
-
-            # Save the rendered HTML to temp file then add to IPFS
-            timestamp = app.storage.user.get(
-                "latest_data_pod_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
-            html_temp_path = os.path.join(
-                tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.html"
-            )
-            with open(html_temp_path, "w", encoding="utf-8") as f:
-                f.write(html_content)
-
-            # Add HTML to IPFS
-            html_hash = ipfs_add(html_temp_path)
+            # Save to IPFS using helper function
+            html_temp_path, html_hash = save_gallery_to_ipfs(html_content)
             if html_hash:
-                app.storage.user["latest_gallery_html_hash"] = html_hash
-                app.storage.user["tmp_files"].append(html_temp_path)
-                print(f"Saved rendered HTML to IPFS: {html_hash}")
                 ui.notify(f"Gallery HTML saved to IPFS: {html_hash}", type="positive")
             else:
-                print(f"Failed to add HTML to IPFS, saved locally at: {html_temp_path}")
                 ui.notify("Failed to add HTML to IPFS", type="warning")
 
             # Store content for user to view when they switch to BROWSER tab
@@ -2014,13 +2088,8 @@ async def process_debug_deploy_gallery():
             )
             ui.notify("Gallery ready - switch to BROWSER tab to view", type="positive")
 
-            # Optionally, you can also deploy the data pod
-            # Uncomment the following lines if you want to deploy automatically
-            # deployment_result = await deploy_ninjs_data_pod(state)
-            # if deployment_result and deployment_result.get('success'):
-            #     ui.notify('Successfully deployed data pod to gallery')
-            # else:
-            #     ui.notify('Failed to deploy data pod', type='warning')
+            # Persist storage changes
+            persistent_save_data()
         else:
             ui.notify("No valid images found to create data pods", type="warning")
 
@@ -2036,6 +2105,11 @@ async def process_pintheon_deploy_gallery():
     """
     Deploy gallery data pod and all associated assets to a local Pintheon node.
     This performs local IPFS operations AND uploads to Pintheon.
+
+    Now unified with debug flow:
+    - Uses create_ninjs_data_pod_with_encrypted_tokens() for consistent data pod structure
+    - Processes data pod locally for decrypted preview
+    - Uses helper functions for template rendering
     """
     try:
         # Check if Pintheon is running
@@ -2049,14 +2123,27 @@ async def process_pintheon_deploy_gallery():
             ui.notify("No access token configured for Pintheon", type="negative")
             return
 
-        # Get the current gallery state
-        idex = app.storage.user.get("img_state", 1)
-        state = img_states[idex]
+        # Validate image state
+        idex, state = validate_img_state()
+        if state is None:
+            ui.notify(f"Invalid image state: {idex}", type="negative")
+            return
 
         ui.notify(f"Starting Pintheon deployment for {state} gallery...", type="info")
 
-        # Create the NINJS data pod using the existing function
-        output_path = await create_ninjs_data_pod(state)
+        # Get the recipient public key (uses selected subscriber or debug key)
+        recipient_public_key = app.storage.user.get("recipient_public_key", "")
+        if not recipient_public_key:
+            # Fall back to debug key if no recipient selected
+            recipient_public_key = app.storage.user.get("debug_public_key", "")
+            print(f"🔍 Pintheon: No recipient selected, using debug key for encryption")
+
+        print(f"🔍 Pintheon flow using recipient key: {recipient_public_key[:16]}...")
+
+        # Create the NINJS data pod with encryption support (unified with debug flow)
+        output_path = await create_ninjs_data_pod_with_encrypted_tokens(
+            app, state, recipient_public_key
+        )
 
         # Perform local IPFS operations (same as debug flow)
         ipns_clean_folder(state)
@@ -2119,67 +2206,34 @@ async def process_pintheon_deploy_gallery():
         else:
             ui.notify("Failed to upload data pod to Pintheon", type="warning")
 
-        # Load the created JSON data pod for HTML rendering
-        with open(output_path, "r", encoding="utf-8") as f:
-            data_pod = json.load(f)
-
-        # Set up Jinja2 environment
-        template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        jinja_env = Environment(loader=FileSystemLoader(template_dir))
-        template = jinja_env.get_template("gallery.html")
-
-        # Get current color scheme
-        app_colors = app.storage.user.get("app_colors", {})
-        is_dark_mode = app.storage.user.get("dark_mode", None)
-
-        # Choose colors based on dark mode setting
-        if is_dark_mode:
-            colors = {
-                "primary": app_colors.get("dark-primary", DARK_PRIMARY),
-                "secondary": app_colors.get("dark-secondary", DARK_SECONDARY),
-                "text": app_colors.get("dark-text", DARK_TEXT),
-                "bg": app_colors.get("dark-bg", DARK_BG),
-                "card": app_colors.get("dark-card", DARK_CARD),
-                "border": app_colors.get("dark-border", DARK_BORDER),
-            }
+        # Process data pod locally for decrypted preview (unified with debug flow)
+        # Use debug secret for local preview decryption
+        subscriber_secret = app.storage.user.get("debug_secret", "")
+        if subscriber_secret:
+            print(f"🔍 Pintheon: Processing data pod for local preview...")
+            processed_data_pod = await process_data_pod_locally(
+                output_path, subscriber_secret, app
+            )
+            if processed_data_pod:
+                data_pod = processed_data_pod
+                print(f"✅ Pintheon: Successfully decrypted data pod for preview")
+            else:
+                # Fall back to raw data pod
+                with open(output_path, "r", encoding="utf-8") as f:
+                    data_pod = json.load(f)
+                print(f"⚠️ Pintheon: Using raw data pod (decryption failed)")
         else:
-            colors = {
-                "primary": app_colors.get("primary", PRIMARY_COLOR),
-                "secondary": app_colors.get("secondary", SECONDARY_COLOR),
-                "text": app_colors.get("text-color", TEXT_COLOR),
-                "bg": app_colors.get("bg-color", BG_COLOR),
-                "card": app_colors.get("card-bg", CARD_BG),
-                "border": app_colors.get("border-color", BORDER_COLOR),
-            }
+            # No debug secret, load raw data pod
+            with open(output_path, "r", encoding="utf-8") as f:
+                data_pod = json.load(f)
+            print(f"⚠️ Pintheon: No debug secret, using raw data pod")
 
-        # Render the template with the data pod and gateway configuration
-        template_context = {
-            "data_pod": data_pod,
-            "ipfs_gateway": f"{ipfs_webui}:{ipfs_webui_port}",
-            "ipfs_webui": ipfs_webui,
-            "ipfs_webui_port": ipfs_webui_port,
-            "gallery_title": app.storage.user.get("gallery_title", ""),
-            "gallery_description": app.storage.user.get("gallery_description", ""),
-            "colors": colors,
-            "is_dark_mode": is_dark_mode,
-        }
-        html_content = template.render(**template_context)
+        # Render gallery HTML using helper function
+        html_content = render_gallery_html(data_pod)
 
-        # Save the rendered HTML to temp file then add to IPFS
-        timestamp = app.storage.user.get(
-            "latest_data_pod_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S")
-        )
-        html_temp_path = os.path.join(
-            tempfile.gettempdir(), f"ninjs_data_pod_{timestamp}.html"
-        )
-        with open(html_temp_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        # Add HTML to IPFS
-        html_hash = ipfs_add(html_temp_path)
+        # Save to IPFS using helper function
+        html_temp_path, html_hash = save_gallery_to_ipfs(html_content)
         if html_hash:
-            app.storage.user["latest_gallery_html_hash"] = html_hash
-            app.storage.user["tmp_files"].append(html_temp_path)
             print(f"Saved rendered HTML to IPFS: {html_hash}")
 
         # Upload HTML to Pintheon
