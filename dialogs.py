@@ -564,7 +564,7 @@ def edit_audio_info(hash_value, on_close, process_func):
             'audio_file': audio_input.value,
             'audio_method': audio_method.value,
             'receiver_public_key': recipient_select.value if audio_method.value == 'token' else None,
-            'expiry_hours': expiry_hours.value if audio_method.value == 'token' else 1
+            'expiry_option': expiry_select.value if audio_method.value == 'token' else 'never'
         }
         confirmed['value'] = True
         dialog.close()
@@ -609,12 +609,17 @@ def edit_audio_info(hash_value, on_close, process_func):
 
                 with ui.row().classes('w-full gap-4 mb-4'):
                     ui.label('Token Expiry:').classes('font-medium')
-                    expiry_hours = ui.number(
-                        value=1,
-                        min=1,
-                        max=24,
-                        step=1
-                    ).props('suffix="hours').classes('flex-grow')
+                    expiry_select = ui.select(
+                        options={
+                            'never': 'Never',
+                            '1h': '1 Hour',
+                            '24h': '24 Hours',
+                            '7d': '7 Days',
+                            '30d': '30 Days',
+                            '365d': '1 Year'
+                        },
+                        value='never'
+                    ).classes('flex-grow')
 
                 ui.label('Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
 

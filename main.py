@@ -4525,12 +4525,24 @@ async def process_audio_from_storage():
         audio_file = params["audio_file"]
         audio_method = params["audio_method"]
         receiver_public_key = params.get("receiver_public_key")
-        expiry_hours = params.get("expiry_hours", 1)
+        expiry_option = params.get("expiry_option", "never")
+
+        # Parse expiry option to hours (None for never)
+        expiry_mapping = {
+            'never': None,
+            '1h': 1,
+            '24h': 24,
+            '7d': 168,      # 7 * 24
+            '30d': 720,     # 30 * 24
+            '365d': 8760    # 365 * 24
+        }
+        expiry_hours = expiry_mapping.get(expiry_option)
 
         # DEBUG: Log parameters
         print(f"[DEBUG process_audio_from_storage] img_name={img_name}")
         print(f"[DEBUG process_audio_from_storage] hash_value={hash_value}")
         print(f"[DEBUG process_audio_from_storage] audio_method={audio_method}")
+        print(f"[DEBUG process_audio_from_storage] expiry_option={expiry_option}, expiry_hours={expiry_hours}")
         print(f"[DEBUG process_audio_from_storage] receiver_public_key={receiver_public_key[:20] if receiver_public_key else None}...")
 
         if not audio_file:
@@ -4550,7 +4562,11 @@ async def process_audio_from_storage():
             return
 
         # Process audio embedding
-        expires_in = int(expiry_hours * 3600)  # Convert hours to seconds (must be int for Biscuit)
+        # Handle no-expiry case (None) or convert hours to seconds
+        if expiry_hours is None:
+            expires_in = None  # No expiration
+        else:
+            expires_in = int(expiry_hours * 3600)  # Convert hours to seconds (must be int for Biscuit)
         result = await process_audio_embedding(
             img_name,
             img_path,
@@ -4567,7 +4583,15 @@ async def process_audio_from_storage():
             print(f"[DEBUG process_audio_from_storage] new_hash={result[0]}, output_path={result[1]}")
 
         if result and result[0] is not None:
-            ui.notify("Audio embedded successfully!", type="positive")
+            # Show appropriate message based on audio method and expiry
+            if audio_method == "token":
+                if expires_in is None:
+                    ui.notify("Audio embedded with permanent access token", type="positive")
+                else:
+                    hours = expires_in / 3600
+                    ui.notify(f"Audio embedded with {hours:.0f}h expiry token", type="positive")
+            else:
+                ui.notify("Audio embedded successfully!", type="positive")
             render_gallery()
         else:
             ui.notify("Failed to embed audio", type="negative")
@@ -4734,7 +4758,7 @@ async def process_audio_embedding(
     audio_file,
     audio_method="metadata",
     receiver_public_key=None,
-    expires_in=3600,
+    expires_in=None,
 ):
     """
     Embed audio into image using specified method.
@@ -4746,7 +4770,7 @@ async def process_audio_embedding(
         audio_file: Audio file path
         audio_method: 'metadata' (base64 in PNG chunks) or 'token' (encrypted)
         receiver_public_key: Required for token method
-        expires_in: Token expiration time in seconds (default 3600)
+        expires_in: Token expiration time in seconds (None for no expiry)
 
     Returns:
         tuple: (new_hash, output_path) or (None, None) on failure
@@ -4791,6 +4815,12 @@ async def process_audio_embedding(
         old_info = app.storage.user.get(hash_value, {})
         print(f"[DEBUG process_audio_embedding] old_info for {hash_value}={old_info}")
 
+        # Calculate expiry timestamp if expires_in is set
+        import time
+        token_expires = None
+        if expires_in is not None:
+            token_expires = time.time() + expires_in
+
         new_info = {
             "name": f"audio_{img_name}",
             "path": output_path,
@@ -4801,6 +4831,8 @@ async def process_audio_embedding(
             "audio_duration": old_info.get("audio_duration"),  # ✅ PRESERVE
             "audio_size": old_info.get("audio_size"),  # ✅ PRESERVE
             "image_type": old_info.get("image_type", "raw"),
+            "audio_token_expires": token_expires,  # None for no expiry
+            "audio_token_no_expiry": expires_in is None,
         }
         app.storage.user[new_hash] = new_info
         print(f"[DEBUG process_audio_embedding] Stored new_info for {new_hash}: {new_info}")

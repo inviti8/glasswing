@@ -85,7 +85,8 @@ Each image in the gallery:
     "original_hash": "QmOriginalProcessedHash...",
     "audioTokenInfo": {
         "receiverPublicKey": "GXYZ123...",
-        "tokenExpiry": 1705312200
+        "tokenExpiry": null,
+        "noExpiry": true
     }
 }
 ```
@@ -98,8 +99,16 @@ Each image in the gallery:
 | `hasAudio` | boolean | Whether image contains embedded audio |
 | `audioMethod` | string | `"token"` (encrypted) or `"metadata"` (base64) |
 | `original_hash` | string | For enciphered images: hash of original processed image (for audio extraction) |
-| `audioTokenInfo` | object | Only for token method: receiver key and expiry |
+| `audioTokenInfo` | object | Only for token method: receiver key, expiry, and noExpiry flag |
 | `renditions` | array | List of image renditions (note: array, not object) |
+
+**audioTokenInfo Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `receiverPublicKey` | string | Recipient's Stellar public key |
+| `tokenExpiry` | number/null | Unix timestamp when token expires, or `null` for no expiry |
+| `noExpiry` | boolean | `true` if token never expires |
 
 ### Audio in Processed Items
 
@@ -182,7 +191,8 @@ For each image hash in storage (`app.storage.user[hash_value]`):
     "audio_format": "wav",
     "audio_duration": 5.2,
     "audio_size": 230400,
-    "audio_token_expires": 1705312200,
+    "audio_token_expires": null,
+    "audio_token_no_expiry": true,
     "original_hash": "QmOriginalProcessedHash..."
 }
 ```
@@ -198,6 +208,8 @@ For each image hash in storage (`app.storage.user[hash_value]`):
 | `audio_format` | string | Audio format (e.g., `"wav"`, `"mp3"`) |
 | `audio_duration` | float | Audio duration in seconds |
 | `audio_size` | integer | Audio file size in bytes |
+| `audio_token_expires` | number/null | Unix timestamp when token expires, or `null` for no expiry |
+| `audio_token_no_expiry` | boolean | `true` if token never expires |
 | `original_hash` | string | For enciphered: hash of processed image (contains audio) |
 
 ## Audio Embedding

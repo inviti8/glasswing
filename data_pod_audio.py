@@ -189,11 +189,14 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                     audio_token_images.append(img_hash)
 
                     # Store receiver key for subscriber's reference
+                    # Handle no-expiry tokens (None = permanent)
+                    token_expires = img_info.get("audio_token_expires")
+                    no_expiry = img_info.get("audio_token_no_expiry", token_expires is None)
+
                     item["audioTokenInfo"] = {
                         "receiverPublicKey": receiver_public_key,
-                        "tokenExpiry": img_info.get(
-                            "audio_token_expires", time.time() + 3600
-                        ),
+                        "tokenExpiry": token_expires,  # None for no expiry
+                        "noExpiry": no_expiry,
                     }
 
                 if render_flag:
