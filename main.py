@@ -1999,14 +1999,16 @@ async def process_debug_deploy_gallery():
                         aposematic_img_path = aposematic["img_path"]
 
                         # Re-embed audio if the original image had audio
+                        # NOTE: embed_audio_base64() preserves existing PNG chunks (including
+                        # scrambled aposematic pixels), so this is safe to call
                         audio_path = img_info.get("audio_path")
                         if audio_path and os.path.exists(audio_path):
                             print(
-                                f"🔍 Skipping audio re-embedding for aposematic image (audio already embedded)"
+                                f"🔊 Re-embedding audio from {audio_path} into aposematic image"
                             )
-                            print(f"🔍 Aposematic images contain embedded audio data")
-                            # 🎯 CRITICAL: Do NOT re-embed audio for aposematic images
-                            # create_audio_image() would overwrite and destroy aposematic data
+                            aposematic_img_path = reembed_audio_if_needed(
+                                aposematic_img_path, audio_path
+                            )
 
                         ipfs_hash = ipfs_add(aposematic_img_path)
                         # Fix: Use helper for proper persistence

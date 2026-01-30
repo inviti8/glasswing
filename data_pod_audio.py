@@ -173,6 +173,9 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                     "imageType": image_type,
                     "hasAudio": has_audio,
                     "audioMethod": audio_method,
+                    # For enciphered images, include original_hash so audio can be extracted
+                    # (enciphered images lose audio during ImageMagick encryption)
+                    "original_hash": img_info.get("original_hash"),
                 }
 
                 # For token-based audio, ensure receiver key is set for future decryption
@@ -352,6 +355,12 @@ async def process_data_pod_locally(
         ipfs_webui = getattr(main, "ipfs_webui", "http://localhost")
         ipfs_webui_port = getattr(main, "ipfs_webui_port", "8080")
 
+        # Construct gateway base URL for IPFS access (needed for downloading original images)
+        if ipfs_webui.startswith("http://") or ipfs_webui.startswith("https://"):
+            gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
+        else:
+            gateway_base = f"http://{ipfs_webui}:{ipfs_webui_port}"
+
         if not all(
             [
                 download_ipfs_image,
@@ -403,8 +412,82 @@ async def process_data_pod_locally(
 
                 print(f"🔍 Processing image: {item.get('title')}, type: {image_type}")
 
-                if image_type == "encrypted":
-                    print(f"🔓 Deciphering encrypted image: {item.get('title')}")
+                # 🎯 CRITICAL: Extract audio BEFORE decryption/recovery!
+                # recover_aposematic_img() and new_deciphered_img() create NEW PNGs
+                # that don't preserve tEXt chunks where audio is stored.
+                # So we must extract audio from the aposematic/enciphered image first.
+                pre_extracted_audio = None
+                if item.get("hasAudio") and image_type in ("aposematic", "enciphered"):
+                    print(f"🎵 Pre-extracting audio from {image_type} image before recovery...")
+
+                    # For enciphered images, audio is lost during enciphering (ImageMagick limitation)
+                    # We need to extract from the ORIGINAL processed image instead
+                    if image_type == "enciphered":
+                        original_hash = item.get("original_hash")
+                        if original_hash:
+                            print(f"🔍 Enciphered image - extracting audio from original: {original_hash[:16]}...")
+                            try:
+                                # Download original processed image
+                                original_href = f"{gateway_base}/ipfs/{original_hash}"
+                                original_path = download_ipfs_image(original_href)
+                                if original_path:
+                                    has_audio, actual_method = has_audio_data(original_path)
+                                    print(f"🔍 Audio check on original: has_audio={has_audio}, actual_method={actual_method}")
+
+                                    if has_audio:
+                                        if actual_method == "token" or item.get("audioMethod") == "token":
+                                            serialized_token = extract_audio_token(original_path)
+                                            if serialized_token:
+                                                pre_extracted_audio = {
+                                                    "type": "token",
+                                                    "data": serialized_token
+                                                }
+                                                print(f"✅ Pre-extracted audio token from original ({len(serialized_token)} chars)")
+                                        if not pre_extracted_audio and (actual_method == "base64" or has_audio):
+                                            audio_base64 = extract_audio_base64(original_path)
+                                            if audio_base64:
+                                                pre_extracted_audio = {
+                                                    "type": "base64",
+                                                    "data": audio_base64
+                                                }
+                                                print(f"✅ Pre-extracted audio base64 from original ({len(audio_base64)} chars)")
+                                    # Clean up temp file
+                                    try:
+                                        os.remove(original_path)
+                                    except:
+                                        pass
+                            except Exception as e:
+                                print(f"⚠️ Failed to extract audio from original image: {e}")
+                        else:
+                            print(f"⚠️ Enciphered image has no original_hash - cannot extract audio")
+                    else:
+                        # For aposematic images, audio is in the image itself (re-embedded after scramble)
+                        try:
+                            has_audio, actual_method = has_audio_data(temp_path)
+                            print(f"🔍 Audio check on source: has_audio={has_audio}, actual_method={actual_method}")
+
+                            if has_audio:
+                                if actual_method == "token" or item.get("audioMethod") == "token":
+                                    serialized_token = extract_audio_token(temp_path)
+                                    if serialized_token:
+                                        pre_extracted_audio = {
+                                            "type": "token",
+                                            "data": serialized_token
+                                        }
+                                        print(f"✅ Pre-extracted audio token ({len(serialized_token)} chars)")
+                                if not pre_extracted_audio and (actual_method == "base64" or has_audio):
+                                    audio_base64 = extract_audio_base64(temp_path)
+                                    if audio_base64:
+                                        pre_extracted_audio = {
+                                            "type": "base64",
+                                            "data": audio_base64
+                                        }
+                                        print(f"✅ Pre-extracted audio base64 ({len(audio_base64)} chars)")
+                        except Exception as e:
+                            print(f"⚠️ Pre-extraction of audio failed: {e}")
+
+                if image_type == "enciphered":
+                    print(f"🔓 Deciphering enciphered image: {item.get('title')}")
                     try:
                         # 🎯 Uses same cipher_key as ENCRYPTION.md new_deciphered_img()
                         # 🎯 CRITICAL: new_deciphered_img is NOT async - remove await
@@ -454,22 +537,20 @@ async def process_data_pod_locally(
                 else:
                     print(f"ℹ️ Image type '{image_type}' - no decryption needed")
 
-                # Extract audio tokens if present (NEW - audio token processing)
-                if item.get("hasAudio") and item.get("audioMethod") == "token":
-                    print(f"🎵 Extracting audio token from: {item.get('title')}")
+                # Extract/process audio if present
+                if item.get("hasAudio"):
+                    print(f"🎵 Processing audio for: {item.get('title')}")
                     audio_extracted = False
 
-                    # First, check what type of audio is actually in the image
-                    has_audio, actual_method = has_audio_data(decoded_path)
-                    print(f"🔍 Audio check: has_audio={has_audio}, actual_method={actual_method}")
-
-                    # Try token extraction first if that's what we expect
-                    if actual_method == "token" or item.get("audioMethod") == "token":
+                    # 🎯 CRITICAL: Use pre-extracted audio for aposematic/encrypted images
+                    # because recover_aposematic_img() and new_deciphered_img() don't preserve tEXt chunks
+                    if pre_extracted_audio:
+                        print(f"🎵 Using pre-extracted audio ({pre_extracted_audio['type']})")
                         try:
-                            serialized_token = extract_audio_token(decoded_path)
-                            if serialized_token:
+                            if pre_extracted_audio["type"] == "token":
+                                # Decrypt the token
                                 audio_bytes, metadata = extract_audio_from_token(
-                                    subscriber_keys, serialized_token, verify_hash=True
+                                    subscriber_keys, pre_extracted_audio["data"], verify_hash=True
                                 )
 
                                 if audio_bytes:
@@ -494,17 +575,11 @@ async def process_data_pod_locally(
                                             "verified": metadata is not None,
                                         },
                                     }
-                                    print(f"✅ Audio extracted from token ({len(audio_base64)} chars)")
+                                    print(f"✅ Audio decrypted from pre-extracted token ({len(audio_base64)} chars)")
                                     audio_extracted = True
-                        except Exception as e:
-                            print(f"⚠️ Token extraction failed: {e}")
-
-                    # Fallback: try base64/metadata extraction
-                    if not audio_extracted and (actual_method == "base64" or has_audio):
-                        try:
-                            audio_base64 = extract_audio_base64(decoded_path)
-                            if audio_base64:
-                                # Decode to detect format
+                            else:
+                                # Pre-extracted base64 audio
+                                audio_base64 = pre_extracted_audio["data"]
                                 audio_bytes = base64.b64decode(audio_base64)
                                 audio_format = detect_audio_format(audio_bytes)
 
@@ -518,10 +593,74 @@ async def process_data_pod_locally(
                                         "verified": True,
                                     },
                                 }
-                                print(f"✅ Audio extracted from metadata ({len(audio_base64)} chars)")
+                                print(f"✅ Audio from pre-extracted base64 ({len(audio_base64)} chars)")
                                 audio_extracted = True
                         except Exception as e:
-                            print(f"⚠️ Metadata extraction failed: {e}")
+                            print(f"⚠️ Pre-extracted audio processing failed: {e}")
+
+                    # For non-aposematic/encrypted images, extract from decoded_path
+                    if not audio_extracted:
+                        has_audio, actual_method = has_audio_data(decoded_path)
+                        print(f"🔍 Audio check on decoded: has_audio={has_audio}, actual_method={actual_method}")
+
+                        # Try token extraction first if that's what we expect
+                        if actual_method == "token" or item.get("audioMethod") == "token":
+                            try:
+                                serialized_token = extract_audio_token(decoded_path)
+                                if serialized_token:
+                                    audio_bytes, metadata = extract_audio_from_token(
+                                        subscriber_keys, serialized_token, verify_hash=True
+                                    )
+
+                                    if audio_bytes:
+                                        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+                                        audio_format = None
+                                        if metadata:
+                                            filename = metadata.get("filename", "")
+                                            if filename and "." in filename:
+                                                audio_format = filename.rsplit(".", 1)[-1].lower()
+                                        if not audio_format:
+                                            audio_format = detect_audio_format(audio_bytes)
+
+                                        item["audio"] = {
+                                            "data": audio_base64,
+                                            "format": audio_format,
+                                            "extractedAt": time.time(),
+                                            "method": "token",
+                                            "metadata": {
+                                                "fileSize": metadata.get("size") if metadata else len(audio_bytes),
+                                                "fileHash": metadata.get("hash") if metadata else None,
+                                                "fileName": metadata.get("filename") if metadata else None,
+                                                "verified": metadata is not None,
+                                            },
+                                        }
+                                        print(f"✅ Audio extracted from token ({len(audio_base64)} chars)")
+                                        audio_extracted = True
+                            except Exception as e:
+                                print(f"⚠️ Token extraction failed: {e}")
+
+                        # Fallback: try base64/metadata extraction
+                        if not audio_extracted and (actual_method == "base64" or has_audio):
+                            try:
+                                audio_base64 = extract_audio_base64(decoded_path)
+                                if audio_base64:
+                                    audio_bytes = base64.b64decode(audio_base64)
+                                    audio_format = detect_audio_format(audio_bytes)
+
+                                    item["audio"] = {
+                                        "data": audio_base64,
+                                        "format": audio_format,
+                                        "extractedAt": time.time(),
+                                        "method": "metadata",
+                                        "metadata": {
+                                            "fileSize": len(audio_bytes),
+                                            "verified": True,
+                                        },
+                                    }
+                                    print(f"✅ Audio extracted from metadata ({len(audio_base64)} chars)")
+                                    audio_extracted = True
+                            except Exception as e:
+                                print(f"⚠️ Metadata extraction failed: {e}")
 
                     if not audio_extracted:
                         print(f"❌ No audio could be extracted from image")
@@ -547,8 +686,8 @@ async def process_data_pod_locally(
                         print(f"❌ Error converting image to base64: {e}")
                         raise
                 else:
-                    # For encrypted/aposematic images, make decrypted version accessible
-                    if image_type in ("aposematic", "encrypted"):
+                    # For enciphered/aposematic images, make decrypted version accessible
+                    if image_type in ("aposematic", "enciphered"):
                         try:
                             # Use the already imported functions
                             if ipfs_add:
