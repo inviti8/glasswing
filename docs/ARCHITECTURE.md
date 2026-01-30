@@ -494,6 +494,312 @@ cipher_key_sub = shared_key_sub.shared_secret().hex()  # Same key!
 
 ---
 
+## Browser Mode: Add Channel Flow
+
+### Overview
+
+Browser Mode is a viewing/consumption mode for displaying gallery content from Pintheon channels. It uses an iframe-based HTML renderer to display rich gallery layouts. Users subscribe to content sources, then select and view channels within those subscriptions.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         BROWSER MODE FLOW                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐            │
+│   │     ADD      │────▶│    SELECT    │────▶│    VIEW      │            │
+│   │ SUBSCRIPTION │     │   CHANNEL    │     │   GALLERY    │            │
+│   └──────────────┘     └──────────────┘     └──────────────┘            │
+│         │                    │                    │                      │
+│         ▼                    ▼                    ▼                      │
+│   • Pintheon URL       • Fetch channels    • Render HTML               │
+│   • IPNS Hash          • Select from list  • Display in iframe         │
+│   • Store locally      • Load data pod     • Play audio                │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### App Mode Toggle
+
+The application has two modes controlled by `app.storage.user["app_mode"]`:
+
+| Mode | Value | Purpose | UI Tab |
+|------|-------|---------|--------|
+| Image Mode | `"image"` | Create and process images | IMAGES tab |
+| Browser Mode | `"browser"` | View subscribed channels | BROWSER tab |
+
+```python
+# main.py:3543-3546
+def toggle_app_mode():
+    current = app.storage.user.get("app_mode", "image")
+    app.storage.user["app_mode"] = "browser" if current == "image" else "image"
+```
+
+### Step 1: Add Subscription
+
+Users add subscriptions via `add_subscription_dialog()` in `dialogs.py:381-408`.
+
+**Dialog Input:**
+- **Subscription Name**: User-friendly identifier
+- **Pintheon Node URL**: e.g., `https://some-pintheon.com`
+- **IPNS Hash**: e.g., `k51qzi5uqu5d...`
+
+```python
+# main.py:2259-2277
+def add_subscription(name: str, url: str, ipns_hash: str):
+    subscriptions = app.storage.user.get("subscriptions", [])
+    subscriptions.append({
+        "name": name,
+        "url": url,
+        "ipns_hash": ipns_hash
+    })
+    app.storage.user["subscriptions"] = subscriptions
+    persistent_save_data()  # Persist to data.json
+```
+
+### Step 2: Fetch Channels from Subscription
+
+When a user selects a subscription, channels are fetched from the IPNS address.
+
+```python
+# main.py:2614-2663
+async def fetch_subscription_channels(subscription_name: str):
+    subscription = get_subscription_by_name(subscription_name)
+    if not subscription:
+        return []
+
+    # Resolve IPNS to get directory listing
+    ipns_hash = subscription["ipns_hash"]
+    gateway_url = subscription["url"]
+
+    # Fetch IPNS content (returns list of channel entries)
+    channels = await ipns_resolve_and_list(gateway_url, ipns_hash)
+
+    return channels  # List of {name, description, data_pod_hash}
+```
+
+### Step 3: Select Channel
+
+The `select_channel_dialog()` in `dialogs.py:452-524` presents available channels.
+
+```
+┌─────────────────────────────────────────────────┐
+│           SELECT CHANNEL DIALOG                  │
+├─────────────────────────────────────────────────┤
+│  Subscription: [Dropdown - My Gallery    ▼]     │
+│                                                  │
+│  Channels:                                       │
+│  ┌─────────────────────────────────────────┐    │
+│  │ Channel A      (12 items)    [Select]  │    │
+│  │ Channel B      (8 items)     [Select]  │    │
+│  │ Channel C      (24 items)    [Select]  │    │
+│  └─────────────────────────────────────────┘    │
+│                                                  │
+│                              [Cancel]           │
+└─────────────────────────────────────────────────┘
+```
+
+When user clicks "Select", it calls `select_channel(subscription_name, channel_info)`.
+
+### Step 4: Load and Render Channel
+
+```python
+# main.py:2665-2761
+async def select_channel(subscription_name: str, channel_info: dict):
+    # 1. Fetch the channel's data pod (NINJS format)
+    data_pod = await fetch_channel_data_pod(subscription_name, channel_info)
+
+    # 2. Decode protected images if user has decryption key
+    if app.storage.user.get("stellar_secret"):
+        data_pod = await decode_protected_images(data_pod)
+
+    # 3. Get color scheme from user settings
+    colors = get_gallery_colors()  # Based on dark_mode setting
+
+    # 4. Render gallery.html Jinja2 template
+    html = render_gallery_html(data_pod, colors)
+
+    # 5. Store HTML for display when BROWSER tab is opened
+    global pending_browser_html
+    pending_browser_html = html
+
+    # 6. Store current channel info
+    app.storage.user["current_channel"] = {
+        "subscription": subscription_name,
+        "channel": channel_info["name"]
+    }
+
+    # 7. Notify user
+    ui.notify(f"Channel loaded: {channel_info['name']}. Switch to BROWSER tab to view.")
+```
+
+### Step 5: Display in Browser Tab
+
+When user switches to BROWSER tab, the HTML is injected into an iframe.
+
+```python
+# main.py:279 (global)
+browser_content = None       # Container for iframe
+update_browser_content = None  # Function to update iframe
+
+# main.py:3801-3829 (on tab change)
+def on_tab_change(tab_value):
+    if tab_value == "BROWSER":
+        toggle_app_mode()  # Switch to browser mode
+        if pending_browser_html:
+            update_browser_content(pending_browser_html)
+```
+
+**Iframe Update Mechanism:**
+
+```python
+# main.py:setup_browser_tab()
+def update_browser_content(html: str):
+    # Base64 encode HTML to avoid escaping issues
+    html_b64 = base64.b64encode(html.encode()).decode()
+
+    # JavaScript to update iframe srcdoc
+    js = f'''
+        const iframe = document.getElementById('browser-frame');
+        const html = atob("{html_b64}");
+        iframe.srcdoc = html;
+    '''
+    ui.run_javascript(js)
+```
+
+### Browser Tab UI Controls
+
+Located in `main.py:3985-3998`, the FAB (Floating Action Button) provides three actions:
+
+```python
+with ui.fab("web_stories").classes("q-secondary-color"):
+    ui.fab_action("subscriptions", on_click=view_subscriptions_dialog)
+    ui.fab_action("add", on_click=lambda: add_subscription_dialog(add_subscription))
+    ui.fab_action("play_arrow", on_click=lambda: select_channel_dialog(select_channel))
+```
+
+| Action | Icon | Function | Purpose |
+|--------|------|----------|---------|
+| View Subscriptions | subscriptions | `view_subscriptions_dialog()` | List/manage stored subscriptions |
+| Add Subscription | add | `add_subscription_dialog()` | Add new Pintheon subscription |
+| Select Channel | play_arrow | `select_channel_dialog()` | Choose channel to view |
+
+### Channel Data Structure
+
+Channels contain NINJS-format data pods:
+
+```python
+{
+    "name": "Channel Name",
+    "description": "12 items",
+    "data": {
+        # NINJS data pod (same structure as in deployment)
+        "uri": "urn:newsml:...",
+        "creator_public_key": "GABCD...",
+        "recipient_public_key": "GEFGH...",
+        "items": [
+            {
+                "type": "audio_image",
+                "headline": "Image Title",
+                "renditions": [{"href": "ipfs://..."}],
+                "hasAudio": true,
+                "audioMethod": "token",
+                # ...
+            }
+        ]
+    }
+}
+```
+
+### Storage Keys for Browser Mode
+
+```python
+app.storage.user = {
+    # Subscriptions (persisted to data.json)
+    "subscriptions": [
+        {"name": str, "url": str, "ipns_hash": str}
+    ],
+
+    # Fetched subscription metadata (runtime)
+    "fetched_subscriptions": {
+        "subscription_name": {
+            "subscription": str,
+            "ipns_hash": str,
+            "gateway_url": str,
+            "content_type": str,
+            "size": int
+        }
+    },
+
+    # Current viewing state
+    "current_channel": {
+        "subscription": str,
+        "channel": str
+    },
+
+    # Mode
+    "app_mode": "image" | "browser"
+}
+```
+
+### Complete Flow Diagram
+
+```
+User clicks "Add Subscription" FAB
+        │
+        ▼
+┌─────────────────────────────┐
+│  add_subscription_dialog()  │  (dialogs.py:381-408)
+│  • Enter name, URL, IPNS    │
+└─────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────┐
+│  add_subscription()         │  (main.py:2259-2277)
+│  • Store in subscriptions[] │
+│  • Persist to data.json     │
+└─────────────────────────────┘
+        │
+        ▼
+User clicks "Select Channel" FAB
+        │
+        ▼
+┌─────────────────────────────┐
+│  select_channel_dialog()    │  (dialogs.py:452-524)
+│  • User picks subscription  │
+│  • Channels load from IPNS  │
+│  • User clicks "Select"     │
+└─────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────┐
+│  select_channel()           │  (main.py:2665-2761)
+│  • Fetch data pod           │
+│  • Decode protected images  │
+│  • Render gallery.html      │
+│  • Store in pending_browser │
+└─────────────────────────────┘
+        │
+        ▼
+User switches to BROWSER tab
+        │
+        ▼
+┌─────────────────────────────┐
+│  on_tab_change()            │  (main.py:3801-3829)
+│  • toggle_app_mode()        │
+│  • update_browser_content() │
+└─────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────┐
+│  Gallery renders in iframe  │
+│  • Images displayed         │
+│  • Audio playable           │
+│  • Metadata visible         │
+└─────────────────────────────┘
+```
+
+---
+
 ## Data Pod Structure (NINJS Format)
 
 ```json
@@ -649,10 +955,65 @@ andromica/
 ## Integration Points
 
 ### IPFS
-- Local daemon at `127.0.0.1:5001`
-- Functions: `ipfs_add()`, `ipfs_get()`, `download_ipfs_image()`, `ipns_*` operations
-- Used for image storage and data pod distribution
-- Gateway for HTTP access: `localhost:8080`
+
+Andromica uses two IPFS endpoints for different purposes:
+
+#### IPFS HTTP API (Port 5001)
+
+**Configuration:** `ipfs_endpoint = "http://127.0.0.1"` + `port = "5001"`
+
+Used for programmatic backend operations:
+
+| Function | Endpoint | Purpose |
+|----------|----------|---------|
+| `ipfs_add()` | `/api/v0/add` | Add files to IPFS |
+| `is_ipfs_running()` | `/api/v0/version` | Health check |
+| `download_ipfs_image()` | `/api/v0/cat?arg={hash}` | Fetch file content (primary) |
+| `ipns_*` operations | `/api/v0/name/*` | IPNS publish/resolve |
+
+#### IPFS HTTP Gateway (Port 8080)
+
+**Configuration:** `ipfs_webui = "http://localhost"` + `ipfs_webui_port = "8080"`
+
+> **Note:** The variable is named `ipfs_webui` but it's actually the IPFS Gateway, not the WebUI. The actual IPFS WebUI is at `http://localhost:5001/webui`.
+
+Used for HTTP access in browser contexts:
+
+| Usage | Example | Purpose |
+|-------|---------|---------|
+| Template URLs | `<img src="http://localhost:8080/ipfs/Qm...">` | Display images in HTML |
+| Data pod hrefs | `gateway_base/ipfs/{hash}` | Build URLs for renditions |
+| Fallback fetch | `download_ipfs_image()` fallback | When API fails |
+
+#### Why Both Are Needed
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      IPFS DAEMON                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────────────────┐      ┌─────────────────────┐          │
+│   │   HTTP API (:5001)  │      │  HTTP Gateway (:8080)│          │
+│   ├─────────────────────┤      ├─────────────────────┤          │
+│   │ • Add files         │      │ • Serve content     │          │
+│   │ • Cat/get content   │      │ • Browser-friendly  │          │
+│   │ • Pin management    │      │ • GET requests only │          │
+│   │ • IPNS operations   │      │ • Public access     │          │
+│   │ • POST requests     │      │                     │          │
+│   └─────────────────────┘      └─────────────────────┘          │
+│            │                            │                        │
+│            ▼                            ▼                        │
+│     Backend Python              Browser/Templates                │
+│     (main.py, etc.)             (gallery.html, iframe)          │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Functions:**
+- `ipfs_add()` - Add file to IPFS, returns hash
+- `ipfs_load_to_temp_file()` - Download IPFS content to temp file
+- `download_ipfs_image()` - Download image (tries API first, gateway fallback)
+- `ipns_publish()`, `ipns_resolve()` - IPNS name operations
 
 ### Pintheon
 - REST API for gallery deployment
