@@ -56,6 +56,15 @@ hiddenimports = [
     'skimage',
     'numpy',
     'scipy',
+    # Audio feature imports
+    'audio_tokens',
+    'png_chunks',
+    'data_pod_audio',
+    'biscuit_auth',
+    'biscuit_auth.biscuit',
+    'pynacl',
+    'pynacl.bindings',
+    'pynacl.secret',
 ]
 
 # Exclusions to reduce size

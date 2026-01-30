@@ -50,6 +50,9 @@ def main():
         'stellar_sdk',
         'aiposematic',
         'ipfslib',
+        # Audio feature dependencies
+        'biscuit_auth',
+        'pynacl',
     ]
 
     for pkg in required_packages:

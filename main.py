@@ -101,7 +101,7 @@ update_browser_content = None
 pending_browser_html = None
 
 app.native.window_args["resizable"] = True
-app.native.start_args["debug"] = True
+# app.native.start_args["debug"] = True
 app.native.settings["ALLOW_DOWNLOADS"] = True
 app.native.window_args["title"] = "Andromica"
 # app.native.window_args['frameless'] = True
