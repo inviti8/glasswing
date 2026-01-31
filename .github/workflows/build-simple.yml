@@ -30,15 +30,6 @@ jobs:
           libxcb-xinerama0 libxcb-cursor0 \
           libwebkit2gtk-4.0-37
 
-    - name: Install ExifTool
-      run: |
-        wget https://exiftool.org/Image-ExifTool-12.70.tar.gz
-        tar -xzf Image-ExifTool-12.70.tar.gz
-        cd Image-ExifTool-12.70
-        perl Makefile.PL
-        make
-        sudo make install
-
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
@@ -107,7 +98,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-13
+          - runner: macos-15-large
             arch: amd64
           - runner: macos-latest
             arch: arm64
