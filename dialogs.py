@@ -18,6 +18,23 @@ from main import choose_files
 from audio_tokens import is_audio_file
 from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
+# Explicit exports for PyInstaller compatibility with 'from dialogs import *'
+__all__ = [
+    'create_shared_key',
+    'get_recipient_options',
+    'markdown_block_dialog',
+    'iptc_dialog',
+    'cipher_dialog',
+    'aposematic_dialog',
+    'assign_iptc_dialog',
+    'view_subscriptions_dialog',
+    'select_channel_dialog',
+    'edit_audio_info',
+    'is_audio',
+    'browse_audio_file',
+    'gallery_info_dialog',
+]
+
 def create_shared_key(receiver_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
     stellar_keys = Keypair.from_secret(stellar_secret)
