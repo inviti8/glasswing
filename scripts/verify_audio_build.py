@@ -22,7 +22,7 @@ def verify_audio_modules():
         ('data_pod_audio', 'Data pod audio processing'),
         ('hvym_stellar', 'HVYM Stellar cryptography'),
         ('biscuit_auth', 'Biscuit token library'),
-        ('pynacl', 'NaCl cryptography'),
+        ('nacl', 'NaCl cryptography (PyNaCl)'),
         ('task_runner', 'Non-blocking task execution'),
     ]
 

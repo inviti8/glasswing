@@ -38,7 +38,7 @@ jobs:
 
     - name: Verify audio dependencies
       run: |
-        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+        python -c "import biscuit_auth; import nacl; import hvym_stellar; print('Audio deps OK')"
 
     - name: Generate icons
       run: python scripts/generate_icons.py
@@ -75,7 +75,7 @@ jobs:
 
     - name: Verify audio dependencies
       run: |
-        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+        python -c "import biscuit_auth; import nacl; import hvym_stellar; print('Audio deps OK')"
 
     - name: Generate icons
       run: python scripts/generate_icons.py
@@ -116,7 +116,7 @@ jobs:
 
     - name: Verify audio dependencies
       run: |
-        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+        python -c "import biscuit_auth; import nacl; import hvym_stellar; print('Audio deps OK')"
 
     - name: Generate icons
       run: python scripts/generate_icons.py

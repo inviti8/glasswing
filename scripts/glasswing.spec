@@ -62,9 +62,9 @@ hiddenimports = [
     'data_pod_audio',
     'biscuit_auth',
     'biscuit_auth.biscuit',
-    'pynacl',
-    'pynacl.bindings',
-    'pynacl.secret',
+    'nacl',
+    'nacl.bindings',
+    'nacl.secret',
     # Task runner for non-blocking operations
     'task_runner',
 ]
