@@ -92,7 +92,6 @@ class GlasswingBuilder:
             '--noconfirm',
             '--distpath', str(self.build_dir / 'dist'),
             '--workpath', str(self.build_dir / 'work'),
-            '--specpath', str(self.build_dir),
             str(self.spec_file)
         ]
 
