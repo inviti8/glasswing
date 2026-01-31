@@ -9,7 +9,7 @@ anyio==4.11.0
 async-generator==1.10
 attrs==25.4.0
 base58==1.0.3
-biscuit-auth
+biscuit-python>=0.3.2
 bidict==0.23.1
 bottle==0.13.4
 certifi==2025.10.5
