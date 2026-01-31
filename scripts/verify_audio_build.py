@@ -7,6 +7,12 @@ Run this after building to ensure all audio modules work.
 import sys
 import os
 
+# Add project root to Python path (parent of scripts/ directory)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 # ASCII-compatible status symbols for Windows compatibility
 CHECK = '[OK]'
 CROSS = '[X]'
@@ -53,11 +59,14 @@ def verify_audio_token_creation():
 
         sender_keys = Stellar25519KeyPair(sender_kp)
 
+        # Get raw 32-byte public key (not Stellar-formatted string)
+        receiver_pub_bytes = receiver_kp.raw_public_key()
+
         # Create test token
         test_data = b"test audio data"
         token = HVYMDataToken.create_from_bytes(
             senderKeyPair=sender_keys,
-            receiverPub=receiver_kp.public_key,
+            receiverPub=receiver_pub_bytes,
             file_data=test_data,
             filename="test.wav",
             expires_in=None  # No expiry
@@ -69,6 +78,8 @@ def verify_audio_token_creation():
 
     except Exception as e:
         print(f"  {CROSS} HVYMDataToken creation failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
