@@ -94,14 +94,7 @@ jobs:
         retention-days: 30
 
   build-macos:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - runner: macos-15-large
-            arch: amd64
-          - runner: macos-latest
-            arch: arm64
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -113,7 +106,7 @@ jobs:
 
     - name: Install system dependencies
       run: |
-        brew install imagemagick exiftool
+        brew install imagemagick
 
     - name: Install Python dependencies
       run: |
@@ -137,13 +130,13 @@ jobs:
     - name: Create ZIP
       run: |
         cd build/dist
-        zip -r glasswing-${{ matrix.arch }}.zip glasswing.app
+        zip -r glasswing-arm64.zip glasswing.app
 
     - name: Upload macOS build
       uses: actions/upload-artifact@v4
       with:
-        name: glasswing-macos-${{ matrix.arch }}
-        path: build/dist/glasswing-${{ matrix.arch }}.zip
+        name: glasswing-macos-arm64
+        path: build/dist/glasswing-arm64.zip
         retention-days: 30
 
   create-release:
@@ -164,7 +157,6 @@ jobs:
         mkdir -p release
         cp builds/glasswing-linux/glasswing release/glasswing-linux
         cp builds/glasswing-windows/glasswing.exe release/glasswing-windows.exe
-        cp builds/glasswing-macos-amd64/*.zip release/
         cp builds/glasswing-macos-arm64/*.zip release/
 
     - name: Create installation guide
@@ -202,9 +194,9 @@ jobs:
         Double-click glasswing-windows.exe or run from command prompt.
 
         ### macOS
-        1. Unzip the appropriate file for your architecture:
-           - Intel Macs: glasswing-amd64.zip
-           - Apple Silicon: glasswing-arm64.zip
+        1. Unzip glasswing-arm64.zip
+           - Works natively on Apple Silicon
+           - Intel Macs can run via Rosetta 2
         2. Move glasswing.app to Applications
         3. Right-click and select "Open" (first time only, due to Gatekeeper)
 
