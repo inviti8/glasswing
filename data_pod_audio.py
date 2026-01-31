@@ -7,12 +7,15 @@ Data Pod Creation with Encrypted Audio Tokens
 - Use same metadata structure as image encryption
 """
 
+import asyncio
 import base64
 import json
 import os
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+
+from nicegui import run
 
 from audio_tokens import (
     get_user_keypair,
@@ -355,6 +358,7 @@ async def process_data_pod_locally(
         recover_aposematic_img = getattr(main, "recover_aposematic_img", None)
         image_to_base64_uri = getattr(main, "image_to_base64_uri", None)
         ipfs_add = getattr(main, "ipfs_add", None)
+        _ipfs_add_pure = getattr(main, "_ipfs_add_pure", None)  # Pure version for threading
         ipfs_webui = getattr(main, "ipfs_webui", "http://localhost")
         ipfs_webui_port = getattr(main, "ipfs_webui_port", "8080")
 
@@ -393,8 +397,8 @@ async def process_data_pod_locally(
                     )
                     continue
 
-                # Download IPFS image (not async function)
-                temp_path = download_ipfs_image(href)
+                # I/O-bound: Download IPFS image
+                temp_path = await run.io_bound(download_ipfs_image, href)
                 if not temp_path:
                     print(f"❌ Failed to download image from {href}")
                     continue
@@ -430,9 +434,9 @@ async def process_data_pod_locally(
                         if original_hash:
                             print(f"🔍 Enciphered image - extracting audio from original: {original_hash[:16]}...")
                             try:
-                                # Download original processed image
+                                # I/O-bound: Download original processed image
                                 original_href = f"{gateway_base}/ipfs/{original_hash}"
-                                original_path = download_ipfs_image(original_href)
+                                original_path = await run.io_bound(download_ipfs_image, original_href)
                                 if original_path:
                                     has_audio, actual_method = has_audio_data(original_path)
                                     print(f"🔍 Audio check on original: has_audio={has_audio}, actual_method={actual_method}")
@@ -492,9 +496,9 @@ async def process_data_pod_locally(
                 if image_type == "enciphered":
                     print(f"🔓 Deciphering enciphered image: {item.get('title')}")
                     try:
-                        # 🎯 Uses same cipher_key as ENCRYPTION.md new_deciphered_img()
-                        # 🎯 CRITICAL: new_deciphered_img is NOT async - remove await
-                        decoded_path = new_deciphered_img(
+                        # CPU-bound: deciphering is computationally intensive
+                        decoded_path = await run.cpu_bound(
+                            new_deciphered_img,
                             os.path.basename(temp_path),  # file_name
                             temp_path,  # encrypted_img_path
                             cipher_key,  # cipher_key
@@ -506,13 +510,15 @@ async def process_data_pod_locally(
                 elif image_type == "aposematic":
                     print(f"🔓 Recovering aposematic image: {item.get('title')}")
                     try:
-                        # 🎯 Uses same parameters as working main.py version (synchronous call)
+                        # 🎯 Uses same parameters as working main.py version
                         op_string = data_pod.get("op_string", "-^+")
                         print(f"🔍 DEBUG: Using op_string: '{op_string}'")
                         print(f"🔍 DEBUG: Cipher key: {cipher_key[:16]}...")
                         print(f"🔍 DEBUG: Temp path: {temp_path}")
 
-                        result = recover_aposematic_img(
+                        # CPU-bound: aposematic recovery is computationally intensive
+                        result = await run.cpu_bound(
+                            recover_aposematic_img,
                             temp_path, cipher_key=cipher_key, op_string=op_string
                         )
 
@@ -692,8 +698,19 @@ async def process_data_pod_locally(
                     # For enciphered/aposematic images, make decrypted version accessible
                     if image_type in ("aposematic", "enciphered"):
                         try:
-                            # Use the already imported functions
-                            if ipfs_add:
+                            # I/O-bound: IPFS upload (use pure version for threading)
+                            if _ipfs_add_pure:
+                                decrypted_hash, _, _ = await run.io_bound(_ipfs_add_pure, decoded_path)
+                                if decrypted_hash:
+                                    gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
+                                    item["renditions"][0]["href"] = f"{gateway_base}/ipfs/{decrypted_hash}"
+                                    item["renditions"][0]["ipfs_hash"] = decrypted_hash
+                                    item["renditions"][0]["decrypted"] = True
+                                    print(f"✅ Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
+                                else:
+                                    raise ValueError("_ipfs_add_pure returned None")
+                            elif ipfs_add:
+                                # Fallback to regular ipfs_add (blocking)
                                 decrypted_hash = ipfs_add(decoded_path)
                                 if decrypted_hash:
                                     gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
@@ -724,6 +741,9 @@ async def process_data_pod_locally(
 
                 processed_items.append(item)
                 print(f"✅ Processed item: {item.get('title')}")
+
+                # Yield control to event loop for UI updates between items
+                await asyncio.sleep(0)
 
             except Exception as e:
                 print(f"❌ Error processing item {item.get('title', 'Unknown')}: {e}")

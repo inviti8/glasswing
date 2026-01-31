@@ -16,6 +16,7 @@ from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
 from main import choose_files
 from audio_tokens import is_audio_file
+from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
 def create_shared_key(receiver_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
@@ -321,33 +322,106 @@ def assign_iptc_dialog(on_close, process_func):
                 btn
     return dialog
 
-async def process_dialog(process_func: Union[Callable, Callable[..., Awaitable]]):
+async def process_dialog(
+    process_func: Union[Callable, Callable[..., Awaitable]],
+    title: str = "Processing...",
+    task_type: TaskType = TaskType.IO,
+    show_cancel: bool = False
+):
+    """
+    Display a processing dialog while running a blocking task.
+
+    This function properly handles blocking operations by running them
+    in thread/process pools, preventing the "Connection lost" popup.
+
+    Args:
+        process_func: The function to execute (sync or async with blocking calls)
+        title: Dialog title message
+        task_type: TaskType.IO for I/O-bound, TaskType.CPU for CPU-intensive
+        show_cancel: Whether to show a cancel button
+
+    Note:
+        For async functions that contain blocking operations (like ImageMagick
+        or requests calls), you should refactor them to be sync functions
+        and pass task_type appropriately. The async wrapper doesn't help
+        if the inner operations are blocking.
+    """
+    runner = TaskRunner()
+
     with ui.dialog() as dialog:
-        with ui.card().classes('w-full max-w-xl'):
-            with ui.row().classes('items-center'):
-                spinner = ui.spinner('dots', size='lg', color='primary')
-                status = ui.label('Processing...').classes('text-md font-medium')
-    
+        with ui.card().classes('w-full max-w-md'):
+            with ui.column().classes('w-full gap-3'):
+                with ui.row().classes('items-center gap-3'):
+                    spinner = ui.spinner('dots', size='lg', color='primary')
+                    status = ui.label(title).classes('text-lg font-medium')
+
+                if show_cancel:
+                    with ui.row().classes('w-full justify-end'):
+                        def on_cancel():
+                            runner.cancel()
+                            status.set_text("Cancelling...")
+                        ui.button('Cancel', on_click=on_cancel).props('flat color=negative')
+
     async def run_process():
         try:
             if asyncio.iscoroutinefunction(process_func):
-                # For async functions, await them directly
+                # Async function - but may still contain blocking calls
+                # We await it directly since we can't easily wrap async funcs
+                # The function itself should use run.io_bound/cpu_bound internally
                 result = await process_func()
             else:
-                # For sync functions, run in a thread
-                result = await run.io_bound(process_func)
-                
+                # Sync function - run in appropriate executor
+                result = await runner.run(process_func, task_type=task_type)
+
             dialog.close()
             return result
         except Exception as e:
             dialog.close()
             ui.notify(f'Error: {str(e)}', type='negative')
             raise
-    
-    # Start the process after the dialog is shown
-    dialog.on('show', run_process)
+
     dialog.open()
-    return 
+    # Small delay to ensure dialog renders before heavy work starts
+    await asyncio.sleep(0.05)
+    result = await run_process()
+    return result
+
+
+async def process_batch_dialog(
+    items: List[Any],
+    process_func: Callable[[Any], Any],
+    title: str = "Processing...",
+    task_type: TaskType = TaskType.IO,
+    item_label: str = "item",
+    stop_on_error: bool = False
+) -> List[TaskResult]:
+    """
+    Display a progress dialog while processing a batch of items.
+
+    Args:
+        items: List of items to process
+        process_func: Sync function to process each item
+        title: Dialog title
+        task_type: TaskType.IO or TaskType.CPU
+        item_label: Label for progress (e.g., "image", "file")
+        stop_on_error: Stop processing on first error
+
+    Returns:
+        List of TaskResult objects with success/failure for each item
+    """
+    async with TaskDialog(
+        title=title,
+        show_progress=True,
+        show_cancel=True
+    ) as dialog:
+        results = await dialog.run_batch(
+            items=items,
+            process_func=process_func,
+            task_type=task_type,
+            item_label=item_label,
+            stop_on_error=stop_on_error
+        )
+        return results 
     
 async def add_body_text_dialog(img_name, img_path, hash_value, on_save):
     selected_type = ui.select(['IPTC', 'XMP'], value='IPTC').classes('w-full')

@@ -23,7 +23,7 @@ from stellar_sdk import Keypair
 import asyncio
 
 # Define app early to avoid circular imports
-from nicegui import app, ui
+from nicegui import app, ui, run
 from fastapi.staticfiles import StaticFiles
 
 
@@ -1222,11 +1222,13 @@ def ipns_add_gallery_to_folder(name):
             print(f"Failed to add {file_path} to MFS folder {name}")
 
 
-def ipfs_add(file_path):
-    if not is_ipfs_running():
-        print("Error: IPFS daemon is not running or not accessible")
-        return None
+def _ipfs_add_pure(file_path):
+    """
+    Pure IPFS add operation - no app.storage.user access.
+    Safe to use with run.io_bound().
 
+    Returns tuple: (hash_value, file_name, extension) or (None, None, None) on error.
+    """
     try:
         with open(file_path, "rb") as f:
             url = f"{ipfs_endpoint}:{port}"
@@ -1240,28 +1242,49 @@ def ipfs_add(file_path):
             response.raise_for_status()
             result = response.json()
             hash_value = result.get("Hash")
-            app.storage.user[hash_value] = {
-                "name": os.path.basename(file_path),
-                "path": file_path,
-                "ipns_path": None,
-                "extension": os.path.splitext(file_path)[1],
-                "render_metadata": False,
-            }
-            return hash_value
+            return (hash_value, os.path.basename(file_path), os.path.splitext(file_path)[1])
     except requests.exceptions.RequestException as e:
         print(f"Error uploading to IPFS: {e}")
-        return None
+        return (None, None, None)
     except (ValueError, KeyError) as e:
         print(f"Error processing IPFS response: {e}")
-        return None
+        return (None, None, None)
 
 
-def ipfs_load_to_temp_file(hash_value, original_filename=None):
-    print(hash_value)
+def ipfs_add(file_path):
+    """
+    Add file to IPFS and store metadata in app.storage.user.
+    NOTE: Cannot be used with run.io_bound() - use _ipfs_add_pure() instead.
+    """
     if not is_ipfs_running():
         print("Error: IPFS daemon is not running or not accessible")
         return None
 
+    hash_value, file_name, extension = _ipfs_add_pure(file_path)
+    if hash_value:
+        app.storage.user[hash_value] = {
+            "name": file_name,
+            "path": file_path,
+            "ipns_path": None,
+            "extension": extension,
+            "render_metadata": False,
+        }
+    return hash_value
+
+
+def _ipfs_load_to_temp_file_pure(hash_value, filename=None):
+    """
+    Pure IPFS load operation - no app.storage.user access.
+    Safe to use with run.io_bound().
+
+    Args:
+        hash_value: IPFS hash to load
+        filename: Optional filename to use (if None, uses hash_value)
+
+    Returns:
+        temp_path on success, None on error
+    """
+    print(f"Loading IPFS hash: {hash_value}")
     try:
         params = {"arg": hash_value}
         response = requests.post(
@@ -1275,13 +1298,10 @@ def ipfs_load_to_temp_file(hash_value, original_filename=None):
 
         # Create a temp directory to store the file with its original name
         temp_dir = tempfile.mkdtemp()
-        file_info = app.storage.user.get(hash_value, {})
-        print(file_info)
-        # Use original filename if provided, otherwise use the hash
-        filename = file_info.get("name", hash_value)
-        temp_path = os.path.join(temp_dir, filename)
-        print(temp_path)
-        app.storage.user["tmp_files"].append(temp_path)
+        # Use provided filename or fall back to hash
+        actual_filename = filename if filename else hash_value
+        temp_path = os.path.join(temp_dir, actual_filename)
+        print(f"Saving to: {temp_path}")
 
         # Stream the content to the file
         with open(temp_path, "wb") as f:
@@ -1302,6 +1322,28 @@ def ipfs_load_to_temp_file(hash_value, original_filename=None):
         if "temp_dir" in locals() and os.path.exists(temp_dir):
             os.rmdir(temp_dir)
         return None
+
+
+def ipfs_load_to_temp_file(hash_value, original_filename=None):
+    """
+    Load file from IPFS to temp file and track in app.storage.user.
+    NOTE: Cannot be used with run.io_bound() - use _ipfs_load_to_temp_file_pure() instead.
+    """
+    print(hash_value)
+    if not is_ipfs_running():
+        print("Error: IPFS daemon is not running or not accessible")
+        return None
+
+    # Get filename from storage if not provided
+    file_info = app.storage.user.get(hash_value, {})
+    print(file_info)
+    filename = original_filename or file_info.get("name", hash_value)
+
+    temp_path = _ipfs_load_to_temp_file_pure(hash_value, filename)
+    if temp_path:
+        app.storage.user["tmp_files"].append(temp_path)
+
+    return temp_path
 
 
 def ipfs_remove(hash_value):
@@ -1638,6 +1680,12 @@ async def process_metadata(img_name, img_path, hash_value, metadata):
 
 
 async def process_watermarking():
+    """
+    Process images with watermarking.
+
+    Uses run.io_bound for I/O operations and run.cpu_bound (via new_watermarked_img)
+    to prevent blocking the UI event loop ("Connection lost" issue).
+    """
     use_watermark = app.storage.user.get("use_watermark", False)
     watermark = app.storage.user.get("watermark", None)
 
@@ -1648,6 +1696,11 @@ async def process_watermarking():
     # Reset the processed image list (assignment ensures NiceGUI detects the change)
     app.storage.user["processed_img_hashes"] = []
 
+    # Get watermark info once before loop (can't access app.storage in thread)
+    watermark_hash = app.storage.user["watermark"]
+    watermark_info = app.storage.user.get(watermark_hash, {})
+    watermark_filename = watermark_info.get("name", watermark_hash)
+
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
         img_name = app.storage.user[hash_value]["name"]
@@ -1655,7 +1708,19 @@ async def process_watermarking():
         pos_idx = app.storage.user.get("watermark_position", 1)
         pos = WATERMARK_POSITIONS[pos_idx]
         print(img_name)
-        watermark_path = ipfs_load_to_temp_file(app.storage.user["watermark"])
+
+        # I/O-bound: load watermark from IPFS (using pure version)
+        watermark_path = await run.io_bound(
+            _ipfs_load_to_temp_file_pure, watermark_hash, watermark_filename
+        )
+        if watermark_path:
+            app.storage.user["tmp_files"].append(watermark_path)
+
+        if not watermark_path:
+            ui.notify(f"Failed to load watermark", type="negative")
+            continue
+
+        # CPU-bound: watermarking (new_watermarked_img already uses run.cpu_bound internally)
         processed_img_path = await new_watermarked_img(
             img_name, img_path, watermark_path, size, pos
         )
@@ -1667,11 +1732,21 @@ async def process_watermarking():
         audio_path = app.storage.user[hash_value].get("audio_path")
         if audio_path and os.path.exists(audio_path):
             print(f"Re-embedding audio from {audio_path} into watermarked image")
-            processed_img_path = reembed_audio_if_needed(processed_img_path, audio_path)
+            # I/O-bound: file operations (reembed_audio_if_needed is pure)
+            processed_img_path = await run.io_bound(
+                reembed_audio_if_needed, processed_img_path, audio_path
+            )
 
-        ipfs_hash = ipfs_add(processed_img_path)
+        # I/O-bound: network request to IPFS (using pure version)
+        ipfs_hash, file_name, extension = await run.io_bound(
+            _ipfs_add_pure, processed_img_path
+        )
 
-        # Preserve audio metadata when processing
+        if not ipfs_hash:
+            ui.notify(f"Failed to upload to IPFS", type="negative")
+            continue
+
+        # Preserve audio metadata when processing (storage update in main thread)
         app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
         app.storage.user[ipfs_hash].update(
             {
@@ -1690,6 +1765,10 @@ async def process_watermarking():
 
         app.storage.user["processed_img_hashes"].append(ipfs_hash)
         ui.notify(f"Processed {hash_value}")
+
+        # Yield control to event loop for UI updates between images
+        await asyncio.sleep(0)
+
     persistent_save_data()
     render_gallery()
 
@@ -1705,6 +1784,12 @@ def get_scramble_mode():
 
 
 async def process_aposematic():
+    """
+    Process images with aposematic encoding.
+
+    Uses run.cpu_bound for CPU-intensive operations and run.io_bound for I/O
+    to prevent blocking the UI event loop ("Connection lost" issue).
+    """
     # Reset the aposematic image list (assignment ensures NiceGUI detects the change)
     app.storage.user["aposematic_img_hashes"] = []
 
@@ -1723,6 +1808,10 @@ async def process_aposematic():
         f"Processing {len(processed_hashes)} images with cipher_key: {cipher_key[:16]}..."
     )
 
+    # Get these values once before the loop (they're used in cpu_bound which can't access app.storage)
+    op_string = app.storage.user.get("op_string", "-^+")
+    scramble_mode = get_scramble_mode()
+
     for hash_value in processed_hashes:
         try:
             img_info = app.storage.user.get(hash_value)
@@ -1738,11 +1827,14 @@ async def process_aposematic():
                 continue
 
             print(f"Processing aposematic for: {img_name}")
-            aposematic = new_aposematic_img(
+
+            # CPU-bound: aposematic encoding is computationally intensive
+            aposematic = await run.cpu_bound(
+                new_aposematic_img,
                 img_path,
                 cipher_key=cipher_key,
-                op_string=app.storage.user.get("op_string", "-^+"),
-                scramble_mode=get_scramble_mode(),
+                op_string=op_string,
+                scramble_mode=scramble_mode,
             )
             print(f"Aposematic result: {aposematic}")
 
@@ -1752,14 +1844,23 @@ async def process_aposematic():
             audio_path = img_info.get("audio_path")
             if audio_path and os.path.exists(audio_path):
                 print(f"Re-embedding audio from {audio_path} into aposematic image")
-                aposematic_img_path = reembed_audio_if_needed(
-                    aposematic_img_path, audio_path
+                # I/O-bound: file operations
+                aposematic_img_path = await run.io_bound(
+                    reembed_audio_if_needed,
+                    aposematic_img_path,
+                    audio_path
                 )
 
-            ipfs_hash = ipfs_add(aposematic_img_path)
+            # I/O-bound: network request to IPFS (using pure version)
+            ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, aposematic_img_path)
+
+            if not ipfs_hash:
+                ui.notify(f"Failed to upload to IPFS", type="negative")
+                continue
+
             app.storage.user["aposematic_img_hashes"].append(ipfs_hash)
 
-            # Store info for the new hash
+            # Store info for the new hash (storage update in main thread)
             app.storage.user[ipfs_hash] = {
                 "path": aposematic_img_path,
                 "name": f"aposematic_{img_name}",
@@ -1773,6 +1874,10 @@ async def process_aposematic():
             }
 
             ui.notify(f"Processed {img_name}")
+
+            # Yield control to event loop for UI updates between images
+            await asyncio.sleep(0)
+
         except Exception as e:
             print(f"Error processing {hash_value}: {e}")
             import traceback
@@ -1788,6 +1893,12 @@ async def process_aposematic():
 
 
 async def process_enciphering():
+    """
+    Process images with ImageMagick enciphering.
+
+    Uses run.cpu_bound (via new_enciphered_img) for CPU-intensive operations
+    and run.io_bound for I/O to prevent blocking the UI event loop.
+    """
     # Reset the enciphered image list (assignment ensures NiceGUI detects the change)
     app.storage.user["enciphered_img_hashes"] = []
 
@@ -1821,6 +1932,7 @@ async def process_enciphering():
                 continue
 
             print(f"Enciphering: {img_name}")
+            # CPU-bound: enciphering (new_enciphered_img already uses run.cpu_bound internally)
             enciphered_img_path = await new_enciphered_img(
                 img_name, img_path, cipher_key
             )
@@ -1830,17 +1942,22 @@ async def process_enciphering():
             audio_path = img_info.get("audio_path")
             if audio_path and os.path.exists(audio_path):
                 print(
-                    f"🔍 Skipping audio re-embedding for enciphered image (preserves encryption)"
+                    f"Skipping audio re-embedding for enciphered image (preserves encryption)"
                 )
-                print(f"🔍 Enciphered images should not be modified after encryption")
-                # 🎯 CRITICAL: Do NOT re-embed audio for enciphered images
+                print(f"Enciphered images should not be modified after encryption")
+                # CRITICAL: Do NOT re-embed audio for enciphered images
                 # create_audio_image() would overwrite and destroy enciphered data
-                # enciphered_img_path = reembed_audio_if_needed(enciphered_img_path, audio_path)
 
-            ipfs_hash = ipfs_add(enciphered_img_path)
+            # I/O-bound: network request to IPFS (using pure version)
+            ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, enciphered_img_path)
+
+            if not ipfs_hash:
+                ui.notify(f"Failed to upload to IPFS", type="negative")
+                continue
+
             app.storage.user["enciphered_img_hashes"].append(ipfs_hash)
 
-            # Store info for the new hash
+            # Store info for the new hash (storage update in main thread)
             app.storage.user[ipfs_hash] = {
                 "path": enciphered_img_path,
                 "name": f"enciphered_{img_name}",
@@ -1854,6 +1971,10 @@ async def process_enciphering():
             }
 
             ui.notify(f"Enciphered {img_name}")
+
+            # Yield control to event loop for UI updates between images
+            await asyncio.sleep(0)
+
         except Exception as e:
             print(f"Error enciphering {hash_value}: {e}")
             import traceback
@@ -1869,24 +1990,60 @@ async def process_enciphering():
 
 
 async def process_deciphering():
+    """
+    Process images with ImageMagick deciphering.
+
+    Uses run.cpu_bound for CPU-intensive decryption and run.io_bound for I/O
+    to prevent blocking the UI event loop.
+    """
     # Reset the deciphered image list (assignment ensures NiceGUI detects the change)
     app.storage.user["deciphered_img_hashes"] = []
 
+    cipher_key = app.storage.user.get("cipher_key")
+    if not cipher_key:
+        ui.notify("No cipher key set", type="warning")
+        return
+
     for hash_value in app.storage.user.get("enciphered_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
-        deciphered_img_path = new_deciphered_img(
+
+        # CPU-bound: deciphering is computationally intensive
+        deciphered_img_path = await run.cpu_bound(
+            new_deciphered_img,
             os.path.basename(img_path),  # file_name
             img_path,  # encrypted_img_path
-            app.storage.user["cipher_key"],  # cipher_key
+            cipher_key,  # cipher_key
         )
-        ipfs_hash = ipfs_add(deciphered_img_path)
+
+        # I/O-bound: network request to IPFS (using pure version)
+        ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, deciphered_img_path)
+
+        if not ipfs_hash:
+            ui.notify(f"Failed to upload to IPFS", type="negative")
+            continue
+
         app.storage.user["deciphered_img_hashes"].append(ipfs_hash)
+        # Store basic info for the deciphered hash
+        app.storage.user[ipfs_hash] = {
+            "path": deciphered_img_path,
+            "name": f"deciphered_{os.path.basename(img_path)}",
+            "original_hash": hash_value,
+        }
         ui.notify(f"Deciphered {hash_value}")
+
+        # Yield control to event loop for UI updates between images
+        await asyncio.sleep(0)
+
     persistent_save_data()
     render_gallery()
 
 
 async def process_shared_iptc_metadata():
+    """
+    Process images with shared IPTC metadata.
+
+    Uses run.io_bound for I/O operations to prevent blocking the UI event loop.
+    """
     # Reset the processed image list (assignment ensures NiceGUI detects the change)
     app.storage.user["processed_img_hashes"] = []
 
@@ -1894,9 +2051,15 @@ async def process_shared_iptc_metadata():
         img_path = app.storage.user[hash_value]["path"]
         img_name = app.storage.user[hash_value]["name"]
         iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data.to_exif_dict())
-        ipfs_hash = ipfs_add(iptc_img_path)
 
-        # Preserve audio metadata when processing
+        # I/O-bound: network request to IPFS (using pure version)
+        ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, iptc_img_path)
+
+        if not ipfs_hash:
+            ui.notify(f"Failed to upload to IPFS", type="negative")
+            continue
+
+        # Preserve audio metadata when processing (storage update in main thread)
         app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
         app.storage.user[ipfs_hash].update(
             {
@@ -1912,6 +2075,10 @@ async def process_shared_iptc_metadata():
 
         app.storage.user["processed_img_hashes"].append(ipfs_hash)
         ui.notify(f"Processed {hash_value}")
+
+        # Yield control to event loop for UI updates between images
+        await asyncio.sleep(0)
+
     persistent_save_data()
     render_gallery()
 
@@ -1989,10 +2156,15 @@ async def process_debug_deploy_gallery():
                         print(f"Recreating aposematic for: {img_name}")
                         from aiposematic import new_aposematic_img, SCRAMBLE_MODE
 
-                        aposematic = new_aposematic_img(
+                        # Get op_string before cpu_bound call (can't access storage in process)
+                        op_string = app.storage.user.get("op_string", "-^+")
+
+                        # CPU-bound: aposematic encoding
+                        aposematic = await run.cpu_bound(
+                            new_aposematic_img,
                             img_path,
                             cipher_key=cipher_key,
-                            op_string=app.storage.user.get("op_string", "-^+"),
+                            op_string=op_string,
                             scramble_mode=SCRAMBLE_MODE.BUTTERFLY,
                         )
 
@@ -2004,13 +2176,19 @@ async def process_debug_deploy_gallery():
                         audio_path = img_info.get("audio_path")
                         if audio_path and os.path.exists(audio_path):
                             print(
-                                f"🔊 Re-embedding audio from {audio_path} into aposematic image"
+                                f"Re-embedding audio from {audio_path} into aposematic image"
                             )
-                            aposematic_img_path = reembed_audio_if_needed(
+                            # I/O-bound: file operations
+                            aposematic_img_path = await run.io_bound(
+                                reembed_audio_if_needed,
                                 aposematic_img_path, audio_path
                             )
 
-                        ipfs_hash = ipfs_add(aposematic_img_path)
+                        # I/O-bound: IPFS upload (using pure version)
+                        ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, aposematic_img_path)
+                        if not ipfs_hash:
+                            print(f"Failed to upload aposematic image to IPFS")
+                            continue
                         # Fix: Use helper for proper persistence
                         append_to_storage_list("aposematic_img_hashes", ipfs_hash)
 
@@ -2042,8 +2220,13 @@ async def process_debug_deploy_gallery():
             creator_public_key=debug_public_key      # Debug as creator
         )
 
-        ipns_clean_folder(state)
+        # I/O-bound: clean IPFS folder (pure function, no storage access)
+        await run.io_bound(ipns_clean_folder, state)
+
+        # ipns_add_gallery_to_folder accesses storage, so run in main thread
+        # but yield control periodically
         ipns_add_gallery_to_folder(state)
+        await asyncio.sleep(0)
 
         if output_path:
             ui.notify(f"Successfully created data pod at: {output_path}")
@@ -2152,9 +2335,12 @@ async def process_pintheon_deploy_gallery():
             app, state, recipient_public_key
         )
 
-        # Perform local IPFS operations (same as debug flow)
-        ipns_clean_folder(state)
+        # I/O-bound: clean IPFS folder (pure function)
+        await run.io_bound(ipns_clean_folder, state)
+
+        # ipns_add_gallery_to_folder accesses storage, run in main thread
         ipns_add_gallery_to_folder(state)
+        await asyncio.sleep(0)
 
         if not output_path:
             ui.notify("No valid images found to create data pods", type="warning")
@@ -2164,7 +2350,10 @@ async def process_pintheon_deploy_gallery():
 
         # Create directory on Pintheon for this gallery state
         directory_name = f"gallery_{state}"
-        dir_result = pintheon_create_directory(directory_name, access_token)
+        # I/O-bound: create directory (pass access_token to make it pure)
+        dir_result = await run.io_bound(
+            pintheon_create_directory, directory_name, access_token
+        )
         if not dir_result:
             ui.notify(
                 f"Failed to create directory on Pintheon: {directory_name}",
@@ -2173,39 +2362,42 @@ async def process_pintheon_deploy_gallery():
             # Continue anyway - directory might already exist
 
         # Upload all gallery images to Pintheon
+        # Extract file info from storage BEFORE the loop (can't access in thread)
         hashes = app.storage.user.get(f"{state}_img_hashes", [])
+        files_to_upload = []
+        for hash_value in hashes:
+            file_info = app.storage.user.get(hash_value)
+            if file_info:
+                file_path = file_info.get("path")
+                file_name = file_info.get("name")
+                if file_path and os.path.exists(file_path):
+                    files_to_upload.append((hash_value, file_path, file_name))
+
         uploaded_files = []
         failed_uploads = []
 
-        for hash_value in hashes:
-            file_info = app.storage.user.get(hash_value)
-            if not file_info:
-                print(f"No file info found for hash: {hash_value}")
-                failed_uploads.append(hash_value)
-                continue
-
-            file_path = file_info.get("path")
-            if not file_path or not os.path.exists(file_path):
-                print(f"File not found: {file_path}")
-                failed_uploads.append(hash_value)
-                continue
-
-            # Upload to Pintheon with directory
-            result = pintheon_upload_file(
-                file_path, directory=directory_name, access_token=access_token
+        for hash_value, file_path, file_name in files_to_upload:
+            # I/O-bound: upload file (pass access_token to make it pure)
+            result = await run.io_bound(
+                pintheon_upload_file,
+                file_path, directory_name, False, access_token
             )
             if result:
                 uploaded_files.append(result)
                 print(
-                    f"Uploaded to Pintheon: {file_info.get('name')} -> {result.get('Hash')}"
+                    f"Uploaded to Pintheon: {file_name} -> {result.get('Hash')}"
                 )
             else:
                 failed_uploads.append(hash_value)
-                print(f"Failed to upload: {file_info.get('name')}")
+                print(f"Failed to upload: {file_name}")
 
-        # Upload the data pod JSON file to Pintheon
-        data_pod_result = pintheon_upload_file(
-            output_path, directory=directory_name, access_token=access_token
+            # Yield control for UI updates
+            await asyncio.sleep(0)
+
+        # I/O-bound: upload the data pod JSON file to Pintheon
+        data_pod_result = await run.io_bound(
+            pintheon_upload_file,
+            output_path, directory_name, False, access_token
         )
         if data_pod_result:
             print(f"Uploaded data pod to Pintheon: {data_pod_result.get('Hash')}")

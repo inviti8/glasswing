@@ -65,6 +65,8 @@ hiddenimports = [
     'pynacl',
     'pynacl.bindings',
     'pynacl.secret',
+    # Task runner for non-blocking operations
+    'task_runner',
 ]
 
 # Exclusions to reduce size
