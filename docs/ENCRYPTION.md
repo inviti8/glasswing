@@ -146,13 +146,21 @@ When deploying protected galleries, the data pod includes metadata needed for de
 {
     "version": "1.0",
     "type": "package",
-    "content_type": "aposematic",      // "original", "aposematic", "encrypted"
-    "recipient_public_key": "GABCD...", // For key derivation
-    "op_string": "-^+",                 // Aposematic only
-    "scramble_mode": 2,                 // Aposematic only
+    "content_type": "aposematic",           // "original", "aposematic", "encrypted"
+    "creator_public_key": "BASE64_KEY...",  // Creator's key for ECDH derivation
+    "recipient_public_key": "BASE64_KEY...", // Subscriber's key for authorization
+    "op_string": "-^+",                      // Aposematic only
+    "scramble_mode": 2,                      // Aposematic only
     "items": [...]
 }
 ```
+
+### Key Roles
+
+| Field | Role in ECDH |
+|-------|--------------|
+| `creator_public_key` | Subscriber uses this + their private key to derive shared secret |
+| `recipient_public_key` | Verifies subscriber is authorized (optional check) |
 
 ## Browser-Side Decoding
 

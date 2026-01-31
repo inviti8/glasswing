@@ -2,7 +2,7 @@ from nicegui import binding, app, ui, run
 from typing import Callable, Awaitable, Any, Union
 import asyncio
 from stellar_sdk import Keypair
-from hvym_stellar import  Stellar25519KeyPair, StellarSharedKey
+from hvym_stellar import Stellar25519KeyPair, StellarSharedKey
 from img_edit import iptc_set_field_value, iptc_get_field_value, iptc_delete_field, new_iptc_img, IPTC_FIELD_CONFIG
 from iptcinfo3 import IPTCInfo
 import os
@@ -14,14 +14,17 @@ import exiv2
 import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
+from main import choose_files
+from audio_tokens import is_audio_file
+from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
-def create_shared_key(reciever_public_key):
+def create_shared_key(receiver_public_key):
     stellar_secret = app.storage.user.get('stellar_secret', Keypair.random().secret)
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
 
 
-    shared_key = StellarSharedKey(hvym_keys, reciever_public_key)
+    shared_key = StellarSharedKey(hvym_keys, receiver_public_key)
     app.storage.user['cipher_key'] = shared_key.shared_secret_as_hex()
     return shared_key.shared_secret_as_hex()
 
@@ -319,33 +322,106 @@ def assign_iptc_dialog(on_close, process_func):
                 btn
     return dialog
 
-async def process_dialog(process_func: Union[Callable, Callable[..., Awaitable]]):
+async def process_dialog(
+    process_func: Union[Callable, Callable[..., Awaitable]],
+    title: str = "Processing...",
+    task_type: TaskType = TaskType.IO,
+    show_cancel: bool = False
+):
+    """
+    Display a processing dialog while running a blocking task.
+
+    This function properly handles blocking operations by running them
+    in thread/process pools, preventing the "Connection lost" popup.
+
+    Args:
+        process_func: The function to execute (sync or async with blocking calls)
+        title: Dialog title message
+        task_type: TaskType.IO for I/O-bound, TaskType.CPU for CPU-intensive
+        show_cancel: Whether to show a cancel button
+
+    Note:
+        For async functions that contain blocking operations (like ImageMagick
+        or requests calls), you should refactor them to be sync functions
+        and pass task_type appropriately. The async wrapper doesn't help
+        if the inner operations are blocking.
+    """
+    runner = TaskRunner()
+
     with ui.dialog() as dialog:
-        with ui.card().classes('w-full max-w-xl'):
-            with ui.row().classes('items-center'):
-                spinner = ui.spinner('dots', size='lg', color='primary')
-                status = ui.label('Processing...').classes('text-md font-medium')
-    
+        with ui.card().classes('w-full max-w-md'):
+            with ui.column().classes('w-full gap-3'):
+                with ui.row().classes('items-center gap-3'):
+                    spinner = ui.spinner('dots', size='lg', color='primary')
+                    status = ui.label(title).classes('text-lg font-medium')
+
+                if show_cancel:
+                    with ui.row().classes('w-full justify-end'):
+                        def on_cancel():
+                            runner.cancel()
+                            status.set_text("Cancelling...")
+                        ui.button('Cancel', on_click=on_cancel).props('flat color=negative')
+
     async def run_process():
         try:
             if asyncio.iscoroutinefunction(process_func):
-                # For async functions, await them directly
+                # Async function - but may still contain blocking calls
+                # We await it directly since we can't easily wrap async funcs
+                # The function itself should use run.io_bound/cpu_bound internally
                 result = await process_func()
             else:
-                # For sync functions, run in a thread
-                result = await run.io_bound(process_func)
-                
+                # Sync function - run in appropriate executor
+                result = await runner.run(process_func, task_type=task_type)
+
             dialog.close()
             return result
         except Exception as e:
             dialog.close()
             ui.notify(f'Error: {str(e)}', type='negative')
             raise
-    
-    # Start the process after the dialog is shown
-    dialog.on('show', run_process)
+
     dialog.open()
-    return 
+    # Small delay to ensure dialog renders before heavy work starts
+    await asyncio.sleep(0.05)
+    result = await run_process()
+    return result
+
+
+async def process_batch_dialog(
+    items: List[Any],
+    process_func: Callable[[Any], Any],
+    title: str = "Processing...",
+    task_type: TaskType = TaskType.IO,
+    item_label: str = "item",
+    stop_on_error: bool = False
+) -> List[TaskResult]:
+    """
+    Display a progress dialog while processing a batch of items.
+
+    Args:
+        items: List of items to process
+        process_func: Sync function to process each item
+        title: Dialog title
+        task_type: TaskType.IO or TaskType.CPU
+        item_label: Label for progress (e.g., "image", "file")
+        stop_on_error: Stop processing on first error
+
+    Returns:
+        List of TaskResult objects with success/failure for each item
+    """
+    async with TaskDialog(
+        title=title,
+        show_progress=True,
+        show_cancel=True
+    ) as dialog:
+        results = await dialog.run_batch(
+            items=items,
+            process_func=process_func,
+            task_type=task_type,
+            item_label=item_label,
+            stop_on_error=stop_on_error
+        )
+        return results 
     
 async def add_body_text_dialog(img_name, img_path, hash_value, on_save):
     selected_type = ui.select(['IPTC', 'XMP'], value='IPTC').classes('w-full')
@@ -520,6 +596,159 @@ def select_channel_dialog(on_select):
                 ui.button('Cancel', on_click=dialog.close).props('flat')
 
     dialog.open()
+
+
+def edit_audio_info(hash_value, on_close, process_func):
+    """Enhanced dialog for embedding audio into an existing image with token support.
+
+    Follows the process_dialog pattern used by aposematic_dialog and cipher_dialog.
+
+    Args:
+        hash_value: Image hash to embed audio into
+        on_close: Callback when dialog closes (typically process_dialog)
+        process_func: Function to process the audio embedding
+    """
+    # Get image info
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+
+    # Get recipient options for token sharing
+    recipient_options = get_recipient_options()
+
+    # Track if user confirmed (vs cancelled)
+    confirmed = {'value': False}
+
+    def on_confirm():
+        """Store values and mark as confirmed before closing."""
+        # Validate audio file
+        if not audio_input.value:
+            ui.notify('Please select an audio file', type='warning')
+            return
+
+        # Validate recipient for token method
+        if audio_method.value == 'token' and not recipient_select.value:
+            ui.notify('Please select a recipient for token sharing', type='warning')
+            return
+
+        # Store values for process_func to use
+        app.storage.user['_audio_embed_params'] = {
+            'img_name': img_name,
+            'img_path': img_path,
+            'hash_value': hash_value,
+            'audio_file': audio_input.value,
+            'audio_method': audio_method.value,
+            'receiver_public_key': recipient_select.value if audio_method.value == 'token' else None,
+            'expiry_option': expiry_select.value if audio_method.value == 'token' else 'never'
+        }
+        confirmed['value'] = True
+        dialog.close()
+
+    async def on_dialog_hide():
+        """Called when dialog closes - trigger processing if confirmed."""
+        if confirmed['value']:
+            await on_close(process_func)
+
+    with ui.dialog().on('hide', on_dialog_hide) as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Add Audio to Image').classes('text-lg font-semibold mb-4')
+            ui.label(f'Image: {img_name}').classes('text-sm mb-4')
+
+            # Audio method selection
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.label('Audio Method:').classes('font-medium')
+                audio_method = ui.select(
+                    options={'metadata': 'Metadata (Standard)', 'token': 'Token (Secure Sharing)'},
+                    value='metadata'
+                ).classes('flex-grow')
+
+            # Audio file selection - following Andromica pattern
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.label('Audio File:').classes('font-medium')
+                audio_input = ui.input(
+                    placeholder='Select audio file (WAV, MP3, FLAC, OGG)',
+                    value=''
+                ).props('clearable').classes('flex-grow')
+                ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input)).props('flat')
+
+            # Token sharing options (shown only when token method is selected)
+            with ui.column().classes('w-full mb-4') as token_options:
+                ui.label('Token Sharing Options').classes('font-medium mb-2')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Recipient:').classes('font-medium')
+                    recipient_select = ui.select(
+                        options=recipient_options,
+                        value=list(recipient_options.keys())[0] if recipient_options else ''
+                    ).classes('flex-grow')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Token Expiry:').classes('font-medium')
+                    expiry_select = ui.select(
+                        options={
+                            'never': 'Never',
+                            '1h': '1 Hour',
+                            '24h': '24 Hours',
+                            '7d': '7 Days',
+                            '30d': '30 Days',
+                            '365d': '1 Year'
+                        },
+                        value='never'
+                    ).classes('flex-grow')
+
+                ui.label('Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
+
+            # Preview section
+            with ui.column().classes('w-full mb-4'):
+                ui.label('Preview:').classes('font-medium mb-2')
+                audio_info = ui.label('No audio file selected').classes('text-sm text-gray-600')
+
+            # Update token options visibility based on method selection
+            def update_token_options():
+                if audio_method.value == 'token':
+                    token_options.classes('remove', 'hidden')
+                else:
+                    token_options.classes('add', 'hidden')
+
+            audio_method.on('change', update_token_options)
+
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
+                ui.button('Embed Audio', on_click=on_confirm).props('color=primary')
+
+    dialog.open()
+    return dialog
+
+def is_audio(file):
+    """Check if file is an audio format."""
+    return is_audio_file(file)
+
+async def handle_audio_selection(input_field):
+    """Handle audio file selection following Andromica pattern"""
+    try:
+        files = await choose_files()
+        audio_files = [file for file in files if is_audio(file)]
+        if audio_files:
+            input_field.value = audio_files[0]
+        else:
+            ui.notify('Please select a valid audio file (WAV, MP3, FLAC, OGG)', type='warning')
+    except Exception as e:
+        ui.notify(f'Error selecting file: {str(e)}', type='negative')
+
+def browse_audio_file(input_field):
+    """Browse for audio file following Andromica pattern"""
+    async def handle_file_selection():
+        try:
+            files = await choose_files()
+            audio_files = [file for file in files if is_audio(file)]
+            if audio_files:
+                input_field.value = audio_files[0]
+            else:
+                ui.notify('Please select a valid audio file (WAV, MP3, FLAC, OGG)', type='warning')
+        except Exception as e:
+            ui.notify(f'Error selecting file: {str(e)}', type='negative')
+    
+    return handle_file_selection
 
 def gallery_info_dialog():
     """Dialog for setting gallery title and description."""

@@ -15,3 +15,7 @@ dist/
 # Generated icons
 /icon.ico
 /icon.icns
+
+# Exports
+/exports/
+

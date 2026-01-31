@@ -1,0 +1,43 @@
+{
+  "uri": "urn:ninjs:v2:com.example.gallery:enciphered",
+  "version": "http://iptc.org/std/ninjs/2.1",
+  "content_created": "2026-01-22T22:36:49.112517",
+  "items": [
+    {
+      "type": "enciphered_image",
+      "guid": "urn:uuid:QmcFoS59AwDx6gPHjTuiihkdnsMaubsWh3kKihXnwMczaX",
+      "version": "1",
+      "language": "en",
+      "pubstatus": "usable",
+      "title": "enciphered_processed_audio_app.png",
+      "byline": "",
+      "creditline": "",
+      "copyright": "",
+      "ednote": "Type: enciphered, Audio method: metadata",
+      "renditions": [
+        {
+          "name": "original",
+          "href": "http://localhost:8080/ipfs/QmcFoS59AwDx6gPHjTuiihkdnsMaubsWh3kKihXnwMczaX",
+          "mimetype": "image/png",
+          "width": 0,
+          "height": 0
+        }
+      ],
+      "imageType": "enciphered",
+      "hasAudio": true,
+      "audioMethod": "metadata"
+    }
+  ],
+  "creator_public_key": "9SMsIWB5N9VB-vigR4G3JeKVG4CQUynS1dGbuI-4JAA=",
+  "recipient_public_key": "ugWvOpLNTce3XQuxNC9vyVwLmr9j5Vp3eFuVktiNfF4=",
+  "content_type": "mixed",
+  "audio_token_images": [],
+  "type_distribution": {
+    "raw": 0,
+    "processed": 0,
+    "aposematic": 0,
+    "enciphered": 1,
+    "total_with_audio": 1,
+    "audio_token_count": 0
+  }
+}

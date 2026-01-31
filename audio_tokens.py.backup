@@ -1,0 +1,203 @@
+"""
+Audio Token Implementation for Shared Audio System
+
+Uses Stellar25519KeyPair for ECDH key exchange.
+Compatible with existing image encryption flow.
+"""
+
+import base64
+from typing import Optional, Tuple
+
+from hvym_stellar import (
+    StellarSharedKeyTokenBuilder,
+    StellarSharedKeyTokenVerifier,
+    Stellar25519KeyPair,
+    TokenType
+)
+from stellar_sdk.keypair import Keypair
+
+from png_chunks import embed_audio_token, extract_audio_token
+
+
+# Audio format signatures
+AUDIO_SIGNATURES = {
+    b'RIFF': 'wav',
+    b'ID3': 'mp3',
+    b'OggS': 'ogg',
+    b'fLaC': 'flac',
+    b'\xff\xfb': 'mp3',
+    b'\xff\xf3': 'mp3',
+    b'\xff\xf2': 'mp3',
+}
+
+SUPPORTED_AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac', '.ogg']
+
+
+def detect_audio_format(audio_data: bytes) -> str:
+    """Detect audio format from binary data."""
+    if not audio_data:
+        return 'unknown'
+
+    for sig, format_name in AUDIO_SIGNATURES.items():
+        if audio_data.startswith(sig):
+            return format_name
+
+    return 'unknown'
+
+
+def is_audio_file(file_path: str) -> bool:
+    """Check if file is a supported audio format."""
+    import os
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext in SUPPORTED_AUDIO_EXTENSIONS
+
+
+def create_audio_token(sender_kp: Stellar25519KeyPair, receiver_pub: str,
+                       audio_base64: str, expires_in: int = 3600) -> str:
+    """
+    Create encrypted macaroon token containing audio data.
+
+    Args:
+        sender_kp: Sender's Stellar25519KeyPair
+        receiver_pub: Receiver's public key string
+        audio_base64: Base64-encoded audio data
+        expires_in: Token expiration time (seconds)
+
+    Returns:
+        str: Serialized macaroon token
+    """
+    token_builder = StellarSharedKeyTokenBuilder(
+        sender_kp,
+        receiver_pub,
+        token_type=TokenType.SECRET,
+        secret=audio_base64,
+        expires_in=expires_in,
+        caveats={"audio": "sharing"}
+    )
+    return token_builder.serialize()
+
+
+def extract_audio_from_token(receiver_kp: Stellar25519KeyPair,
+                             serialized_token: str) -> Tuple[Optional[str], bool]:
+    """
+    Extract audio data from macaroon token.
+
+    Args:
+        receiver_kp: Receiver's Stellar25519KeyPair
+        serialized_token: Serialized macaroon token
+
+    Returns:
+        tuple: (audio_base64, valid)
+    """
+    try:
+        verifier = StellarSharedKeyTokenVerifier(
+            receiver_kp,
+            serialized_token.encode('utf-8'),
+            TokenType.SECRET,
+            caveats={"audio": "sharing"}
+        )
+        audio_base64 = verifier.secret()
+        return audio_base64, True
+    except ValueError as e:
+        print(f"Failed to extract audio: {e}")
+        return None, False
+
+
+def get_user_keypair(app) -> Stellar25519KeyPair:
+    """
+    Get current user's Stellar keypair from storage.
+
+    Args:
+        app: NiceGUI app instance with storage
+
+    Returns:
+        Stellar25519KeyPair: User's wrapped keypair
+    """
+    stellar_secret = app.storage.user.get('stellar_secret')
+    if not stellar_secret:
+        raise ValueError("No stellar_secret found in user storage")
+
+    stellar_kp = Keypair.from_secret(stellar_secret)
+    return Stellar25519KeyPair(stellar_kp)
+
+
+def get_user_public_key(app) -> str:
+    """
+    Get current user's public key.
+
+    Args:
+        app: NiceGUI app instance
+
+    Returns:
+        str: Base64-encoded public key
+    """
+    return get_user_keypair(app).public_key()
+
+
+def create_token_audio_image(audio_file: str, image_file: str,
+                             sender_kp: Stellar25519KeyPair,
+                             receiver_pub: str,
+                             expires_in: int = 3600) -> str:
+    """
+    Create audio image with encrypted token.
+
+    Args:
+        audio_file: Path to audio file
+        image_file: Path to base image
+        sender_kp: Sender's keypair
+        receiver_pub: Receiver's public key
+        expires_in: Token expiration time
+
+    Returns:
+        str: Path to image with embedded token
+    """
+    import os
+
+    # Read and encode audio
+    with open(audio_file, 'rb') as f:
+        audio_data = f.read()
+    audio_base64 = base64.b64encode(audio_data).decode('ascii')
+
+    # Create encrypted token
+    token = create_audio_token(sender_kp, receiver_pub, audio_base64, expires_in)
+
+    # Determine output path (matching metadata flow pattern)
+    base_name = os.path.splitext(os.path.basename(image_file))[0]
+    output_path = os.path.join(os.path.dirname(image_file) or '.', f'{base_name}_audio.png')
+
+    # Embed in image
+    return embed_audio_token(image_file, token, output_path)
+
+
+def extract_token_audio(image_path: str, receiver_kp: Stellar25519KeyPair) -> Tuple[Optional[bytes], str]:
+    """
+    Extract audio data from token-based audio image.
+
+    Args:
+        image_path: Path to image with embedded token
+        receiver_kp: Receiver's keypair for decryption
+
+    Returns:
+        tuple: (audio_bytes, format) or (None, None) if extraction fails
+    """
+    # Extract token from image
+    token = extract_audio_token(image_path)
+    if not token:
+        return None, None
+
+    # Extract audio from token
+    audio_base64, valid = extract_audio_from_token(receiver_kp, token)
+    if not valid or not audio_base64:
+        return None, None
+
+    # Decode audio
+    audio_data = base64.b64decode(audio_base64)
+    audio_format = detect_audio_format(audio_data)
+
+    return audio_data, audio_format
+
+
+# Aliases for backward compatibility
+get_current_user_stellar_keypair = get_user_keypair
+get_current_user_stellar_public_key = get_user_public_key
+create_shared_audio_image = create_token_audio_image

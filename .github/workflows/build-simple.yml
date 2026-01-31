@@ -45,8 +45,15 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller pillow
 
+    - name: Verify audio dependencies
+      run: |
+        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+
     - name: Generate icons
       run: python scripts/generate_icons.py
+
+    - name: Verify audio features
+      run: python scripts/verify_audio_build.py
 
     - name: Build Linux executable
       run: python scripts/build_cross_platform.py
@@ -75,8 +82,15 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller pillow
 
+    - name: Verify audio dependencies
+      run: |
+        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+
     - name: Generate icons
       run: python scripts/generate_icons.py
+
+    - name: Verify audio features
+      run: python scripts/verify_audio_build.py
 
     - name: Build Windows executable
       run: python scripts/build_cross_platform.py
@@ -116,8 +130,15 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller pillow icnsutil
 
+    - name: Verify audio dependencies
+      run: |
+        python -c "import biscuit_auth; import pynacl; import hvym_stellar; print('Audio deps OK')"
+
     - name: Generate icons
       run: python scripts/generate_icons.py
+
+    - name: Verify audio features
+      run: python scripts/verify_audio_build.py
 
     - name: Build macOS executable
       run: python scripts/build_cross_platform.py

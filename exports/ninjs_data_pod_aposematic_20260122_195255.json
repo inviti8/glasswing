@@ -1,0 +1,18 @@
+{
+  "uri": "urn:ninjs:v2:com.example.gallery:aposematic",
+  "version": "http://iptc.org/std/ninjs/2.1",
+  "content_created": "2026-01-22T19:52:55.528433",
+  "items": [],
+  "creator_public_key": "3iCh2bJUgGKxy5-b5M2TzG6IJZNeLMoADWTGJA4t-0c=",
+  "recipient_public_key": "3iCh2bJUgGKxy5-b5M2TzG6IJZNeLMoADWTGJA4t-0c=",
+  "content_type": "mixed",
+  "audio_token_images": [],
+  "type_distribution": {
+    "raw": 0,
+    "processed": 0,
+    "aposematic": 0,
+    "enciphered": 0,
+    "total_with_audio": 0,
+    "audio_token_count": 0
+  }
+}

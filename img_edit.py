@@ -1,4 +1,12 @@
+"""
+Image editing operations for Andromica.
 
+Functions are structured as sync + async pairs:
+- _sync functions: Pure blocking operations (for use with run.cpu_bound)
+- async functions: Wrappers that run sync versions in process pool
+
+This prevents the NiceGUI "Connection lost" issue during image processing.
+"""
 
 import tempfile
 import os
@@ -8,6 +16,7 @@ from enum import Enum
 import exiftool
 import shutil
 from pathlib import Path
+from nicegui import run
 
 WATERMARK_POSITIONS = {
     1: 'bottom_right',
@@ -17,14 +26,20 @@ WATERMARK_POSITIONS = {
     5: 'center'
 }
 
-async def new_watermarked_img(file_name, base_img_path, wm_img_path, amount=0.2, position='bottom_right', padding=0.05, opacity=1.0):
+
+def _watermark_img_sync(file_name, base_img_path, wm_img_path, amount=0.2, position='bottom_right', padding=0.05, opacity=1.0):
+    """
+    Synchronous watermarking operation. Runs in process pool via run.cpu_bound.
+
+    This is the actual blocking work - ImageMagick/Wand operations.
+    """
     # Create a clean temp file path with the original extension
     base_name, ext = os.path.splitext(os.path.basename(file_name))
     temp_dir = tempfile.gettempdir()
     temp_path = os.path.join(temp_dir, f"processed_{base_name}{ext}")
     # Ensure the directory exists
     os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-    
+
     try:
         with Image(filename=base_img_path) as base:
             # Store original base alpha channel if it exists
@@ -34,28 +49,28 @@ async def new_watermarked_img(file_name, base_img_path, wm_img_path, amount=0.2,
                 # Create a copy of the base image for alpha mask
                 alpha_mask = base.clone()
                 alpha_mask.alpha_channel = 'extract'
-            
+
             with Image(filename=wm_img_path) as watermark:
                 # Calculate new dimensions maintaining aspect ratio
                 base_width, base_height = base.width, base.height
                 wm_ratio = watermark.width / watermark.height
-                
+
                 if base_width > base_height:
                     new_width = int(base_width * amount)
                     new_height = int(new_width / wm_ratio)
                 else:
                     new_height = int(base_height * amount)
                     new_width = int(new_height * wm_ratio)
-                
+
                 # Resize watermark
                 watermark.resize(new_width, new_height)
-                
+
                 # Apply opacity if needed
                 if 0 < opacity < 1.0:
                     watermark.evaluate(operator='multiply', value=opacity, channel='alpha')
 
-                padded_amount = int(min(base_width, base_height) * padding)  
-                
+                padded_amount = int(min(base_width, base_height) * padding)
+
                 if position == 'top_left':
                     x = padded_amount
                     y = padded_amount
@@ -71,27 +86,27 @@ async def new_watermarked_img(file_name, base_img_path, wm_img_path, amount=0.2,
                 else:  # bottom_right (default)
                     x = base_width - new_width - padded_amount
                     y = base_height - new_height - padded_amount
-                
+
                 # Create a copy of the base image
                 result = base.clone()
-                
+
                 # Composite the watermark
                 result.composite(watermark, left=x, top=y, operator='over')
-                
+
                 # If original had alpha, restore it
                 if base_has_alpha and alpha_mask is not None:
                     # Make sure result has alpha channel
                     result.alpha_channel = 'on'
                     # Apply the original alpha mask
                     result.composite(alpha_mask, left=0, top=0, operator='copy_alpha')
-                
+
                 # Save the result
                 result.save(filename=temp_path)
-                
+
         return temp_path
-                
+
     except Exception as e:
-        print(f"Error in new_watermarked_img: {str(e)}")
+        print(f"Error in _watermark_img_sync: {str(e)}")
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
@@ -99,47 +114,87 @@ async def new_watermarked_img(file_name, base_img_path, wm_img_path, amount=0.2,
         if 'alpha_mask' in locals() and alpha_mask is not None:
             alpha_mask.close()
 
-async def new_enciphered_img(file_name, base_img_path, cipher_key):
-    # Create a clean temp file path with the original extension
+
+async def new_watermarked_img(file_name, base_img_path, wm_img_path, amount=0.2, position='bottom_right', padding=0.05, opacity=1.0):
+    """
+    Async wrapper for watermarking. Runs in process pool to avoid blocking UI.
+    """
+    return await run.cpu_bound(
+        _watermark_img_sync,
+        file_name, base_img_path, wm_img_path,
+        amount, position, padding, opacity
+    )
+
+
+def _encipher_img_sync(file_name, base_img_path, cipher_key):
+    """
+    Synchronous enciphering operation. Runs in process pool via run.cpu_bound.
+    """
     base_name, ext = os.path.splitext(os.path.basename(file_name))
     temp_dir = tempfile.gettempdir()
     temp_path = os.path.join(temp_dir, f"enciphered_{base_name}{ext}")
-    # Ensure the directory exists
     os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-    
+
     try:
         with Image(filename=base_img_path) as img:
             img.encipher(cipher_key)
             img.save(filename=temp_path)
-            
         return temp_path
-        
     except Exception as e:
-        print(f"Error in new_enciphered_img: {str(e)}")
+        print(f"Error in _encipher_img_sync: {str(e)}")
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
 
-def new_deciphered_img(file_name, encrypted_img_path, cipher_key):
-    # Create a clean temp file path with the original extension
+
+async def new_enciphered_img(file_name, base_img_path, cipher_key):
+    """
+    Async wrapper for enciphering. Runs in process pool to avoid blocking UI.
+    """
+    return await run.cpu_bound(
+        _encipher_img_sync,
+        file_name, base_img_path, cipher_key
+    )
+
+
+def _decipher_img_sync(file_name, encrypted_img_path, cipher_key):
+    """
+    Synchronous deciphering operation. Can be used with run.cpu_bound if needed.
+    """
     base_name, ext = os.path.splitext(os.path.basename(file_name))
     temp_dir = tempfile.gettempdir()
     temp_path = os.path.join(temp_dir, f"deciphered_{base_name}{ext}")
-    # Ensure the directory exists
     os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-    
+
     try:
         with Image(filename=encrypted_img_path) as img:
             img.decipher(cipher_key)
             img.save(filename=temp_path)
-            
         return temp_path
-        
     except Exception as e:
-        print(f"Error in new_deciphered_img: {str(e)}")
+        print(f"Error in _decipher_img_sync: {str(e)}")
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
+
+
+def new_deciphered_img(file_name, encrypted_img_path, cipher_key):
+    """
+    Synchronous deciphering. Use new_deciphered_img_async for non-blocking version.
+    Kept for backward compatibility.
+    """
+    return _decipher_img_sync(file_name, encrypted_img_path, cipher_key)
+
+
+async def new_deciphered_img_async(file_name, encrypted_img_path, cipher_key):
+    """
+    Async wrapper for deciphering. Runs in process pool to avoid blocking UI.
+    """
+    return await run.cpu_bound(
+        _decipher_img_sync,
+        file_name, encrypted_img_path, cipher_key
+    )
+
 
 IPTC_FIELD_CONFIG = {
     'Object Name': {'label': 'Title', 'icon': 'title', 'type': 'text'},
