@@ -50,6 +50,7 @@ def verify_audio_token_creation():
     print("\nVerifying HVYMDataToken creation...")
 
     try:
+        import base64
         from hvym_stellar import HVYMDataToken, Stellar25519KeyPair
         from stellar_sdk import Keypair
 
@@ -59,14 +60,15 @@ def verify_audio_token_creation():
 
         sender_keys = Stellar25519KeyPair(sender_kp)
 
-        # Get raw 32-byte public key (not Stellar-formatted string)
+        # Get raw 32-byte public key and encode as base64 URL-safe string
         receiver_pub_bytes = receiver_kp.raw_public_key()
+        receiver_pub_b64 = base64.urlsafe_b64encode(receiver_pub_bytes).decode('utf-8')
 
         # Create test token
         test_data = b"test audio data"
         token = HVYMDataToken.create_from_bytes(
             senderKeyPair=sender_keys,
-            receiverPub=receiver_pub_bytes,
+            receiverPub=receiver_pub_b64,
             file_data=test_data,
             filename="test.wav",
             expires_in=None  # No expiry
