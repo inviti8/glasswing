@@ -23,6 +23,7 @@ def verify_audio_modules():
         ('hvym_stellar', 'HVYM Stellar cryptography'),
         ('biscuit_auth', 'Biscuit token library'),
         ('pynacl', 'NaCl cryptography'),
+        ('task_runner', 'Non-blocking task execution'),
     ]
 
     all_ok = True
