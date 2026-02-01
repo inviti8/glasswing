@@ -2,6 +2,7 @@
 Andromica - Audio Image Processing with Token Support
 """
 
+import argparse
 import time
 import base64
 import os
@@ -101,8 +102,28 @@ gateway_url = ""
 update_browser_content = None
 pending_browser_html = None
 
+# Command-line argument parsing
+def parse_args():
+    parser = argparse.ArgumentParser(description="Andromica - Audio Image Processing")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode for the native webview (opens DevTools)"
+    )
+    parser.add_argument(
+        "--console",
+        action="store_true",
+        help="Show console output (useful for debugging)"
+    )
+    # Parse known args to avoid conflicts with NiceGUI/uvicorn args
+    args, _ = parser.parse_known_args()
+    return args
+
+cli_args = parse_args()
+
 app.native.window_args["resizable"] = True
-# app.native.start_args["debug"] = True
+if cli_args.debug:
+    app.native.start_args["debug"] = True
 app.native.settings["ALLOW_DOWNLOADS"] = True
 app.native.window_args["title"] = "Andromica"
 # app.native.window_args['frameless'] = True

@@ -25,7 +25,7 @@ datas = [
 # Platform-specific settings
 if sys.platform == 'win32':
     icon_file = str(spec_root / 'icon.ico')
-    console = True  # Enable console for debugging
+    console = False  # Disabled by default, use --console flag to show
 elif sys.platform == 'darwin':
     icon_file = str(spec_root / 'icon.icns')
     console = False
