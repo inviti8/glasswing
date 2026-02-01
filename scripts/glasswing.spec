@@ -25,7 +25,7 @@ datas = [
 # Platform-specific settings
 if sys.platform == 'win32':
     icon_file = str(spec_root / 'icon.ico')
-    console = False
+    console = True  # Enable console for debugging
 elif sys.platform == 'darwin':
     icon_file = str(spec_root / 'icon.icns')
     console = False
@@ -150,7 +150,7 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=False,  # Disabled - UPX corrupts JS files like echart assets
         upx_exclude=[],
         runtime_tmpdir=None,
         console=console,

@@ -14,7 +14,6 @@ import exiv2
 import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
-from main import choose_files
 from audio_tokens import is_audio_file
 from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
@@ -23,15 +22,22 @@ __all__ = [
     'create_shared_key',
     'get_recipient_options',
     'markdown_block_dialog',
+    'edit_metadata_dialog',
     'iptc_dialog',
     'cipher_dialog',
     'aposematic_dialog',
     'assign_iptc_dialog',
+    'process_dialog',
+    'process_batch_dialog',
+    'add_body_text_dialog',
+    'add_subscriber_dialog',
+    'add_subscription_dialog',
     'view_subscriptions_dialog',
     'select_channel_dialog',
     'edit_audio_info',
     'is_audio',
     'browse_audio_file',
+    'handle_audio_selection',
     'gallery_info_dialog',
 ]
 
@@ -499,9 +505,28 @@ async def add_subscription_dialog(on_save):
     dialog.open()
     return
 
-def view_subscriptions_dialog():
-    """Dialog for viewing and managing subscriptions."""
+def view_subscriptions_dialog(fetch_subscription_content=None, remove_subscription=None):
+    """
+    Dialog for viewing and managing subscriptions.
+
+    Args:
+        fetch_subscription_content: Callback to fetch subscription content
+        remove_subscription: Callback to remove a subscription
+    """
     subscriptions = app.storage.user.get('subscriptions', [])
+
+    async def fetch_and_notify(name, dialog):
+        """Helper to fetch subscription content and show notification."""
+        dialog.close()
+        if fetch_subscription_content:
+            await fetch_subscription_content(name)
+
+    async def remove_and_refresh(name, dialog):
+        """Helper to remove subscription and refresh dialog."""
+        if remove_subscription:
+            await remove_subscription(name)
+        dialog.close()
+        view_subscriptions_dialog(fetch_subscription_content, remove_subscription)
 
     with ui.dialog() as dialog:
         with ui.card().classes('w-full max-w-2xl'):
@@ -527,25 +552,13 @@ def view_subscriptions_dialog():
 
     dialog.open()
 
-async def fetch_and_notify(name, dialog):
-    """Helper to fetch subscription content and show notification."""
-    from main import fetch_subscription_content
-    dialog.close()
-    await fetch_subscription_content(name)
-
-async def remove_and_refresh(name, dialog):
-    """Helper to remove subscription and refresh dialog."""
-    from main import remove_subscription
-    await remove_subscription(name)
-    dialog.close()
-    view_subscriptions_dialog()
-
-def select_channel_dialog(on_select):
+def select_channel_dialog(on_select, fetch_subscription_channels=None):
     """
     Dialog for selecting a channel (data pod) from a subscription.
 
     Args:
         on_select: Callback function(subscription_name, channel_info) when a channel is selected
+        fetch_subscription_channels: Callback to fetch channels for a subscription
     """
     subscriptions = app.storage.user.get('subscriptions', [])
     fetched_subscriptions = app.storage.user.get('fetched_subscriptions', {})
@@ -584,8 +597,7 @@ def select_channel_dialog(on_select):
                         ui.label('Loading channels...').classes('text-gray-500')
 
                     # Fetch channels from the subscription
-                    from main import fetch_subscription_channels
-                    channels = await fetch_subscription_channels(sub_name)
+                    channels = await fetch_subscription_channels(sub_name) if fetch_subscription_channels else []
 
                     channel_container.clear()
                     with channel_container:
@@ -615,7 +627,7 @@ def select_channel_dialog(on_select):
     dialog.open()
 
 
-def edit_audio_info(hash_value, on_close, process_func):
+def edit_audio_info(hash_value, on_close, process_func, choose_files=None):
     """Enhanced dialog for embedding audio into an existing image with token support.
 
     Follows the process_dialog pattern used by aposematic_dialog and cipher_dialog.
@@ -624,6 +636,7 @@ def edit_audio_info(hash_value, on_close, process_func):
         hash_value: Image hash to embed audio into
         on_close: Callback when dialog closes (typically process_dialog)
         process_func: Function to process the audio embedding
+        choose_files: Async callback to open file dialog
     """
     # Get image info
     img_path = app.storage.user[hash_value]['path']
@@ -685,7 +698,7 @@ def edit_audio_info(hash_value, on_close, process_func):
                     placeholder='Select audio file (WAV, MP3, FLAC, OGG)',
                     value=''
                 ).props('clearable').classes('flex-grow')
-                ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input)).props('flat')
+                ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input, choose_files)).props('flat')
 
             # Token sharing options (shown only when token method is selected)
             with ui.column().classes('w-full mb-4') as token_options:
@@ -740,8 +753,17 @@ def is_audio(file):
     """Check if file is an audio format."""
     return is_audio_file(file)
 
-async def handle_audio_selection(input_field):
-    """Handle audio file selection following Andromica pattern"""
+async def handle_audio_selection(input_field, choose_files=None):
+    """
+    Handle audio file selection following Andromica pattern.
+
+    Args:
+        input_field: The input field to update with selected file
+        choose_files: Async callback to open file dialog
+    """
+    if not choose_files:
+        ui.notify('File selection not available', type='warning')
+        return
     try:
         files = await choose_files()
         audio_files = [file for file in files if is_audio(file)]
@@ -752,9 +774,18 @@ async def handle_audio_selection(input_field):
     except Exception as e:
         ui.notify(f'Error selecting file: {str(e)}', type='negative')
 
-def browse_audio_file(input_field):
-    """Browse for audio file following Andromica pattern"""
+def browse_audio_file(input_field, choose_files=None):
+    """
+    Browse for audio file following Andromica pattern.
+
+    Args:
+        input_field: The input field to update with selected file
+        choose_files: Async callback to open file dialog
+    """
     async def handle_file_selection():
+        if not choose_files:
+            ui.notify('File selection not available', type='warning')
+            return
         try:
             files = await choose_files()
             audio_files = [file for file in files if is_audio(file)]
@@ -764,7 +795,7 @@ def browse_audio_file(input_field):
                 ui.notify('Please select a valid audio file (WAV, MP3, FLAC, OGG)', type='warning')
         except Exception as e:
             ui.notify(f'Error selecting file: {str(e)}', type='negative')
-    
+
     return handle_file_selection
 
 def gallery_info_dialog():

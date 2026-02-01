@@ -1,7 +1,7 @@
 """
 Client-Side Rendering Logic for Processed Data Pods
 
-🎯 CRITICAL: This renders data pods that have been locally processed
+[INFO] CRITICAL: This renders data pods that have been locally processed
 - Images already decrypted and converted to base64
 - Audio already extracted and ready to play
 - Type-based rendering for different image types
@@ -26,7 +26,7 @@ def render_processed_data_pod(data_pod: Dict[str, Any]) -> str:
     if data_pod.get('processed_at'):
         html_parts.append(f"""
         <div class="processing-status">
-            <h3>🔓 Decrypted Content</h3>
+            <h3>[UNLOCK] Decrypted Content</h3>
             <p>Processed: {format_timestamp(data_pod['processed_at'])}</p>
             <p>Items: {len(data_pod.get('items', []))}</p>
             <p>With Audio: {len([i for i in data_pod.get('items', []) if i.get('hasAudio')])}</p>
@@ -133,7 +133,7 @@ def render_audio_section(audio_data: Dict[str, Any], audio_method: str) -> str:
     
     # Audio badge
     html_parts.append(f'''
-    <p class="audio-badge">🎵 Audio ({audio_method})</p>
+    <p class="audio-badge">[AUDIO] Audio ({audio_method})</p>
     ''')
     
     # Audio player
@@ -409,7 +409,7 @@ def save_gallery_html(data_pod: Dict[str, Any], output_path: str, title: str = "
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    print(f"✅ Gallery saved to: {output_path}")
+    print(f"[OK] Gallery saved to: {output_path}")
 
 
 # JavaScript functions for browser integration
@@ -474,7 +474,7 @@ function renderDataPodItem(item) {
         
         const audioBadge = document.createElement('p');
         audioBadge.className = 'audio-badge';
-        audioBadge.textContent = `🎵 Audio (${audioMethod})`;
+        audioBadge.textContent = `[AUDIO] Audio (${audioMethod})`;
         audioSection.appendChild(audioBadge);
         
         const audio = document.createElement('audio');
@@ -516,7 +516,7 @@ function showProcessingInfo(dataPod) {
     if (infoDiv && dataPod.processed_at) {
         infoDiv.innerHTML = `
             <div class="processing-status">
-                <h3>🔓 Decrypted Content</h3>
+                <h3>[UNLOCK] Decrypted Content</h3>
                 <p>Processed: ${new Date(dataPod.processed_at * 1000).toLocaleString()}</p>
                 <p>Items: ${dataPod.items.length}</p>
                 <p>With Audio: ${dataPod.items.filter(i => i.hasAudio).length}</p>

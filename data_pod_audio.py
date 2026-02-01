@@ -1,7 +1,7 @@
 """
 Data Pod Creation with Encrypted Audio Tokens
 
-🎯 CRITICAL: This follows ENCRYPTION.md data pod pattern exactly:
+[INFO] CRITICAL: This follows ENCRYPTION.md data pod pattern exactly:
 - Include creator_public_key for subscriber's ECDH derivation
 - Include recipient_public_key for authorization verification
 - Use same metadata structure as image encryption
@@ -74,7 +74,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
     """
     Create data pod with encrypted audio tokens (subscriber decrypts locally)
 
-    🎯 CRITICAL: This follows ENCRYPTION.md data pod pattern exactly:
+    [INFO] CRITICAL: This follows ENCRYPTION.md data pod pattern exactly:
     - Include creator_public_key for subscriber's ECDH derivation
     - Include recipient_public_key for authorization verification
     - Use same metadata structure as image encryption
@@ -114,7 +114,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 # Determine image type for processing
                 image_type = determine_image_type(img_hash, img_info, app)
                 print(
-                    f"📋 Image {img_info.get('name', 'Unknown')} detected as type: {image_type}"
+                    f"[INFO] Image {img_info.get('name', 'Unknown')} detected as type: {image_type}"
                 )
 
                 # Get metadata using existing function
@@ -283,13 +283,22 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
 
 async def process_data_pod_locally(
     data_pod_path: str, subscriber_stellar_secret: str, app,
-    embed_images_as_base64: bool = False
+    embed_images_as_base64: bool = False,
+    # Required functions passed from main to avoid circular import
+    download_ipfs_image=None,
+    new_deciphered_img=None,
+    recover_aposematic_img=None,
+    image_to_base64_uri=None,
+    ipfs_add=None,
+    _ipfs_add_pure=None,
+    ipfs_webui="http://localhost",
+    ipfs_webui_port="8080",
 ) -> Dict[str, Any]:
     """
     Process downloaded data pod locally - decrypt images and audio tokens
     This runs on subscriber's machine following ENCRYPTION.md pattern
 
-    🎯 CRITICAL: This follows ENCRYPTION.md browser-side decoding exactly:
+    [INFO] CRITICAL: This follows ENCRYPTION.md browser-side decoding exactly:
     - Generate shared key using recipient_public_key from data pod
     - Use same StellarSharedKey ECDH derivation as image decryption
     - Process all content types (images + audio tokens) in unified pass
@@ -302,6 +311,14 @@ async def process_data_pod_locally(
         embed_images_as_base64: If True, embed images as base64 data URIs (for offline HTML).
                                 If False, keep IPFS URLs (for local preview with IPFS running).
                                 Default False to avoid large HTML files.
+        download_ipfs_image: Function to download image from IPFS
+        new_deciphered_img: Function to decipher encrypted images
+        recover_aposematic_img: Function to recover aposematic images
+        image_to_base64_uri: Function to convert image to base64 URI
+        ipfs_add: Function to add file to IPFS
+        _ipfs_add_pure: Pure version for threading
+        ipfs_webui: IPFS gateway host
+        ipfs_webui_port: IPFS gateway port
 
     Returns:
         dict: Processed data pod with decrypted content ready for rendering
@@ -319,11 +336,11 @@ async def process_data_pod_locally(
         if not recipient_public_key:
             raise ValueError("Data pod missing recipient_public_key for decryption")
 
-        # 🎯 CRITICAL: Use proper shared key derivation (hvym-stellar is now fixed!)
+        # [INFO] CRITICAL: Use proper shared key derivation (hvym-stellar is now fixed!)
         # This will now generate consistent shared keys across instances
 
         print(
-            f"🔐 Subscriber stellar secret (first 16): {subscriber_stellar_secret[:16]}..."
+            f"[DEBUG] Subscriber stellar secret (first 16): {subscriber_stellar_secret[:16]}..."
         )
 
         # Generate shared key using proper ECDH derivation
@@ -344,23 +361,11 @@ async def process_data_pod_locally(
         cipher_key = shared_key.shared_secret().hex()  # Uses deterministic derivation
 
         print(
-            f"🔐 Using debug secret + creator public key: {creator_public_key[:16]}..."
+            f"[KEY] Using debug secret + creator public key: {creator_public_key[:16]}..."
         )
-        print(f"🔑 Generated cipher key (first 16 chars): {cipher_key[:16]}...")
-        print(f"🔑 Creator public key: {creator_public_key[:16]}...")
-        print(f"🔑 Subscriber public key: {subscriber_keys.public_key()[:16]}...")
-
-        # Import required functions from main module
-        import main
-
-        download_ipfs_image = getattr(main, "download_ipfs_image", None)
-        new_deciphered_img = getattr(main, "new_deciphered_img", None)
-        recover_aposematic_img = getattr(main, "recover_aposematic_img", None)
-        image_to_base64_uri = getattr(main, "image_to_base64_uri", None)
-        ipfs_add = getattr(main, "ipfs_add", None)
-        _ipfs_add_pure = getattr(main, "_ipfs_add_pure", None)  # Pure version for threading
-        ipfs_webui = getattr(main, "ipfs_webui", "http://localhost")
-        ipfs_webui_port = getattr(main, "ipfs_webui_port", "8080")
+        print(f"[KEY] Generated cipher key (first 16 chars): {cipher_key[:16]}...")
+        print(f"[KEY] Creator public key: {creator_public_key[:16]}...")
+        print(f"[KEY] Subscriber public key: {subscriber_keys.public_key()[:16]}...")
 
         # Construct gateway base URL for IPFS access (needed for downloading original images)
         if ipfs_webui.startswith("http://") or ipfs_webui.startswith("https://"):
@@ -386,60 +391,60 @@ async def process_data_pod_locally(
             try:
                 # Fix: renditions is a list, not a dictionary
                 if not item.get("renditions") or len(item["renditions"]) == 0:
-                    print(f"❌ No renditions found for item: {item.get('title')}")
+                    print(f"[ERROR] No renditions found for item: {item.get('title')}")
                     continue
 
                 rendition = item["renditions"][0]  # Get first rendition
                 href = rendition.get("href")
                 if not href:
                     print(
-                        f"❌ No href found in rendition for item: {item.get('title')}"
+                        f"[ERROR] No href found in rendition for item: {item.get('title')}"
                     )
                     continue
 
                 # I/O-bound: Download IPFS image
                 temp_path = await run.io_bound(download_ipfs_image, href)
                 if not temp_path:
-                    print(f"❌ Failed to download image from {href}")
+                    print(f"[ERROR] Failed to download image from {href}")
                     continue
 
                 # Check if downloaded file exists and get its size
                 if os.path.exists(temp_path):
                     file_size = os.path.getsize(temp_path)
-                    print(f"🔍 DEBUG: Downloaded file size: {file_size} bytes")
-                    print(f"🔍 DEBUG: Downloaded file path: {temp_path}")
-                    print(f"🔍 DEBUG: Original IPFS href: {href}")
+                    print(f"[DEBUG] DEBUG: Downloaded file size: {file_size} bytes")
+                    print(f"[DEBUG] DEBUG: Downloaded file path: {temp_path}")
+                    print(f"[DEBUG] DEBUG: Original IPFS href: {href}")
                 else:
-                    print(f"❌ Downloaded file not found: {temp_path}")
+                    print(f"[ERROR] Downloaded file not found: {temp_path}")
                     continue
 
                 # Decrypt image if needed (following ENCRYPTION.md patterns)
                 image_type = item.get("imageType", "original")
                 decoded_path = temp_path
 
-                print(f"🔍 Processing image: {item.get('title')}, type: {image_type}")
+                print(f"[DEBUG] Processing image: {item.get('title')}, type: {image_type}")
 
-                # 🎯 CRITICAL: Extract audio BEFORE decryption/recovery!
+                # [INFO] CRITICAL: Extract audio BEFORE decryption/recovery!
                 # recover_aposematic_img() and new_deciphered_img() create NEW PNGs
                 # that don't preserve tEXt chunks where audio is stored.
                 # So we must extract audio from the aposematic/enciphered image first.
                 pre_extracted_audio = None
                 if item.get("hasAudio") and image_type in ("aposematic", "enciphered"):
-                    print(f"🎵 Pre-extracting audio from {image_type} image before recovery...")
+                    print(f"[AUDIO] Pre-extracting audio from {image_type} image before recovery...")
 
                     # For enciphered images, audio is lost during enciphering (ImageMagick limitation)
                     # We need to extract from the ORIGINAL processed image instead
                     if image_type == "enciphered":
                         original_hash = item.get("original_hash")
                         if original_hash:
-                            print(f"🔍 Enciphered image - extracting audio from original: {original_hash[:16]}...")
+                            print(f"[DEBUG] Enciphered image - extracting audio from original: {original_hash[:16]}...")
                             try:
                                 # I/O-bound: Download original processed image
                                 original_href = f"{gateway_base}/ipfs/{original_hash}"
                                 original_path = await run.io_bound(download_ipfs_image, original_href)
                                 if original_path:
                                     has_audio, actual_method = has_audio_data(original_path)
-                                    print(f"🔍 Audio check on original: has_audio={has_audio}, actual_method={actual_method}")
+                                    print(f"[DEBUG] Audio check on original: has_audio={has_audio}, actual_method={actual_method}")
 
                                     if has_audio:
                                         if actual_method == "token" or item.get("audioMethod") == "token":
@@ -449,7 +454,7 @@ async def process_data_pod_locally(
                                                     "type": "token",
                                                     "data": serialized_token
                                                 }
-                                                print(f"✅ Pre-extracted audio token from original ({len(serialized_token)} chars)")
+                                                print(f"[OK] Pre-extracted audio token from original ({len(serialized_token)} chars)")
                                         if not pre_extracted_audio and (actual_method == "base64" or has_audio):
                                             audio_base64 = extract_audio_base64(original_path)
                                             if audio_base64:
@@ -457,21 +462,21 @@ async def process_data_pod_locally(
                                                     "type": "base64",
                                                     "data": audio_base64
                                                 }
-                                                print(f"✅ Pre-extracted audio base64 from original ({len(audio_base64)} chars)")
+                                                print(f"[OK] Pre-extracted audio base64 from original ({len(audio_base64)} chars)")
                                     # Clean up temp file
                                     try:
                                         os.remove(original_path)
                                     except:
                                         pass
                             except Exception as e:
-                                print(f"⚠️ Failed to extract audio from original image: {e}")
+                                print(f"[WARN] Failed to extract audio from original image: {e}")
                         else:
-                            print(f"⚠️ Enciphered image has no original_hash - cannot extract audio")
+                            print(f"[WARN] Enciphered image has no original_hash - cannot extract audio")
                     else:
                         # For aposematic images, audio is in the image itself (re-embedded after scramble)
                         try:
                             has_audio, actual_method = has_audio_data(temp_path)
-                            print(f"🔍 Audio check on source: has_audio={has_audio}, actual_method={actual_method}")
+                            print(f"[DEBUG] Audio check on source: has_audio={has_audio}, actual_method={actual_method}")
 
                             if has_audio:
                                 if actual_method == "token" or item.get("audioMethod") == "token":
@@ -481,7 +486,7 @@ async def process_data_pod_locally(
                                             "type": "token",
                                             "data": serialized_token
                                         }
-                                        print(f"✅ Pre-extracted audio token ({len(serialized_token)} chars)")
+                                        print(f"[OK] Pre-extracted audio token ({len(serialized_token)} chars)")
                                 if not pre_extracted_audio and (actual_method == "base64" or has_audio):
                                     audio_base64 = extract_audio_base64(temp_path)
                                     if audio_base64:
@@ -489,12 +494,12 @@ async def process_data_pod_locally(
                                             "type": "base64",
                                             "data": audio_base64
                                         }
-                                        print(f"✅ Pre-extracted audio base64 ({len(audio_base64)} chars)")
+                                        print(f"[OK] Pre-extracted audio base64 ({len(audio_base64)} chars)")
                         except Exception as e:
-                            print(f"⚠️ Pre-extraction of audio failed: {e}")
+                            print(f"[WARN] Pre-extraction of audio failed: {e}")
 
                 if image_type == "enciphered":
-                    print(f"🔓 Deciphering enciphered image: {item.get('title')}")
+                    print(f"[UNLOCK] Deciphering enciphered image: {item.get('title')}")
                     try:
                         # CPU-bound: deciphering is computationally intensive
                         decoded_path = await run.cpu_bound(
@@ -503,18 +508,18 @@ async def process_data_pod_locally(
                             temp_path,  # encrypted_img_path
                             cipher_key,  # cipher_key
                         )
-                        print(f"✅ Successfully deciphered image: {decoded_path}")
+                        print(f"[OK] Successfully deciphered image: {decoded_path}")
                     except Exception as e:
-                        print(f"❌ Error deciphering image: {e}")
+                        print(f"[ERROR] Error deciphering image: {e}")
                         raise
                 elif image_type == "aposematic":
-                    print(f"🔓 Recovering aposematic image: {item.get('title')}")
+                    print(f"[UNLOCK] Recovering aposematic image: {item.get('title')}")
                     try:
-                        # 🎯 Uses same parameters as working main.py version
+                        # [INFO] Uses same parameters as working main.py version
                         op_string = data_pod.get("op_string", "-^+")
-                        print(f"🔍 DEBUG: Using op_string: '{op_string}'")
-                        print(f"🔍 DEBUG: Cipher key: {cipher_key[:16]}...")
-                        print(f"🔍 DEBUG: Temp path: {temp_path}")
+                        print(f"[DEBUG] DEBUG: Using op_string: '{op_string}'")
+                        print(f"[DEBUG] DEBUG: Cipher key: {cipher_key[:16]}...")
+                        print(f"[DEBUG] DEBUG: Temp path: {temp_path}")
 
                         # CPU-bound: aposematic recovery is computationally intensive
                         result = await run.cpu_bound(
@@ -522,39 +527,39 @@ async def process_data_pod_locally(
                             temp_path, cipher_key=cipher_key, op_string=op_string
                         )
 
-                        print(f"🔍 DEBUG: Recovery result type: {type(result)}")
-                        print(f"🔍 DEBUG: Recovery result: {result}")
+                        print(f"[DEBUG] DEBUG: Recovery result type: {type(result)}")
+                        print(f"[DEBUG] DEBUG: Recovery result: {result}")
 
                         # recover_aposematic_img returns a string path, not a dict
                         if isinstance(result, str):
                             decoded_path = result
                         else:
                             # Handle unexpected result types
-                            print(f"❌ Unexpected recovery result type: {type(result)}")
+                            print(f"[ERROR] Unexpected recovery result type: {type(result)}")
                             decoded_path = str(result) if result else None
 
                         if not decoded_path:
-                            print("❌ No decoded path returned from recovery")
+                            print("[ERROR] No decoded path returned from recovery")
                             raise ValueError("Failed to recover aposematic image")
 
                         print(
-                            f"✅ Successfully recovered aposematic image: {decoded_path}"
+                            f"[OK] Successfully recovered aposematic image: {decoded_path}"
                         )
                     except Exception as e:
-                        print(f"❌ Error recovering aposematic image: {e}")
+                        print(f"[ERROR] Error recovering aposematic image: {e}")
                         raise
                 else:
-                    print(f"ℹ️ Image type '{image_type}' - no decryption needed")
+                    print(f"[INFO] Image type '{image_type}' - no decryption needed")
 
                 # Extract/process audio if present
                 if item.get("hasAudio"):
-                    print(f"🎵 Processing audio for: {item.get('title')}")
+                    print(f"[AUDIO] Processing audio for: {item.get('title')}")
                     audio_extracted = False
 
-                    # 🎯 CRITICAL: Use pre-extracted audio for aposematic/encrypted images
+                    # [INFO] CRITICAL: Use pre-extracted audio for aposematic/encrypted images
                     # because recover_aposematic_img() and new_deciphered_img() don't preserve tEXt chunks
                     if pre_extracted_audio:
-                        print(f"🎵 Using pre-extracted audio ({pre_extracted_audio['type']})")
+                        print(f"[AUDIO] Using pre-extracted audio ({pre_extracted_audio['type']})")
                         try:
                             if pre_extracted_audio["type"] == "token":
                                 # Decrypt the token
@@ -584,7 +589,7 @@ async def process_data_pod_locally(
                                             "verified": metadata is not None,
                                         },
                                     }
-                                    print(f"✅ Audio decrypted from pre-extracted token ({len(audio_base64)} chars)")
+                                    print(f"[OK] Audio decrypted from pre-extracted token ({len(audio_base64)} chars)")
                                     audio_extracted = True
                             else:
                                 # Pre-extracted base64 audio
@@ -602,15 +607,15 @@ async def process_data_pod_locally(
                                         "verified": True,
                                     },
                                 }
-                                print(f"✅ Audio from pre-extracted base64 ({len(audio_base64)} chars)")
+                                print(f"[OK] Audio from pre-extracted base64 ({len(audio_base64)} chars)")
                                 audio_extracted = True
                         except Exception as e:
-                            print(f"⚠️ Pre-extracted audio processing failed: {e}")
+                            print(f"[WARN] Pre-extracted audio processing failed: {e}")
 
                     # For non-aposematic/encrypted images, extract from decoded_path
                     if not audio_extracted:
                         has_audio, actual_method = has_audio_data(decoded_path)
-                        print(f"🔍 Audio check on decoded: has_audio={has_audio}, actual_method={actual_method}")
+                        print(f"[DEBUG] Audio check on decoded: has_audio={has_audio}, actual_method={actual_method}")
 
                         # Try token extraction first if that's what we expect
                         if actual_method == "token" or item.get("audioMethod") == "token":
@@ -643,10 +648,10 @@ async def process_data_pod_locally(
                                                 "verified": metadata is not None,
                                             },
                                         }
-                                        print(f"✅ Audio extracted from token ({len(audio_base64)} chars)")
+                                        print(f"[OK] Audio extracted from token ({len(audio_base64)} chars)")
                                         audio_extracted = True
                             except Exception as e:
-                                print(f"⚠️ Token extraction failed: {e}")
+                                print(f"[WARN] Token extraction failed: {e}")
 
                         # Fallback: try base64/metadata extraction
                         if not audio_extracted and (actual_method == "base64" or has_audio):
@@ -666,33 +671,33 @@ async def process_data_pod_locally(
                                             "verified": True,
                                         },
                                     }
-                                    print(f"✅ Audio extracted from metadata ({len(audio_base64)} chars)")
+                                    print(f"[OK] Audio extracted from metadata ({len(audio_base64)} chars)")
                                     audio_extracted = True
                             except Exception as e:
-                                print(f"⚠️ Metadata extraction failed: {e}")
+                                print(f"[WARN] Metadata extraction failed: {e}")
 
                     if not audio_extracted:
-                        print(f"❌ No audio could be extracted from image")
+                        print(f"[ERROR] No audio could be extracted from image")
 
                 # Convert image to base64 for display (only if requested)
                 # For local preview with IPFS running, skip this to avoid huge HTML files
                 if embed_images_as_base64:
-                    print(f"🖼️ Converting image to base64: {decoded_path}")
+                    print(f"[IMG] Converting image to base64: {decoded_path}")
                     try:
                         base64_uri = image_to_base64_uri(decoded_path)
                         if base64_uri and base64_uri.startswith("data:image"):
                             # Fix: Update the correct rendition in the list
                             item["renditions"][0]["href"] = base64_uri
                             print(
-                                f"✅ Successfully converted to base64 URI (length: {len(base64_uri)})"
+                                f"[OK] Successfully converted to base64 URI (length: {len(base64_uri)})"
                             )
                         else:
                             print(
-                                f"❌ Invalid base64 URI generated: {base64_uri[:100] if base64_uri else 'None'}"
+                                f"[ERROR] Invalid base64 URI generated: {base64_uri[:100] if base64_uri else 'None'}"
                             )
                             raise ValueError("Invalid base64 URI generated")
                     except Exception as e:
-                        print(f"❌ Error converting image to base64: {e}")
+                        print(f"[ERROR] Error converting image to base64: {e}")
                         raise
                 else:
                     # For enciphered/aposematic images, make decrypted version accessible
@@ -706,7 +711,7 @@ async def process_data_pod_locally(
                                     item["renditions"][0]["href"] = f"{gateway_base}/ipfs/{decrypted_hash}"
                                     item["renditions"][0]["ipfs_hash"] = decrypted_hash
                                     item["renditions"][0]["decrypted"] = True
-                                    print(f"✅ Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
+                                    print(f"[OK] Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
                                 else:
                                     raise ValueError("_ipfs_add_pure returned None")
                             elif ipfs_add:
@@ -717,36 +722,36 @@ async def process_data_pod_locally(
                                     item["renditions"][0]["href"] = f"{gateway_base}/ipfs/{decrypted_hash}"
                                     item["renditions"][0]["ipfs_hash"] = decrypted_hash
                                     item["renditions"][0]["decrypted"] = True
-                                    print(f"✅ Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
+                                    print(f"[OK] Updated href to decrypted IPFS: {decrypted_hash[:16]}...")
                                 else:
                                     raise ValueError("ipfs_add returned None")
                             else:
                                 raise ValueError("ipfs_add function not available")
                         except Exception as e:
-                            print(f"⚠️ Failed to add decrypted image to IPFS: {e}")
+                            print(f"[WARN] Failed to add decrypted image to IPFS: {e}")
                             # Fallback to base64
                             try:
                                 base64_uri = image_to_base64_uri(decoded_path)
                                 if base64_uri and base64_uri.startswith("data:image"):
                                     item["renditions"][0]["href"] = base64_uri
-                                    print(f"⚠️ Using base64 fallback for decrypted image")
+                                    print(f"[WARN] Using base64 fallback for decrypted image")
                                 else:
-                                    print(f"❌ Base64 fallback failed: {base64_uri[:100] if base64_uri else 'None'}")
+                                    print(f"[ERROR] Base64 fallback failed: {base64_uri[:100] if base64_uri else 'None'}")
                             except Exception as fallback_e:
-                                print(f"❌ Base64 fallback error: {fallback_e}")
+                                print(f"[ERROR] Base64 fallback error: {fallback_e}")
                                 raise
                     else:
                         # Original images don't need decryption - keep IPFS URL
-                        print(f"🖼️ Keeping IPFS URL for original image (embed_images_as_base64=False)")
+                        print(f"[IMG] Keeping IPFS URL for original image (embed_images_as_base64=False)")
 
                 processed_items.append(item)
-                print(f"✅ Processed item: {item.get('title')}")
+                print(f"[OK] Processed item: {item.get('title')}")
 
                 # Yield control to event loop for UI updates between items
                 await asyncio.sleep(0)
 
             except Exception as e:
-                print(f"❌ Error processing item {item.get('title', 'Unknown')}: {e}")
+                print(f"[ERROR] Error processing item {item.get('title', 'Unknown')}: {e}")
                 continue
 
         # Update data pod with processed items
@@ -756,11 +761,15 @@ async def process_data_pod_locally(
             subscriber_stellar_secret[:8] + "..."
         )  # Last 8 chars for ID
 
-        print(f"✅ Data pod processing complete: {len(processed_items)} items ready")
+        print(f"[OK] Data pod processing complete: {len(processed_items)} items ready")
+        print(f"[DEBUG] Final data_pod keys: {list(data_pod.keys())}")
+        print(f"[DEBUG] Final processed_items count: {len(processed_items)}")
+        for i, item in enumerate(processed_items):
+            print(f"[DEBUG] Returning item {i}: {item.get('title')}, hasAudio={item.get('hasAudio')}")
         return data_pod
 
     except Exception as e:
-        print(f"❌ Critical error processing data pod: {e}")
+        print(f"[ERROR] Critical error processing data pod: {e}")
         raise
 
 
@@ -862,9 +871,9 @@ def create_test_data_pod(app, receiver_public_key: str) -> Optional[str]:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(test_data_pod, f, indent=2, ensure_ascii=False)
 
-        print(f"✅ Created test data pod: {output_path}")
+        print(f"[OK] Created test data pod: {output_path}")
         return output_path
 
     except Exception as e:
-        print(f"❌ Error creating test data pod: {e}")
+        print(f"[ERROR] Error creating test data pod: {e}")
         return None

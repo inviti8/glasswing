@@ -6,6 +6,7 @@ import time
 import base64
 import os
 import sys
+from typing import Optional, Dict, List, Any, Tuple, Callable, Union
 import http.server
 import socketserver
 import threading
@@ -2096,30 +2097,30 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Invalid image state: {idex}", type="negative")
             return
 
-        # 🎯 CRITICAL: Debug flow: debug key = creator, app key = recipient
+        # CRITICAL: Debug flow: debug key = creator, app key = recipient
         hvym_public_key = app.storage.user.get("hvym_public_key", "")
         current_public_key = hvym_public_key
         print(
-            f"🔍 Debug flow using app public key as recipient: {current_public_key[:16]}..."
+            f"[DEBUG] Debug flow using app public key as recipient: {current_public_key[:16]}..."
         )
 
-        # 🎯 CRITICAL: Recreate aposematic images with correct shared key
+        # CRITICAL: Recreate aposematic images with correct shared key
         if state == "aposematic":
             from stellar_sdk.keypair import Keypair
             from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
 
-            # 🎯 CRITICAL: For debugging, use debug secret key (not app's stellar_secret)
+            # CRITICAL: For debugging, use debug secret key (not app's stellar_secret)
             debug_secret = app.storage.user.get("debug_secret", "")
-            print(f"🔐 Debug stellar secret (first 16): {debug_secret[:16]}...")
+            print(f"[DEBUG] Debug stellar secret (first 16): {debug_secret[:16]}...")
 
             # Create the key pair ONCE and reuse it
             stellar_kp = Keypair.from_secret(debug_secret)
             creator_keys = Stellar25519KeyPair(stellar_kp)
 
-            print(f"🔍 DEBUG: creator_keys.public_key(): {creator_keys.public_key()}")
-            print(f"🔍 DEBUG: current_public_key (recipient): {current_public_key}")
+            print(f"[DEBUG] creator_keys.public_key(): {creator_keys.public_key()}")
+            print(f"[DEBUG] current_public_key (recipient): {current_public_key}")
             print(
-                f"🔍 DEBUG: creator_keys.public_key() == current_public_key: {creator_keys.public_key() == current_public_key}"
+                f"[DEBUG] creator_keys.public_key() == current_public_key: {creator_keys.public_key() == current_public_key}"
             )
 
             # Generate shared key (now consistent across instances!)
@@ -2129,10 +2130,10 @@ async def process_debug_deploy_gallery():
             )  # Uses deterministic derivation
 
             print(
-                f"🔑 Recreating aposematic images with shared key: {cipher_key[:16]}..."
+                f"[DEBUG] Recreating aposematic images with shared key: {cipher_key[:16]}..."
             )
             print(
-                f"🔐 Using app secret + debug public key: {current_public_key[:16]}..."
+                f"[DEBUG] Using app secret + debug public key: {current_public_key[:16]}..."
             )
 
             # Recreate all aposematic images with the correct shared key
@@ -2232,10 +2233,10 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Successfully created data pod at: {output_path}")
 
             # Process data pod locally to decrypt images before rendering
-            # 🎯 CRITICAL: Debug flow: app acts as subscriber to decrypt
+            # CRITICAL: Debug flow: app acts as subscriber to decrypt
             subscriber_secret = app.storage.user.get("stellar_secret", "")
             print(
-                f"🔍 Debug flow using app secret as subscriber: {subscriber_secret[:16]}..."
+                f"[DEBUG] Debug flow using app secret as subscriber: {subscriber_secret[:16]}..."
             )
 
             if not subscriber_secret:
@@ -2246,7 +2247,15 @@ async def process_debug_deploy_gallery():
 
             ui.notify("Processing data pod locally to decrypt images...", type="info")
             processed_data_pod = await process_data_pod_locally(
-                output_path, subscriber_secret, app
+                output_path, subscriber_secret, app,
+                download_ipfs_image=download_ipfs_image,
+                new_deciphered_img=new_deciphered_img,
+                recover_aposematic_img=recover_aposematic_img,
+                image_to_base64_uri=image_to_base64_uri,
+                ipfs_add=ipfs_add,
+                _ipfs_add_pure=_ipfs_add_pure,
+                ipfs_webui=ipfs_webui,
+                ipfs_webui_port=ipfs_webui_port,
             )
 
             if processed_data_pod:
@@ -2261,6 +2270,13 @@ async def process_debug_deploy_gallery():
                     data_pod = json.load(f)
 
             # Render gallery HTML using helper function
+            print(f"[DEBUG] data_pod keys: {data_pod.keys() if data_pod else 'None'}")
+            print(f"[DEBUG] data_pod['items'] count: {len(data_pod.get('items', [])) if data_pod else 0}")
+            if data_pod and data_pod.get('items'):
+                for i, item in enumerate(data_pod['items']):
+                    print(f"[DEBUG] Item {i}: title={item.get('title')}, hasAudio={item.get('hasAudio')}")
+            else:
+                print("[DEBUG] WARNING: No items in data_pod!")
             html_content = render_gallery_html(data_pod)
 
             # Save to IPFS using helper function
@@ -2326,9 +2342,9 @@ async def process_pintheon_deploy_gallery():
         if not recipient_public_key:
             # Fall back to debug key if no recipient selected
             recipient_public_key = app.storage.user.get("debug_public_key", "")
-            print(f"🔍 Pintheon: No recipient selected, using debug key for encryption")
+            print(f"[DEBUG] Pintheon: No recipient selected, using debug key for encryption")
 
-        print(f"🔍 Pintheon flow using recipient key: {recipient_public_key[:16]}...")
+        print(f"[DEBUG] Pintheon flow using recipient key: {recipient_public_key[:16]}...")
 
         # Create the NINJS data pod with encryption support (unified with debug flow)
         output_path = await create_ninjs_data_pod_with_encrypted_tokens(
@@ -2402,7 +2418,7 @@ async def process_pintheon_deploy_gallery():
         if data_pod_result:
             print(f"Uploaded data pod to Pintheon: {data_pod_result.get('Hash')}")
             app.storage.user["pintheon_data_pod_hash"] = data_pod_result.get("Hash")
-            print(f"📦 Pintheon: Deployed encrypted data pod to production: {data_pod_result.get('Hash')}")
+            print(f"[DEBUG] Pintheon: Deployed encrypted data pod to production: {data_pod_result.get('Hash')}")
             ui.notify(f"Successfully deployed data pod to Pintheon: {data_pod_result.get('Hash')}", type="positive")
         else:
             ui.notify("Failed to upload data pod to Pintheon", type="warning")
@@ -2657,13 +2673,13 @@ def download_ipfs_image(url):
         else:
             ipfs_hash = url
 
-        print(f"🔍 DEBUG: IPFS hash extracted: {ipfs_hash}")
+        print(f"[DEBUG] IPFS hash extracted: {ipfs_hash}")
 
         # Try IPFS API first (preserves metadata)
         try:
             # Use IPFS HTTP API with ?format=raw to get raw file
             api_url = f"http://localhost:5001/api/v0/cat?arg={ipfs_hash}"
-            print(f"🔍 DEBUG: Trying IPFS API: {api_url}")
+            print(f"[DEBUG] Trying IPFS API: {api_url}")
 
             response = requests.post(api_url, timeout=30)
             response.raise_for_status()
@@ -2678,15 +2694,15 @@ def download_ipfs_image(url):
                 f.write(response.content)
 
             print(
-                f"🔍 DEBUG: Downloaded via IPFS API, size: {len(response.content)} bytes"
+                f"[DEBUG] Downloaded via IPFS API, size: {len(response.content)} bytes"
             )
             return temp_path
 
         except Exception as api_error:
-            print(f"🔍 DEBUG: IPFS API failed: {api_error}")
+            print(f"[DEBUG] IPFS API failed: {api_error}")
 
             # Fallback to HTTP gateway (might strip metadata)
-            print(f"🔍 DEBUG: Falling back to HTTP gateway: {url}")
+            print(f"[DEBUG] Falling back to HTTP gateway: {url}")
             response = requests.get(url, timeout=30)
             response.raise_for_status()
 
@@ -2707,7 +2723,7 @@ def download_ipfs_image(url):
                 f.write(response.content)
 
             print(
-                f"🔍 DEBUG: Downloaded via HTTP gateway, size: {len(response.content)} bytes"
+                f"[DEBUG] Downloaded via HTTP gateway, size: {len(response.content)} bytes"
             )
             return temp_path
 
@@ -4178,7 +4194,10 @@ def main_page():
             with ui.fab("web_stories").classes("q-secondary-color"):
                 if is_ipfs_running():
                     ui.fab_action(
-                        "subscriptions", on_click=lambda: view_subscriptions_dialog()
+                        "subscriptions", on_click=lambda: view_subscriptions_dialog(
+                            fetch_subscription_content=fetch_subscription_content,
+                            remove_subscription=remove_subscription
+                        )
                     ).tooltip("View Subscriptions")
                     ui.fab_action(
                         "add",
@@ -4186,7 +4205,10 @@ def main_page():
                     ).tooltip("Add Subscription")
                     ui.fab_action(
                         "play_circle",
-                        on_click=lambda: select_channel_dialog(select_channel),
+                        on_click=lambda: select_channel_dialog(
+                            select_channel,
+                            fetch_subscription_channels=fetch_subscription_channels
+                        ),
                     ).tooltip("Select Channel")
 
     with ui.tab_panels(tabs, value="IMAGES").classes("w-full h-full") as tab_panel:
@@ -4658,7 +4680,7 @@ def check_native_dependencies():
     if missing:
         msg = "Missing required dependencies:\n\n"
         for name, url in missing:
-            msg += f"• {name}: {url}\n"
+            msg += f"- {name}: {url}\n"
         msg += "\nPlease install these tools and try again.\nSee docs/INSTALL.md for installation instructions."
 
         # Show error dialog using NiceGUI
@@ -4799,7 +4821,7 @@ async def process_audio_from_storage():
 
 def edit_audio_info_main(hash_value):
     """Edit audio information using standard dialog with process_dialog pattern."""
-    edit_audio_info(hash_value, process_dialog, process_audio_from_storage)
+    edit_audio_info(hash_value, process_dialog, process_audio_from_storage, choose_files)
 
 
 def create_audio_image(audio_file, image_file=None):
@@ -4899,7 +4921,7 @@ def create_audio_visualization(audio_data):
         except:
             font = ImageFont.load_default()
 
-        draw.text((400, 280), "🎵 Audio Image", fill="white", anchor="mm", font=font)
+        draw.text((400, 280), "[AUDIO] Audio Image", fill="white", anchor="mm", font=font)
         return img
 
     except Exception as e:
@@ -4915,7 +4937,7 @@ def create_audio_visualization(audio_data):
         except:
             font = ImageFont.load_default()
 
-        draw.text((400, 280), "🎵 Audio Image", fill="white", anchor="mm", font=font)
+        draw.text((400, 280), "[AUDIO] Audio Image", fill="white", anchor="mm", font=font)
         return img
 
 
@@ -5019,9 +5041,9 @@ async def process_audio_embedding(
             "has_audio": True,
             "audio_method": audio_method,
             "audio_path": audio_file,  # Set to current audio file
-            "audio_format": old_info.get("audio_format"),  # ✅ PRESERVE
-            "audio_duration": old_info.get("audio_duration"),  # ✅ PRESERVE
-            "audio_size": old_info.get("audio_size"),  # ✅ PRESERVE
+            "audio_format": old_info.get("audio_format"),  # [OK] PRESERVE
+            "audio_duration": old_info.get("audio_duration"),  # [OK] PRESERVE
+            "audio_size": old_info.get("audio_size"),  # [OK] PRESERVE
             "image_type": old_info.get("image_type", "raw"),
             "audio_token_expires": token_expires,  # None for no expiry
             "audio_token_no_expiry": expires_in is None,
