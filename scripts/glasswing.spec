@@ -100,8 +100,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 # Different build strategies per platform
 if sys.platform == 'darwin':
     # macOS: Create .app bundle (not --onefile)
-    # Use universal2 to support both Intel (x86_64) and Apple Silicon (ARM) Macs
-    # Note: Requires universal2 Python and dependencies for full compatibility
+    # Note: For multi-arch support, build separately on Intel and ARM Macs
+    # universal2 requires all dependencies to be fat binaries which isn't always available
     exe = EXE(
         pyz,
         a.scripts,
@@ -114,7 +114,7 @@ if sys.platform == 'darwin':
         upx=False,  # Disabled - UPX can corrupt files
         console=console,
         disable_windowed_traceback=False,
-        target_arch='universal2',  # Support both Intel and Apple Silicon Macs
+        target_arch=None,  # Build for native architecture (build on each platform separately)
         codesign_identity=None,
         entitlements_file=None,
         icon=icon_file,
@@ -139,7 +139,6 @@ if sys.platform == 'darwin':
             'LSBackgroundOnly': 'False',
             'LSMinimumSystemVersion': '10.13.0',  # macOS High Sierra minimum
             'CFBundleShortVersionString': '1.0.0',
-            'LSArchitecturePriority': ['arm64', 'x86_64'],  # Prefer ARM but support Intel
         },
     )
 else:
