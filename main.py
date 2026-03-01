@@ -1627,24 +1627,30 @@ async def delete_all_metadata(hash_value):
     img_name = app.storage.user[hash_value]["name"]
     try:
         new_img_path = await clear_img_metadata(img_name, img_path)
-        # Get the IPFS hash of the final image
-        ipfs_hash = ipfs_add(new_img_path)
-        new_img_name = app.storage.user[ipfs_hash]["name"]
+        # Store locally in session temp dir
+        content_hash, file_name, editor_url = _local_store_image_pure(new_img_path)
+        if not content_hash:
+            ui.notify("Failed to store image", type="negative")
+            return
+        app.storage.user[content_hash] = {
+            "name": file_name,
+            "path": new_img_path,
+            "editor_url": editor_url,
+        }
         idex = app.storage.user.get("img_state", 1)
         state = img_states[idex]
 
-        app.storage.user["tmp_files"].append(new_img_path)
-        ui.notify(f"Deleted all metadata from {ipfs_hash}")
+        ui.notify(f"Deleted all metadata from {content_hash}")
         remove_img_by_name_from_storage(img_name, f"{state}_img_hashes")
         processed_hashes = app.storage.user.get(f"{state}_img_hashes", [])
 
         try:
             index = processed_hashes.index(hash_value)
-            processed_hashes[index] = ipfs_hash
+            processed_hashes[index] = content_hash
         except ValueError:
-            processed_hashes.append(ipfs_hash)
+            processed_hashes.append(content_hash)
 
-        app.storage.user[f"{state}_img_hashes"] = processed_hashe
+        app.storage.user[f"{state}_img_hashes"] = processed_hashes
         # Optionally refresh the gallery to show the updated file
         render_gallery()
     except Exception as e:
@@ -1759,34 +1765,40 @@ async def process_metadata(img_name, img_path, hash_value, metadata):
         # Process with new IPTC data
         final_path = await new_iptc_img(img_name, img_path, metadata)
 
-        # Get the IPFS hash of the final image
-        ipfs_hash = ipfs_add(final_path)
-        app.storage.user["tmp_files"].append(final_path)
+        # Store locally in session temp dir
+        content_hash, file_name, editor_url = _local_store_image_pure(final_path)
+        if not content_hash:
+            ui.notify("Failed to store processed image", type="negative")
+            return None, None
 
         # Update the UI and storage
-        if ipfs_hash and ipfs_hash != hash_value:
-            im_name = app.storage.user[ipfs_hash]["name"]
+        if content_hash != hash_value:
+            app.storage.user[content_hash] = {
+                "name": file_name,
+                "path": final_path,
+                "editor_url": editor_url,
+            }
             idex = app.storage.user.get("img_state", 1)
             state = img_states[idex]
 
             if state == "raw":
                 state = "processed"
 
-            remove_img_by_name_from_storage(im_name, f"{state}_img_hashes")
+            remove_img_by_name_from_storage(file_name, f"{state}_img_hashes")
             processed_hashes = app.storage.user.get(f"{state}_img_hashes", [])
 
             try:
                 index = processed_hashes.index(hash_value)
-                processed_hashes[index] = ipfs_hash
+                processed_hashes[index] = content_hash
             except ValueError:
-                processed_hashes.append(ipfs_hash)
+                processed_hashes.append(content_hash)
 
             app.storage.user[f"{state}_img_hashes"] = processed_hashes
 
-            ui.notify(f"Edited {ipfs_hash}")
+            ui.notify(f"Edited {content_hash}")
             render_gallery()
 
-        return ipfs_hash, final_path  # Return both the hash and the path
+        return content_hash, final_path
 
     except Exception as e:
         ui.notify(f"Error processing image: {str(e)}", type="negative")
@@ -5160,10 +5172,12 @@ async def process_audio_embedding(
             print(f"[DEBUG process_audio_embedding] output_path is None, returning failure")
             return None, None
 
-        # Add to IPFS and update storage
-        new_hash = ipfs_add(output_path)
+        # Store locally in session temp dir (not IPFS)
+        new_hash, _, editor_url = _local_store_image_pure(output_path)
         print(f"[DEBUG process_audio_embedding] new_hash={new_hash}")
-        app.storage.user["tmp_files"].append(output_path)
+        if not new_hash:
+            print("[DEBUG process_audio_embedding] Failed to store image locally")
+            return None, None
 
         # Update storage with new image info
         old_info = app.storage.user.get(hash_value, {})
@@ -5178,6 +5192,7 @@ async def process_audio_embedding(
         new_info = {
             "name": f"audio_{img_name}",
             "path": output_path,
+            "editor_url": editor_url,
             "has_audio": True,
             "audio_method": audio_method,
             "audio_path": audio_file,  # Set to current audio file
