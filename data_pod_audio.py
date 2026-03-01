@@ -88,6 +88,14 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         str: Path to created data pod
     """
     try:
+        # Guard: only allow publishing protected content types
+        if prefix in ("raw", "processed"):
+            app.storage.user["notification"] = {
+                "type": "warning",
+                "message": "Cannot publish unprotected content. Apply aposematic or encipher protection first.",
+            }
+            return None
+
         # Get all processed images
         processed_hashes = app.storage.user.get(f"{prefix}_img_hashes", [])
         if not processed_hashes:

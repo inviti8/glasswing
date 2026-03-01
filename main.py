@@ -3418,6 +3418,14 @@ def get_mimetype(file_path):
 
 async def create_ninjs_data_pod(prefix="processed"):
     try:
+        # Guard: only allow publishing protected content types
+        if prefix in ("raw", "processed"):
+            ui.notify(
+                "Cannot publish unprotected content. Apply aposematic or encipher protection first.",
+                type="warning",
+            )
+            return
+
         # Get all processed images
         processed_hashes = app.storage.user.get(f"{prefix}_img_hashes", [])
         if not processed_hashes:
