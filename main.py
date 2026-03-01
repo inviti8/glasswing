@@ -20,7 +20,7 @@ import zlib
 import json
 import requests
 import wand
-from hvym_stellar import Stellar25519KeyPair, HVYMDataToken
+from hvym_stellar import Stellar25519KeyPair, StellarSharedKey, HVYMDataToken
 from stellar_sdk import Keypair
 import asyncio
 
@@ -90,7 +90,7 @@ iptc = False
 access_token = ""
 
 ipfs_webui = "http://localhost"
-ipfs_webui_port = "8080"
+ipfs_webui_port = "8081"
 
 
 pintheon_endpoint = "http://127.0.0.1"
@@ -1816,18 +1816,32 @@ async def process_aposematic():
     app.storage.user["aposematic_img_hashes"] = []
 
     processed_hashes = app.storage.user.get("processed_img_hashes", [])
-    cipher_key = app.storage.user.get("cipher_key")
 
     if not processed_hashes:
         ui.notify("No processed images to convert", type="warning")
         return
 
-    if not cipher_key:
-        ui.notify("No cipher key set. Please select a recipient first.", type="warning")
+    stellar_secret = app.storage.user.get("stellar_secret")
+    subscriber_public_key = app.storage.user.get("recipient_public_key")
+
+    if not stellar_secret:
+        ui.notify("No stellar secret configured.", type="warning")
         return
 
+    # Fall back to debug key if no recipient explicitly selected
+    if not subscriber_public_key:
+        subscriber_public_key = app.storage.user.get("debug_public_key")
+        if subscriber_public_key:
+            print(f"[DEBUG] No recipient selected, using debug key: {subscriber_public_key[:16]}...")
+        else:
+            ui.notify("No recipient selected. Please select a recipient first.", type="warning")
+            return
+
+    stellar_kp = Keypair.from_secret(stellar_secret)
+    stellar_keypair = Stellar25519KeyPair(stellar_kp)
+
     print(
-        f"Processing {len(processed_hashes)} images with cipher_key: {cipher_key[:16]}..."
+        f"Processing {len(processed_hashes)} images with stellar keypair for subscriber: {subscriber_public_key[:16]}..."
     )
 
     # Get these values once before the loop (they're used in cpu_bound which can't access app.storage)
@@ -1854,7 +1868,8 @@ async def process_aposematic():
             aposematic = await run.cpu_bound(
                 new_aposematic_img,
                 img_path,
-                cipher_key=cipher_key,
+                stellar_keypair=stellar_keypair,
+                subscriber_public_key=subscriber_public_key,
                 op_string=op_string,
                 scramble_mode=scramble_mode,
             )
@@ -2128,7 +2143,7 @@ async def process_debug_deploy_gallery():
         # CRITICAL: Recreate aposematic images with correct shared key
         if state == "aposematic":
             from stellar_sdk.keypair import Keypair
-            from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
+            from hvym_stellar import Stellar25519KeyPair
 
             # CRITICAL: For debugging, use debug secret key (not app's stellar_secret)
             debug_secret = app.storage.user.get("debug_secret", "")
@@ -2140,21 +2155,9 @@ async def process_debug_deploy_gallery():
 
             print(f"[DEBUG] creator_keys.public_key(): {creator_keys.public_key()}")
             print(f"[DEBUG] current_public_key (recipient): {current_public_key}")
-            print(
-                f"[DEBUG] creator_keys.public_key() == current_public_key: {creator_keys.public_key() == current_public_key}"
-            )
-
-            # Generate shared key (now consistent across instances!)
-            shared_key = StellarSharedKey(creator_keys, current_public_key)
-            cipher_key = (
-                shared_key.shared_secret().hex()
-            )  # Uses deterministic derivation
 
             print(
-                f"[DEBUG] Recreating aposematic images with shared key: {cipher_key[:16]}..."
-            )
-            print(
-                f"[DEBUG] Using app secret + debug public key: {current_public_key[:16]}..."
+                f"[DEBUG] Recreating aposematic images with stellar keypair for subscriber: {current_public_key[:16]}..."
             )
 
             # Recreate all aposematic images with the correct shared key
@@ -2185,7 +2188,8 @@ async def process_debug_deploy_gallery():
                         aposematic = await run.cpu_bound(
                             new_aposematic_img,
                             img_path,
-                            cipher_key=cipher_key,
+                            stellar_keypair=creator_keys,
+                            subscriber_public_key=current_public_key,
                             op_string=op_string,
                             scramble_mode=SCRAMBLE_MODE.BUTTERFLY,
                         )
@@ -2819,20 +2823,26 @@ async def decode_protected_images(data_pod, stellar_secret):
         except Exception as e:
             print(f"Could not verify subscriber authorization: {e}")
 
-    # Generate shared key using ECDH: subscriber_private × creator_public
+    # Generate keys for decryption
     try:
         stellar_keys = Keypair.from_secret(stellar_secret)
         hvym_keys = Stellar25519KeyPair(stellar_keys)
-        shared_key = StellarSharedKey(hvym_keys, creator_public_key)
-        cipher_key = shared_key.shared_secret_as_hex()
     except Exception as e:
-        print(f"Error generating shared key: {e}")
+        print(f"Error creating stellar keypair: {e}")
         return data_pod
+
+    # For encrypted content type, derive cipher_key manually (non-aposematic path)
+    cipher_key = None
+    if content_type == "encrypted":
+        try:
+            shared_key = StellarSharedKey(hvym_keys, creator_public_key)
+            cipher_key = shared_key.shared_secret_as_hex()
+        except Exception as e:
+            print(f"Error generating shared key for encrypted content: {e}")
+            return data_pod
 
     # Get aposematic parameters if needed
     op_string = data_pod.get("op_string", "-^+")
-    scramble_mode = get_scramble_mode_from_value(data_pod.get("scramble_mode", 2))
-
     # Process each item
     for item in data_pod.get("items", []):
         renditions = item.get("renditions", {})
@@ -2856,14 +2866,11 @@ async def decode_protected_images(data_pod, stellar_secret):
                     os.path.basename(temp_path), temp_path, cipher_key
                 )
             elif content_type == "aposematic":
-                result = recover_aposematic_img(
+                decoded_path = recover_aposematic_img(
                     temp_path,
-                    cipher_key=cipher_key,
+                    stellar_keypair=hvym_keys,
+                    artist_public_key=creator_public_key,
                     op_string=op_string,
-                    scramble_mode=scramble_mode,
-                )
-                decoded_path = (
-                    result.get("img_path") if isinstance(result, dict) else result
                 )
             else:
                 continue

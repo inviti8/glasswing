@@ -333,7 +333,7 @@ def aposematic_dialog(on_close, process_func):
                     ui.label('No subscribers available. Add subscribers first.').classes('text-gray-500')
                     pub = None
             with ui.row().classes('w-full justify-end'):
-                ui.button('CREATE', on_click=lambda: [create_shared_key(pub.value), dialog.close()] if pub else dialog.close()).props('flat')
+                ui.button('CREATE', on_click=lambda: [app.storage.user.update({'recipient_public_key': pub.value}), create_shared_key(pub.value), dialog.close()] if pub else dialog.close()).props('flat')
     return dialog
 
 def assign_iptc_dialog(on_close, process_func):

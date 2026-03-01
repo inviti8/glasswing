@@ -343,7 +343,7 @@ async def process_data_pod_locally(
             f"[DEBUG] Subscriber stellar secret (first 16): {subscriber_stellar_secret[:16]}..."
         )
 
-        # Generate shared key using proper ECDH derivation
+        # Generate keys using proper ECDH derivation
         from stellar_sdk.keypair import Keypair
         from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
 
@@ -356,14 +356,10 @@ async def process_data_pod_locally(
         if not creator_public_key:
             raise ValueError("Data pod missing creator_public_key for decryption")
 
-        # Generate shared key (now consistent across instances!)
+        # For encrypted (non-aposematic) images, derive cipher_key manually
         shared_key = StellarSharedKey(subscriber_keys, creator_public_key)
-        cipher_key = shared_key.shared_secret().hex()  # Uses deterministic derivation
+        cipher_key = shared_key.shared_secret().hex()  # Used only for enciphered images
 
-        print(
-            f"[KEY] Using debug secret + creator public key: {creator_public_key[:16]}..."
-        )
-        print(f"[KEY] Generated cipher key (first 16 chars): {cipher_key[:16]}...")
         print(f"[KEY] Creator public key: {creator_public_key[:16]}...")
         print(f"[KEY] Subscriber public key: {subscriber_keys.public_key()[:16]}...")
 
@@ -515,16 +511,19 @@ async def process_data_pod_locally(
                 elif image_type == "aposematic":
                     print(f"[UNLOCK] Recovering aposematic image: {item.get('title')}")
                     try:
-                        # [INFO] Uses same parameters as working main.py version
+                        # [INFO] Uses aiposematic v1.1 native Stellar key derivation
                         op_string = data_pod.get("op_string", "-^+")
                         print(f"[DEBUG] DEBUG: Using op_string: '{op_string}'")
-                        print(f"[DEBUG] DEBUG: Cipher key: {cipher_key[:16]}...")
+                        print(f"[DEBUG] DEBUG: Artist public key: {creator_public_key[:16]}...")
                         print(f"[DEBUG] DEBUG: Temp path: {temp_path}")
 
                         # CPU-bound: aposematic recovery is computationally intensive
                         result = await run.cpu_bound(
                             recover_aposematic_img,
-                            temp_path, cipher_key=cipher_key, op_string=op_string
+                            temp_path,
+                            stellar_keypair=subscriber_keys,
+                            artist_public_key=creator_public_key,
+                            op_string=op_string,
                         )
 
                         print(f"[DEBUG] DEBUG: Recovery result type: {type(result)}")
