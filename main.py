@@ -3329,6 +3329,15 @@ def setup_browser_tab():
                     ).decode("ascii")
                     js = f"""
                         (function updateIframe() {{
+                            function decodeBase64Utf8(base64Str) {{
+                                const binaryStr = atob(base64Str);
+                                const bytes = new Uint8Array(binaryStr.length);
+                                for (let i = 0; i < binaryStr.length; i++) {{
+                                    bytes[i] = binaryStr.charCodeAt(i);
+                                }}
+                                return new TextDecoder('utf-8').decode(bytes);
+                            }}
+
                             console.log('Looking for iframe #browser-frame...');
                             const iframe = document.querySelector('#browser-frame');
                             console.log('iframe element:', iframe);
@@ -3336,7 +3345,7 @@ def setup_browser_tab():
                             if (iframe) {{
                                 console.log('Found iframe, decoding and setting content...');
                                 const encodedHtml = '{encoded_html}';
-                                const decodedHtml = atob(encodedHtml);
+                                const decodedHtml = decodeBase64Utf8(encodedHtml);
                                 console.log('Decoded HTML length:', decodedHtml.length);
                                 console.log('First 200 chars:', decodedHtml.substring(0, 200));
 
@@ -3363,7 +3372,7 @@ def setup_browser_tab():
                                     if (retryIframe) {{
                                         console.log('Found iframe on retry!');
                                         const encodedHtml = '{encoded_html}';
-                                        const decodedHtml = atob(encodedHtml);
+                                        const decodedHtml = decodeBase64Utf8(encodedHtml);
                                         retryIframe.srcdoc = decodedHtml;
                                         console.log('✓ Iframe srcdoc set on retry');
                                     }} else {{
