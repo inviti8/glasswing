@@ -65,6 +65,8 @@ from img_edit import *
 from aiposematic import new_aposematic_img, recover_aposematic_img, SCRAMBLE_MODE
 from iptcinfo3 import IPTCInfo
 import exiv2
+import atexit
+import hashlib
 import shutil
 import tempfile
 from datetime import datetime
@@ -79,6 +81,12 @@ if not os.path.exists(static_dir):
     os.makedirs(static_dir)
 # Mount static files
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Session-scoped temp directory for editor images (raw/processed)
+# Cleaned up automatically on app exit — no unprotected content persists
+EDITOR_STORAGE_DIR = tempfile.mkdtemp(prefix="glasswing_editor_")
+atexit.register(shutil.rmtree, EDITOR_STORAGE_DIR, ignore_errors=True)
+app.mount("/editor", StaticFiles(directory=EDITOR_STORAGE_DIR), name="editor")
 
 _INITIALIZED = False
 
@@ -458,10 +466,13 @@ def init():
     app.storage.user["hvym_public_key"] = hvym_public_key
 
     app.storage.user["img_state"] = app.storage.user.get("img_state", 1)
-    app.storage.user["raw_img_hashes"] = app.storage.user.get("raw_img_hashes", [])
-    app.storage.user["processed_img_hashes"] = app.storage.user.get(
-        "processed_img_hashes", []
-    )
+
+    # Raw and processed images are session-only (stored in temp dir, not IPFS)
+    # Clear on startup since files from previous session no longer exist
+    app.storage.user["raw_img_hashes"] = []
+    app.storage.user["processed_img_hashes"] = []
+
+    # Protected images persist on IPFS across sessions
     app.storage.user["aposematic_img_hashes"] = app.storage.user.get(
         "aposematic_img_hashes", []
     )
@@ -1244,6 +1255,68 @@ def ipns_add_gallery_to_folder(name):
             print(f"Failed to add {file_path} to MFS folder {name}")
 
 
+def _local_hash_file(file_path):
+    """Compute a SHA-256 content hash for a file. Returns hex string."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _local_store_image_pure(file_path):
+    """
+    Copy an image to the session editor directory and compute a content hash.
+    Pure function — no app.storage.user access. Safe for run.io_bound().
+
+    Returns tuple: (hash_value, file_name, editor_url) or (None, None, None) on error.
+    """
+    try:
+        file_name = os.path.basename(file_path)
+        ext = os.path.splitext(file_name)[1]
+        content_hash = _local_hash_file(file_path)
+        stored_name = f"{content_hash}{ext}"
+        dest = os.path.join(EDITOR_STORAGE_DIR, stored_name)
+        shutil.copy2(file_path, dest)
+        editor_url = f"/editor/{stored_name}"
+        return (content_hash, file_name, editor_url)
+    except Exception as e:
+        print(f"Error storing image locally: {e}")
+        return (None, None, None)
+
+
+def local_store_image(file_path):
+    """
+    Store an image in the session editor directory and register metadata.
+    Returns the content hash, or None on error.
+    """
+    content_hash, file_name, editor_url = _local_store_image_pure(file_path)
+    if content_hash:
+        app.storage.user[content_hash] = {
+            "name": file_name,
+            "path": file_path,
+            "editor_url": editor_url,
+            "extension": os.path.splitext(file_name)[1],
+            "render_metadata": False,
+        }
+    return content_hash
+
+
+def local_remove_image(hash_value):
+    """Remove an image from the session editor directory."""
+    info = app.storage.user.get(hash_value, {})
+    editor_url = info.get("editor_url", "")
+    if editor_url:
+        stored_name = editor_url.split("/")[-1]
+        path = os.path.join(EDITOR_STORAGE_DIR, stored_name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"Removed editor image: {stored_name}")
+        except Exception as e:
+            print(f"Error removing editor image: {e}")
+
+
 def _ipfs_add_pure(file_path):
     """
     Pure IPFS add operation - no app.storage.user access.
@@ -1443,16 +1516,20 @@ async def choose_img():
     files = await choose_files()
     imgs = filter_imgs(files)
     for img in imgs:
-        ipfs_hash = ipfs_add(img)
-        print(ipfs_hash)
+        # Store locally in session temp dir (not IPFS) to protect raw content
+        content_hash, file_name, editor_url = _local_store_image_pure(img)
+        if not content_hash:
+            ui.notify(f"Failed to add {img}", type="warning")
+            continue
+        print(f"Stored locally: {content_hash}")
 
-        # CRITICAL: Initialize metadata structure for raw image
-        app.storage.user[ipfs_hash] = {
+        # Initialize metadata structure for raw image
+        app.storage.user[content_hash] = {
             "name": os.path.basename(img),
             "path": img,
-            "has_audio": False,  # Default, will be updated if audio detected
+            "editor_url": editor_url,
+            "has_audio": False,
             "image_type": "raw",
-            # Initialize other audio fields to None
             "audio_path": None,
             "audio_format": None,
             "audio_duration": None,
@@ -1463,7 +1540,7 @@ async def choose_img():
         # Ensure the list exists, then append
         if "raw_img_hashes" not in app.storage.user:
             app.storage.user["raw_img_hashes"] = []
-        app.storage.user["raw_img_hashes"].append(ipfs_hash)
+        app.storage.user["raw_img_hashes"].append(content_hash)
         ui.notify(f"Added {img}")
         render_gallery()
 
@@ -1471,12 +1548,19 @@ async def choose_img():
 async def remove_img(hash_value):
     idex = app.storage.user.get("img_state", 1)
     state = img_states[idex]
-    ipfs_remove(hash_value)
+
+    if state in ("raw", "processed"):
+        # Local session storage — remove from temp dir
+        local_remove_image(hash_value)
+    else:
+        # IPFS-backed (aposematic/enciphered) — unpin and GC
+        ipfs_remove(hash_value)
+        ipfs_gc()
+
     try:
         app.storage.user.get(f"{state}_img_hashes", []).remove(hash_value)
     except ValueError:
         pass  # Hash not found, that's okay
-    ipfs_gc()
     ui.notify(f"Removed {hash_value}")
     render_gallery()
 
@@ -1509,10 +1593,18 @@ async def choose_watermark(watermark_container):
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
     file = files[0]
     if is_image(file):
-        ipfs_hash = ipfs_add(file)
-        print(ipfs_hash)
-        app.storage.user["watermark"] = ipfs_hash
-        print(app.storage.user["watermark"])
+        # Store watermark locally in session temp dir (not IPFS)
+        content_hash, file_name, editor_url = _local_store_image_pure(file)
+        if not content_hash:
+            ui.notify("Failed to store watermark", type="negative")
+            return
+        app.storage.user["watermark"] = content_hash
+        app.storage.user[content_hash] = {
+            "name": file_name,
+            "path": file,
+            "editor_url": editor_url,
+        }
+        print(f"Watermark stored locally: {content_hash}")
         persistent_save_data()
         ui.notify(f"Chose {file}")
         render_watermark(watermark_container)
@@ -1721,7 +1813,11 @@ async def process_watermarking():
     # Get watermark info once before loop (can't access app.storage in thread)
     watermark_hash = app.storage.user["watermark"]
     watermark_info = app.storage.user.get(watermark_hash, {})
-    watermark_filename = watermark_info.get("name", watermark_hash)
+    # Load watermark from local session storage (path on disk)
+    watermark_path = watermark_info.get("path")
+    if not watermark_path or not os.path.exists(watermark_path):
+        ui.notify("Watermark file not found", type="negative")
+        return
 
     for hash_value in app.storage.user.get("raw_img_hashes", []):
         img_path = app.storage.user[hash_value]["path"]
@@ -1730,17 +1826,6 @@ async def process_watermarking():
         pos_idx = app.storage.user.get("watermark_position", 1)
         pos = WATERMARK_POSITIONS[pos_idx]
         print(img_name)
-
-        # I/O-bound: load watermark from IPFS (using pure version)
-        watermark_path = await run.io_bound(
-            _ipfs_load_to_temp_file_pure, watermark_hash, watermark_filename
-        )
-        if watermark_path:
-            app.storage.user["tmp_files"].append(watermark_path)
-
-        if not watermark_path:
-            ui.notify(f"Failed to load watermark", type="negative")
-            continue
 
         # CPU-bound: watermarking (new_watermarked_img already uses run.cpu_bound internally)
         processed_img_path = await new_watermarked_img(
@@ -1759,21 +1844,22 @@ async def process_watermarking():
                 reembed_audio_if_needed, processed_img_path, audio_path
             )
 
-        # I/O-bound: network request to IPFS (using pure version)
-        ipfs_hash, file_name, extension = await run.io_bound(
-            _ipfs_add_pure, processed_img_path
+        # Store processed image locally in session temp dir (not IPFS)
+        content_hash, file_name, editor_url = await run.io_bound(
+            _local_store_image_pure, processed_img_path
         )
 
-        if not ipfs_hash:
-            ui.notify(f"Failed to upload to IPFS", type="negative")
+        if not content_hash:
+            ui.notify("Failed to store processed image", type="negative")
             continue
 
         # Preserve audio metadata when processing (storage update in main thread)
-        app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
-        app.storage.user[ipfs_hash].update(
+        app.storage.user[content_hash] = app.storage.user[hash_value].copy()
+        app.storage.user[content_hash].update(
             {
                 "path": processed_img_path,
                 "name": f"processed_{img_name}",
+                "editor_url": editor_url,
                 "has_audio": app.storage.user[hash_value].get("has_audio", False),
                 "audio_path": app.storage.user[hash_value].get(
                     "audio_path"
@@ -1785,7 +1871,7 @@ async def process_watermarking():
             }
         )
 
-        app.storage.user["processed_img_hashes"].append(ipfs_hash)
+        app.storage.user["processed_img_hashes"].append(content_hash)
         ui.notify(f"Processed {hash_value}")
 
         # Yield control to event loop for UI updates between images
@@ -2089,19 +2175,22 @@ async def process_shared_iptc_metadata():
         img_name = app.storage.user[hash_value]["name"]
         iptc_img_path = await new_iptc_img(img_name, img_path, iptc_data.to_exif_dict())
 
-        # I/O-bound: network request to IPFS (using pure version)
-        ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, iptc_img_path)
+        # Store processed image locally in session temp dir (not IPFS)
+        content_hash, _, editor_url = await run.io_bound(
+            _local_store_image_pure, iptc_img_path
+        )
 
-        if not ipfs_hash:
-            ui.notify(f"Failed to upload to IPFS", type="negative")
+        if not content_hash:
+            ui.notify("Failed to store processed image", type="negative")
             continue
 
         # Preserve audio metadata when processing (storage update in main thread)
-        app.storage.user[ipfs_hash] = app.storage.user[hash_value].copy()
-        app.storage.user[ipfs_hash].update(
+        app.storage.user[content_hash] = app.storage.user[hash_value].copy()
+        app.storage.user[content_hash].update(
             {
                 "path": iptc_img_path,
                 "name": f"processed_{img_name}",
+                "editor_url": editor_url,
                 "has_audio": app.storage.user[hash_value].get("has_audio", False),
                 "audio_format": app.storage.user[hash_value].get("audio_format"),
                 "audio_duration": app.storage.user[hash_value].get("audio_duration"),
@@ -2110,7 +2199,7 @@ async def process_shared_iptc_metadata():
             }
         )
 
-        app.storage.user["processed_img_hashes"].append(ipfs_hash)
+        app.storage.user["processed_img_hashes"].append(content_hash)
         ui.notify(f"Processed {hash_value}")
 
         # Yield control to event loop for UI updates between images
@@ -3048,12 +3137,19 @@ def render_gallery(folder=None):
                     file_info = app.storage.user.get(hash_value, {})
                     print(f"[DEBUG render_gallery] hash={hash_value}, file_info={file_info}")
                     print(f"[DEBUG render_gallery] has_audio={file_info.get('has_audio', False)}")
-                    img_url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}"
-                    if folder:
+
+                    # Use local editor URL for raw/processed, IPFS for protected images
+                    editor_url = file_info.get("editor_url")
+                    if editor_url and state in ("raw", "processed"):
+                        img_url = editor_url
+                    elif folder:
                         img_url = (
                             f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{folder}/{hash_value}"
                         )
                     else:
+                        img_url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}"
+
+                    if not folder:
                         # Show audio indicator chip if has_audio, otherwise show filename
                         if file_info.get("has_audio", False):
                             ui.chip(
@@ -3173,9 +3269,16 @@ def render_watermark(watermark_container):
     if watermark_container:
         watermark_container.clear()
         with watermark_container:
-            ui.image(
-                f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{app.storage.user.get('watermark', '')}"
-            ).classes("w-full")
+            wm_hash = app.storage.user.get("watermark", "")
+            wm_info = app.storage.user.get(wm_hash, {})
+            wm_url = wm_info.get("editor_url")
+            if wm_url:
+                ui.image(wm_url).classes("w-full")
+            else:
+                # Fallback to IPFS for watermarks stored before local storage migration
+                ui.image(
+                    f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{wm_hash}"
+                ).classes("w-full")
 
 
 def setup_browser_tab():
@@ -3786,6 +3889,7 @@ def toggle_app_mode():
 def on_close():
     print("Closing")
     # remove_tmp_files()
+    shutil.rmtree(EDITOR_STORAGE_DIR, ignore_errors=True)
 
 
 def close_app():
