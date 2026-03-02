@@ -16,16 +16,25 @@ static_dir = spec_root / 'static'
 templates_dir = spec_root / 'templates'
 main_script = spec_root / 'main.py'
 
+# Find pywebview lib directory (contains WebView2 DLLs needed at runtime)
+import importlib
+_webview_spec = importlib.util.find_spec('webview')
+_webview_lib = Path(_webview_spec.origin).parent / 'lib' if _webview_spec else None
+
 # Collect data files
 datas = [
     (str(static_dir), 'static'),
     (str(templates_dir), 'templates'),
 ]
 
+# Bundle pywebview's native DLLs (WebView2, .NET interop)
+if _webview_lib and _webview_lib.exists():
+    datas.append((str(_webview_lib), 'webview/lib'))
+
 # Platform-specific settings
 if sys.platform == 'win32':
     icon_file = str(spec_root / 'icon.ico')
-    console = False  # Disabled by default, use --console flag to show
+    console = False  # Disabled by default
 elif sys.platform == 'darwin':
     icon_file = str(spec_root / 'icon.icns')
     console = False
@@ -39,7 +48,11 @@ hiddenimports = [
     'fastapi',
     'uvicorn',
     'starlette',
-    'pywebview',
+    'webview',
+    'webview.platforms.edgechromium',
+    'clr',
+    'clr_loader',
+    'pythonnet',
     'wand',
     'exiv2',
     'exiftool',
@@ -68,7 +81,6 @@ hiddenimports = [
     'task_runner',
     # Crypto / token dependencies
     'biscuit_auth',
-    'biscuit_auth.biscuit',
     'nacl',
     'nacl.bindings',
     'nacl.secret',

@@ -3,10 +3,14 @@ Andromica - Audio Image Processing with Token Support
 """
 
 import argparse
+import multiprocessing
 import time
 import base64
 import os
 import sys
+
+# Support PyInstaller frozen builds: must be called early, before any multiprocessing use
+multiprocessing.freeze_support()
 from typing import Optional, Dict, List, Any, Tuple, Callable, Union
 import http.server
 import socketserver
@@ -5432,9 +5436,11 @@ if __name__ in {"__main__", "__mp_main__"}:
     pass
 
 app.on_shutdown(on_close)
+
 ui.run(
     native=True,
     port=cli_args.port,
+    reload=False,  # Must be False for PyInstaller frozen builds (no source files to watch)
     storage_secret="your-secret-key-here",  # Replace with a secure secret key in production
     favicon=os.path.join(static_dir, "icon.png"),
 )
