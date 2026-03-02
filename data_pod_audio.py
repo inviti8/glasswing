@@ -28,7 +28,6 @@ from video_tokens import (
     detect_video_format,
 )
 from png_chunks import extract_audio_token, has_audio_data, extract_video_token_cid
-from aiposematic import SCRAMBLE_MODE
 
 
 def determine_image_type(img_hash: str, img_info: Dict[str, Any], app) -> str:
@@ -566,12 +565,7 @@ async def process_data_pod_locally(
                     try:
                         # [INFO] Uses aiposematic v1.1 native Stellar key derivation
                         op_string = data_pod.get("op_string", "-^+")
-                        scramble_mode_val = data_pod.get("scramble_mode", 2)
-                        if scramble_mode_val in (1, 2):
-                            scramble_mode = SCRAMBLE_MODE.BUTTERFLY
-                        else:
-                            scramble_mode = SCRAMBLE_MODE.QR
-                        print(f"[DEBUG] DEBUG: Using op_string: '{op_string}', scramble_mode: {scramble_mode}")
+                        print(f"[DEBUG] DEBUG: Using op_string: '{op_string}'")
                         print(f"[DEBUG] DEBUG: Artist public key: {creator_public_key[:16]}...")
                         print(f"[DEBUG] DEBUG: Temp path: {temp_path}")
 
@@ -582,7 +576,6 @@ async def process_data_pod_locally(
                             stellar_keypair=subscriber_keys,
                             artist_public_key=creator_public_key,
                             op_string=op_string,
-                            scramble_mode=scramble_mode,
                         )
 
                         print(f"[DEBUG] DEBUG: Recovery result type: {type(result)}")

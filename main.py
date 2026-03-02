@@ -2980,7 +2980,6 @@ async def decode_protected_images(data_pod, stellar_secret):
 
     # Get aposematic parameters if needed
     op_string = data_pod.get("op_string", "-^+")
-    scramble_mode = get_scramble_mode_from_value(data_pod.get("scramble_mode", 2))
     # Process each item
     for item in data_pod.get("items", []):
         renditions = item.get("renditions", {})
@@ -3009,7 +3008,6 @@ async def decode_protected_images(data_pod, stellar_secret):
                     stellar_keypair=hvym_keys,
                     artist_public_key=creator_public_key,
                     op_string=op_string,
-                    scramble_mode=scramble_mode,
                 )
             else:
                 continue
