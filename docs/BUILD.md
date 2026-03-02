@@ -94,6 +94,7 @@ glasswing/
 ├── data_pod_audio.py
 ├── audio_tokens.py
 ├── video_tokens.py
+├── markdown_tokens.py
 ├── png_chunks.py
 ├── client_rendering.py
 ├── task_runner.py
@@ -118,7 +119,7 @@ Main spec file: `scripts/glasswing.spec`
 - `templates/` - Jinja2 templates
 
 **Hidden imports:**
-- nicegui, pywebview, wand, exiv2, etc.
+- nicegui, pywebview, wand, exiv2, markdown_tokens, etc.
 
 **Exclusions:**
 - pytest, unittest, tkinter

@@ -8,7 +8,7 @@ Andromica provides two methods of content protection:
 
 Both methods use a shared key scheme based on Stellar/Curve25519 cryptography.
 
-Additionally, media (audio/video) can be embedded in images as encrypted tokens using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305). An image supports audio OR video, not both.
+Additionally, media (audio/video) and text (markdown) can be embedded in images as encrypted tokens using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305). An image supports audio OR video (not both), plus markdown independently.
 
 ## Shared Key Scheme
 
@@ -251,16 +251,34 @@ token_data = ipfs_load(cid)
 video_bytes, metadata = extract_video_from_token(receiver_kp, token_data)
 ```
 
+### Markdown Tokens
+
+Markdown files are bundled into a single JSON payload, encrypted as one HVYMDataToken, and stored in PNG tEXt chunks (`markdown_token_001`, `markdown_token_002`, ...). Multiple `.md`/`.markdown`/`.txt` files per image are supported, with a 1 MB total size limit.
+
+Markdown can coexist with audio or video on the same image (it uses a distinct chunk prefix `markdown_token_`).
+
+```python
+# Creation (markdown_tokens.py)
+# Bundles multiple files into one JSON payload before encryption
+token = create_markdown_token(sender_kp, receiver_pub, bundled_data, filename, expires_in)
+output_path = embed_markdown_token(image_file, token)
+
+# Extraction (markdown_tokens.py)
+md_bytes, metadata = extract_markdown_from_token(receiver_kp, serialized_token)
+```
+
+**Markdown in Data Pods:** Unlike audio/video, markdown tokens are NOT reembedded into aposematic images. Instead, the serialized token is extracted during data pod creation and stored in the data pod JSON as `markdownToken`. On the subscriber side, the token is read from the JSON and decrypted directly, avoiding chunk preservation issues.
+
 ### Token Lifecycle
 
-| Step | Audio | Video |
-|------|-------|-------|
-| Encrypt | `HVYMDataToken.create_from_bytes()` | `HVYMDataToken.create_from_bytes()` |
-| Store | PNG tEXt chunks | IPFS (CID in PNG tEXt chunks) |
-| Survive processing | `reembed_media_if_needed()` copies chunks | `reembed_media_if_needed()` copies CID chunks |
-| Pre-extract (recovery) | `extract_audio_token()` before image recovery | `extract_video_token_cid()` before image recovery |
-| Decrypt | `HVYMDataToken.extract_from_token()` | `HVYMDataToken.extract_from_token()` |
-| Cleanup | Strip tEXt chunks | Unpin CID from IPFS + strip tEXt chunks |
+| Step | Audio | Video | Markdown |
+|------|-------|-------|----------|
+| Encrypt | `HVYMDataToken.create_from_bytes()` | `HVYMDataToken.create_from_bytes()` | `HVYMDataToken.create_from_bytes()` |
+| Store | PNG tEXt chunks | IPFS (CID in PNG tEXt chunks) | PNG tEXt chunks |
+| Survive processing | `reembed_media_if_needed()` copies chunks | `reembed_media_if_needed()` copies CID chunks | NOT reembedded — stored in data pod JSON |
+| Pre-extract (recovery) | `extract_audio_token()` before image recovery | `extract_video_token_cid()` before image recovery | Read from data pod JSON (`markdownToken` field) |
+| Decrypt | `HVYMDataToken.extract_from_token()` | `HVYMDataToken.extract_from_token()` | `HVYMDataToken.extract_from_token()` |
+| Cleanup | Strip tEXt chunks | Unpin CID from IPFS + strip tEXt chunks | Strip tEXt chunks |
 
 ## Debug Key
 

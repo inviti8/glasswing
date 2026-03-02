@@ -35,6 +35,7 @@ For `aposematic` or `enciphered` content:
     "items": [...],
     "audio_token_images": ["QmHash1...", "QmHash2..."],
     "video_token_images": ["QmHash3..."],
+    "markdown_token_images": ["QmHash4..."],
     "type_distribution": {
         "raw": 0,
         "processed": 0,
@@ -43,7 +44,9 @@ For `aposematic` or `enciphered` content:
         "total_with_audio": 2,
         "audio_token_count": 2,
         "total_with_video": 1,
-        "video_token_count": 1
+        "video_token_count": 1,
+        "total_with_markdown": 1,
+        "markdown_token_count": 1
     }
 }
 ```
@@ -56,6 +59,7 @@ For `aposematic` or `enciphered` content:
 | `scramble_mode` | Aposematic mode (1=BUTTERFLY, 2=BUTTERFLY, 3=QR) |
 | `audio_token_images` | List of image hashes containing encrypted audio tokens |
 | `video_token_images` | List of image hashes containing video token CID references |
+| `markdown_token_images` | List of image hashes containing markdown tokens |
 | `type_distribution` | Counts of each image/media type in the data pod |
 
 ### Item Structure
@@ -89,9 +93,17 @@ Each image in the gallery:
     "hasVideo": true,
     "videoMethod": "token",
     "videoTokenCid": "QmVideoCID...",
+    "hasMarkdown": true,
+    "markdownMethod": "token",
+    "markdownToken": "<serialized HVYMDataToken>",
     "original_hash": "QmOriginalProcessedHash...",
     "audioTokenInfo": null,
     "videoTokenInfo": {
+        "receiverPublicKey": "GXYZ123...",
+        "tokenExpiry": null,
+        "noExpiry": true
+    },
+    "markdownTokenInfo": {
         "receiverPublicKey": "GXYZ123...",
         "tokenExpiry": null,
         "noExpiry": true
@@ -101,7 +113,7 @@ Each image in the gallery:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | `"video_image"`, `"audio_image"`, or image type (`"picture"`) |
+| `type` | string | `"video_image"`, `"audio_image"`, `"markdown_image"`, or `"picture"` |
 | `guid` | string | Unique identifier using IPFS hash |
 | `imageType` | string | `"raw"`, `"processed"`, `"aposematic"`, or `"enciphered"` |
 | `hasAudio` | boolean | Whether image contains embedded audio token |
@@ -109,12 +121,18 @@ Each image in the gallery:
 | `hasVideo` | boolean | Whether image contains embedded video token CID |
 | `videoMethod` | string | `"token"` (encrypted, stored on IPFS) |
 | `videoTokenCid` | string | IPFS CID for the encrypted video token |
+| `hasMarkdown` | boolean | Whether image contains embedded markdown token |
+| `markdownMethod` | string | `"token"` (encrypted) |
+| `markdownToken` | string | Serialized HVYMDataToken (stored in data pod JSON, not in image chunks) |
 | `original_hash` | string | For enciphered images: hash of original processed image (for media extraction) |
 | `audioTokenInfo` | object | Receiver key, expiry for audio token |
 | `videoTokenInfo` | object | Receiver key, expiry for video token |
+| `markdownTokenInfo` | object | Receiver key, expiry for markdown token |
 | `renditions` | array | List of image renditions (note: array, not object) |
 
-**Item Type Precedence:** `video_image` > `audio_image` > `picture`
+**Item Type Precedence:** `video_image` > `audio_image` > `markdown_image` > `picture`
+
+An image with both audio and markdown is typed `audio_image` (with `hasMarkdown: true`). Markdown is independent — it can coexist with audio or video.
 
 **audioTokenInfo / videoTokenInfo Fields:**
 
@@ -126,7 +144,7 @@ Each image in the gallery:
 
 ### Media in Processed Items
 
-After `process_data_pod_locally()`, items may include decoded audio and/or video:
+After `process_data_pod_locally()`, items may include decoded audio, video, and/or markdown:
 
 ```json
 {
@@ -138,6 +156,16 @@ After `process_data_pod_locally()`, items may include decoded audio and/or video
         "src": "/editor/video_abc123.mp4",
         "format": "mp4",
         "localPath": "/tmp/glasswing_editor_xxx/video_abc123.mp4"
+    },
+    "markdown": {
+        "files": [
+            {
+                "filename": "description.md",
+                "text": "# Raw markdown text...",
+                "text_html": "<h1>Raw markdown text...</h1>",
+                "size": 1234
+            }
+        ]
     }
 }
 ```
@@ -218,6 +246,11 @@ For each image hash in storage (`app.storage.user[hash_value]`):
     "video_path": null,
     "video_token_expires": null,
     "video_token_no_expiry": false,
+    "has_markdown": true,
+    "markdown_method": "token",
+    "markdown_files": [{"filename": "description.md", "size": 1234}],
+    "markdown_token_expires": null,
+    "markdown_token_no_expiry": true,
     "original_hash": "QmOriginalProcessedHash..."
 }
 ```
@@ -242,22 +275,30 @@ For each image hash in storage (`app.storage.user[hash_value]`):
 | `video_path` | string | Path to original video file |
 | `video_token_expires` | number/null | Unix timestamp when token expires |
 | `video_token_no_expiry` | boolean | `true` if token never expires |
+| `has_markdown` | boolean | Whether markdown token is embedded |
+| `markdown_method` | string | `"token"` |
+| `markdown_files` | list | List of `{"filename": str, "size": int}` for bundled files |
+| `markdown_token_expires` | number/null | Unix timestamp when token expires, or `null` for no expiry |
+| `markdown_token_no_expiry` | boolean | `true` if token never expires |
 | `original_hash` | string | For enciphered: hash of processed image (contains media) |
 
 ## Media Embedding
 
-### Audio and Video Methods
+### Audio, Video, and Markdown Methods
 
-An image supports **audio OR video, not both**. Both use HVYMDataToken encryption.
+An image supports **audio OR video** (not both), **plus markdown independently**. All use HVYMDataToken encryption.
 
 | Media | Storage | Encryption | tEXt Chunk Keywords |
 |-------|---------|------------|---------------------|
 | Audio | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `audio_token_001`, `audio_token_002`, ... |
 | Video | Encrypted token on IPFS; CID in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `video_token_cid_001`, `video_token_cid_002`, ... |
+| Markdown | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `markdown_token_001`, `markdown_token_002`, ... |
+
+**Note:** Markdown tokens are NOT reembedded into aposematic images. The serialized token is extracted during data pod creation and stored in the data pod JSON (`markdownToken` field). On the subscriber side, the token is read from the JSON and decrypted directly.
 
 ### HVYMDataToken Structure
 
-Both audio and video tokens use the hvym-stellar library's Biscuit-based format:
+Audio, video, and markdown tokens all use the hvym-stellar library's Biscuit-based format:
 
 ```
 ┌─────────────────────────────────────────────────────┐

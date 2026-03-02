@@ -2,7 +2,7 @@
 
 ## Overview
 
-Andromica is a decentralized content creation and distribution system built on IPFS and Stellar cryptography. It enables creators to publish protected galleries that can only be viewed by authorized subscribers. The application supports embedding encrypted audio and video tokens in images using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305 encryption). An image supports audio OR video, not both.
+Andromica is a decentralized content creation and distribution system built on IPFS and Stellar cryptography. It enables creators to publish protected galleries that can only be viewed by authorized subscribers. The application supports embedding encrypted audio, video, and markdown tokens in images using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305 encryption). An image supports audio OR video (not both), plus markdown independently.
 
 ## System Components
 
@@ -18,9 +18,10 @@ Andromica is a decentralized content creation and distribution system built on I
 │  │ • Process/watermark │    │   channels          │            │
 │  │ • Add metadata      │    │ • Fetch data pods   │            │
 │  │ • Embed audio/video │    │ • Decrypt content   │            │
-│  │ • Create aposematic │    │ • Extract audio/    │            │
-│  │ • Encrypt images    │    │   video tokens      │            │
-│  │ • Deploy to IPFS    │    │ • Render galleries  │            │
+│  │ • Embed markdown    │    │ • Extract audio/    │            │
+│  │ • Create aposematic │    │   video/markdown    │            │
+│  │ • Encrypt images    │    │ • Render galleries  │            │
+│  │ • Deploy to IPFS    │    │                     │            │
 │  └─────────────────────┘    └─────────────────────┘            │
 ├─────────────────────────────────────────────────────────────────┤
 │                      SHARED SERVICES                             │
@@ -45,7 +46,8 @@ Primary application entry point and UI orchestration.
 - `process_deciphering()` - Decrypt enciphered images
 - `process_audio_embedding()` - Embed encrypted audio token in image
 - `process_video_embedding()` - Embed encrypted video token in image (via IPFS CID)
-- `reembed_media_if_needed()` - Re-embed audio/video chunks after image processing
+- `process_markdown_embedding()` - Embed encrypted markdown token in image
+- `reembed_media_if_needed()` - Re-embed audio/video chunks after image processing (markdown excluded)
 - `play_video_from_image()` - Fetch, decrypt, and play video from image
 - `remove_video_from_image()` - Strip video CID chunks and unpin from IPFS
 - `create_ninjs_data_pod()` - Create NINJS-format data pod from current images
@@ -64,12 +66,12 @@ Primary application entry point and UI orchestration.
 - `img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}`
 
 ### data_pod_audio.py
-Data pod creation and processing with audio/video token support.
+Data pod creation and processing with audio/video/markdown token support.
 
 **Key Functions:**
 - `determine_image_type()` - Identify image state from metadata/storage
-- `create_ninjs_data_pod_with_encrypted_tokens()` - Create encrypted data pods with audio/video metadata
-- `process_data_pod_locally()` - Decrypt data pod for subscriber viewing (audio + video recovery)
+- `create_ninjs_data_pod_with_encrypted_tokens()` - Create encrypted data pods with audio/video/markdown metadata
+- `process_data_pod_locally()` - Decrypt data pod for subscriber viewing (audio + video + markdown recovery)
 
 ### audio_tokens.py
 Encrypted audio token handling using HVYMDataToken.
@@ -95,8 +97,23 @@ Video tokens are too large for PNG tEXt chunks, so the encrypted token is stored
 
 **Supported Formats:** MP4, WebM, MOV, AVI, MKV
 
+### markdown_tokens.py
+Encrypted markdown token handling using HVYMDataToken.
+
+Markdown files are bundled into a single JSON payload, encrypted as one HVYMDataToken, and stored in PNG tEXt chunks (same pattern as audio). Multiple files per image are supported.
+
+**Key Functions:**
+- `create_markdown_token()` - Create encrypted markdown token
+- `create_token_markdown_image()` - Bundle .md files, encrypt, embed in PNG
+- `extract_markdown_from_token()` - Decrypt markdown from token
+- `extract_token_markdowns()` - Full extraction pipeline from image
+
+**Supported Extensions:** `.md`, `.markdown`, `.txt`
+
+**Size Limit:** 1 MB total across all bundled files
+
 ### png_chunks.py
-PNG tEXt chunk manipulation for audio/video embedding.
+PNG tEXt chunk manipulation for audio/video/markdown embedding.
 
 **Key Functions:**
 - `embed_audio_token()` - Embed encrypted audio token in PNG tEXt chunks
@@ -105,6 +122,9 @@ PNG tEXt chunk manipulation for audio/video embedding.
 - `embed_video_token_cid()` - Embed video IPFS CID in PNG tEXt chunks
 - `extract_video_token_cid()` - Extract video CID from PNG
 - `has_video_data()` - Check if PNG contains video CID
+- `embed_markdown_token()` - Embed encrypted markdown token in PNG tEXt chunks
+- `extract_markdown_token()` - Extract markdown token from PNG
+- `has_markdown_data()` - Check if PNG contains markdown token
 - `copy_token_chunks()` - Copy tEXt chunks between PNGs (used during reprocessing)
 - `remove_text_chunks()` - Strip tEXt chunks by prefix (used when removing media)
 
@@ -127,6 +147,7 @@ UI dialog components for user interactions.
 - `aposematic_dialog()` - Aposematic settings and recipient selection
 - `edit_audio_info()` - Audio embedding dialog (file picker, recipient, expiry)
 - `edit_video_info()` - Video embedding dialog (file picker, recipient, expiry)
+- `edit_markdown_info()` - Markdown embedding dialog (file picker, recipient, expiry)
 - `process_dialog()` - Async task runner with progress UI
 
 ---
@@ -261,14 +282,15 @@ async def process_deciphering():
 
 ## Media Embedding Flow
 
-### Audio vs Video Embedding
+### Audio, Video, and Markdown Embedding
 
-An image supports **audio OR video, not both**. The editor UI enforces this: when one media type is embedded, the FAB button for the other type is hidden.
+An image supports **audio OR video** (not both), **plus markdown independently**. The editor UI enforces audio/video mutual exclusion; markdown can coexist with either.
 
 | Media | Storage | Encryption | tEXt Chunk Keywords |
 |-------|---------|------------|---------------------|
 | Audio | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `audio_token_001`, `audio_token_002`, ... |
 | Video | Encrypted token on IPFS; CID in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `video_token_cid_001`, `video_token_cid_002`, ... |
+| Markdown | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `markdown_token_001`, `markdown_token_002`, ... |
 
 ### Audio Token Embedding
 
@@ -313,6 +335,9 @@ def create_token_video_image(video_file, image_file, sender_kp, receiver_pub,
 │  │  ... (8KB max per chunk)                        │   │
 │  │                 OR                               │   │
 │  │  tEXt: video_token_cid_001 = <IPFS CID>        │   │
+│  │                                                  │   │
+│  │  tEXt: markdown_token_001 = <encrypted token>   │   │
+│  │  ... (can coexist with audio or video)          │   │
 │  └─────────────────────────────────────────────────┘   │
 │  IEND chunk                                             │
 └─────────────────────────────────────────────────────────┘
@@ -324,7 +349,7 @@ def create_token_video_image(video_file, image_file, sender_kp, receiver_pub,
 - `new_aposematic_img()` / `recover_aposematic_img()` - PIL creates new image
 - `new_enciphered_img()` / `new_deciphered_img()` - ImageMagick creates new image
 
-**Solution — Creator Side:** `reembed_media_if_needed()` copies both audio and video tEXt chunks from the source PNG into the target PNG after any transformation.
+**Solution — Creator Side:** `reembed_media_if_needed()` copies audio and video tEXt chunks from the source PNG into the target PNG after any transformation. Markdown chunks are NOT reembedded — the serialized markdown token is stored in the data pod JSON instead.
 
 ```python
 def reembed_media_if_needed(target_image_path, source_image_path):
@@ -334,10 +359,11 @@ def reembed_media_if_needed(target_image_path, source_image_path):
             source_image_path, target_image_path,
             keyword_prefix=VIDEO_TOKEN_CID_PREFIX
         )
+        # NOTE: Markdown chunks are NOT reembedded — stored in data pod JSON
     return target_image_path
 ```
 
-**Solution — Subscriber Side (Aposematic):** Pre-extract audio tokens and video CIDs from the encrypted PNG BEFORE recovery, since recovery creates a new PNG that loses tEXt chunks.
+**Solution — Subscriber Side (Aposematic):** Pre-extract audio tokens and video CIDs from the encrypted PNG BEFORE recovery, since recovery creates a new PNG that loses tEXt chunks. Markdown tokens are read from the data pod JSON (not the image).
 
 ```python
 # Pre-extract before recovery (data_pod_audio.py)
@@ -434,12 +460,10 @@ cipher_key = shared_key.shared_secret_as_hex()
 
 **Steps:**
 1. Validate image state
-2. If aposematic: Recreate with correct shared key (debug→app)
-3. Re-embed audio/video media into aposematic images
-4. Create data pod with `debug_public_key` as creator
-5. Process data pod locally using `stellar_secret` (decrypts images + audio/video tokens)
-6. Render HTML with decrypted images and media
-7. Display in browser tab
+2. Create data pod with `hvym_public_key` as creator, `debug_public_key` as recipient
+3. Process data pod locally using `debug_secret` (decrypts images + audio/video/markdown tokens)
+4. Render HTML with decrypted images and media
+5. Display in browser tab
 
 ### Pintheon Deployment (`process_pintheon_deploy_gallery()`)
 
@@ -506,10 +530,12 @@ cipher_key = shared_key.shared_secret_as_hex()
    - Download image from IPFS
    - **Pre-extract audio token** (BEFORE recovery - critical!)
    - **Pre-extract video CID** (BEFORE recovery - critical!)
+   - **Load markdown token** from data pod JSON (not from image)
    - Decrypt/recover image based on type
    - Process pre-extracted audio (decrypt token)
    - Process pre-extracted video (fetch from IPFS → decrypt token → write to temp dir)
-   - Update item with decrypted image href, audio data, and video src URL
+   - Process markdown (decrypt token → convert to HTML via markdown2)
+   - Update item with decrypted image href, audio data, video src URL, and markdown HTML
 
 4. **Render Gallery**
    - Use Jinja2 template with processed data pod
@@ -850,6 +876,9 @@ User switches to BROWSER tab
       "hasVideo": true,
       "videoMethod": "token",
       "videoTokenCid": "QmVideoCID...",
+      "hasMarkdown": true,
+      "markdownMethod": "token",
+      "markdownToken": "<serialized HVYMDataToken>",
       "renditions": [{
         "name": "original",
         "href": "http://localhost:8080/ipfs/QmXYZ...",
@@ -859,12 +888,18 @@ User switches to BROWSER tab
         "receiverPublicKey": "GEFGH...",
         "tokenExpiry": null,
         "noExpiry": true
+      },
+      "markdownTokenInfo": {
+        "receiverPublicKey": "GEFGH...",
+        "tokenExpiry": null,
+        "noExpiry": true
       }
     }
   ],
 
   "audio_token_images": ["QmAudioImg..."],
   "video_token_images": ["QmVideoImg..."],
+  "markdown_token_images": ["QmMarkdownImg..."],
   "type_distribution": {
     "raw": 0,
     "processed": 0,
@@ -873,7 +908,9 @@ User switches to BROWSER tab
     "total_with_audio": 1,
     "audio_token_count": 1,
     "total_with_video": 1,
-    "video_token_count": 1
+    "video_token_count": 1,
+    "total_with_markdown": 1,
+    "markdown_token_count": 1
   }
 }
 ```
@@ -937,6 +974,11 @@ User switches to BROWSER tab
         "video_path": str,
         "video_token_expires": float,
         "video_token_no_expiry": bool,
+        "has_markdown": bool,
+        "markdown_method": str,        # "token"
+        "markdown_files": list,        # [{"filename": str, "size": int}]
+        "markdown_token_expires": float,
+        "markdown_token_no_expiry": bool,
         "original_hash": str        # For processed images
     }
 }
@@ -954,6 +996,7 @@ User switches to BROWSER tab
 | Aposematic | aiposematic v1.1 | Visual scrambling (native Stellar key derivation) |
 | Audio Tokens | hvym-stellar (HVYMDataToken) | Encrypted audio tokens |
 | Video Tokens | hvym-stellar (HVYMDataToken) + IPFS | Encrypted video tokens (CID in PNG) |
+| Markdown Tokens | hvym-stellar (HVYMDataToken) | Encrypted markdown tokens (in PNG) |
 | Metadata | exiftool, exiv2 | IPTC/EXIF/XMP handling |
 | Cryptography | hvym-stellar | Stellar-based ECDH keys |
 | Storage | IPFS | Decentralized file storage |
@@ -967,13 +1010,14 @@ User switches to BROWSER tab
 ```
 andromica/
 ├── main.py              # Application entry, UI, core logic
-├── dialogs.py           # Dialog components (audio/video embed, cipher, aposematic)
+├── dialogs.py           # Dialog components (audio/video/markdown embed, cipher, aposematic)
 ├── img_edit.py          # Image processing (watermark, encrypt)
 ├── metadata.py          # IPTC data management
-├── data_pod_audio.py    # Data pod creation and processing (audio + video)
+├── data_pod_audio.py    # Data pod creation and processing (audio + video + markdown)
 ├── audio_tokens.py      # HVYMDataToken audio encryption
 ├── video_tokens.py      # HVYMDataToken video encryption + IPFS CID
-├── png_chunks.py        # PNG tEXt chunk manipulation (audio tokens + video CIDs)
+├── markdown_tokens.py   # HVYMDataToken markdown encryption (bundled JSON)
+├── png_chunks.py        # PNG tEXt chunk manipulation (audio + video + markdown tokens)
 ├── client_rendering.py  # Gallery HTML rendering
 ├── task_runner.py       # Async task runner with progress UI
 ├── data.json            # Persistent user data
@@ -983,7 +1027,7 @@ andromica/
 │   ├── PhinoVariation.ttf # Additional font
 │   └── logo.json        # Logo configuration
 ├── templates/
-│   └── gallery.html     # Jinja2 gallery template (audio + video player)
+│   └── gallery.html     # Jinja2 gallery template (audio + video player + markdown)
 ├── docs/
 │   ├── ARCHITECTURE.md  # This file
 │   ├── ENCRYPTION.md    # Cryptography details
@@ -1123,11 +1167,13 @@ When removing an image (`remove_img()`), the video token CID is unpinned from IP
 ### PNG-Only Media Embedding
 Audio and video tokens are stored in PNG tEXt chunks, so media embedding requires PNG images. Non-PNG images are rejected with a notification. Other image formats (JPEG, etc.) can still be imported and processed but cannot carry embedded media.
 
-### No Dual Media Embedding
-An image supports audio OR video, not both. The editor FAB uses `if/elif/else` logic:
+### No Dual Audio/Video Embedding
+An image supports audio OR video, not both. Markdown is independent and can coexist with either. The editor FAB uses `if/elif/else` logic for audio/video:
 - If audio embedded: show Play Audio + Remove Audio
 - Elif video embedded: show Play Video + Remove Video
 - Else: show Add Audio + Add Video
+
+Markdown has its own separate FAB action (Embed Markdown / Remove Markdown) that is always available regardless of audio/video state.
 
 ### NiceGUI Storage Persistence
 In-place list modifications don't trigger persistence:
