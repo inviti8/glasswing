@@ -132,8 +132,8 @@ def parse_args():
     parser.add_argument(
         "--port",
         type=int,
-        default=8081,
-        help="Port for the application UI (default: 8081)"
+        default=8090,
+        help="Port for the application UI (default: 8090)"
     )
     # Parse known args to avoid conflicts with NiceGUI/uvicorn args
     args, _ = parser.parse_known_args()
