@@ -990,7 +990,6 @@ andromica/
 │   ├── DATA_STRUCTURES.md
 │   ├── INSTALL.md
 │   └── BUILD.md
-├── VIDEO_SUPPORT.md     # Video feature implementation plan
 └── scripts/
     └── ...              # Build scripts
 ```
@@ -1072,6 +1071,22 @@ Used for HTTP access in browser contexts:
 - `HVYMDataToken` - Biscuit-based encrypted data tokens
 - Keys stored as Stellar-format secrets
 
+### Application UI (Port 8090)
+
+NiceGUI runs a local web server that pywebview displays in a native window.
+
+**Default port:** 8090 (chosen to avoid conflict with IPFS Gateway on 8080)
+
+**CLI override:** `python main.py --port 9000`
+
+**Available CLI flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | 8090 | Application UI port |
+| `--debug` | off | Open DevTools in native window |
+| `--console` | off | Show console output |
+
 ---
 
 ## Error Handling
@@ -1104,6 +1119,9 @@ PNG tEXt chunks (where audio tokens and video CIDs are stored) are NOT preserved
 
 ### Video Token Cleanup
 When removing an image (`remove_img()`), the video token CID is unpinned from IPFS before the image itself is removed. Similarly, `remove_video_from_image()` unpins the CID and strips the tEXt chunks.
+
+### PNG-Only Media Embedding
+Audio and video tokens are stored in PNG tEXt chunks, so media embedding requires PNG images. Non-PNG images are rejected with a notification. Other image formats (JPEG, etc.) can still be imported and processed but cannot carry embedded media.
 
 ### No Dual Media Embedding
 An image supports audio OR video, not both. The editor FAB uses `if/elif/else` logic:

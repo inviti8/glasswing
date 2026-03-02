@@ -53,9 +53,9 @@ IPFS is required for video embedding (encrypted video tokens are stored on IPFS)
 
 ### macOS
 
-1. Download the appropriate file for your architecture:
-   - **Intel Macs:** `glasswing-amd64.zip`
-   - **Apple Silicon:** `glasswing-arm64.zip`
+1. Download `glasswing-macos.zip` from the latest release
+   - This is an ARM (Apple Silicon) build
+   - Intel Macs can run it via Rosetta 2 (automatic, no extra setup)
 2. Extract the ZIP file
 3. Move `glasswing.app` to Applications folder
 4. Right-click `glasswing.app` and select "Open"

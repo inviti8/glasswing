@@ -58,16 +58,16 @@ This triggers the GitHub Actions workflow that builds for all platforms.
 
 - **Linux:** Ubuntu 22.04, Python 3.11
 - **Windows:** windows-latest, Python 3.11
-- **macOS Intel:** macos-13, Python 3.11
-- **macOS ARM:** macos-latest, Python 3.11
+- **macOS:** macos-14 (Apple Silicon), Python 3.11
+
+Note: Intel Mac runners (macos-13) are retired. Intel Mac users can run the ARM build via Rosetta 2 (automatic).
 
 ### Artifacts
 
 GitHub Actions creates artifacts for each platform:
 - `glasswing-linux` - Linux executable
 - `glasswing-windows` - Windows .exe
-- `glasswing-macos-amd64` - macOS Intel .zip
-- `glasswing-macos-arm64` - macOS ARM .zip
+- `glasswing-macos` - macOS ARM .zip (runs on Intel via Rosetta 2)
 
 ## Project Structure
 
@@ -104,7 +104,6 @@ glasswing/
 │   └── logo.json
 ├── templates/
 │   └── gallery.html
-├── VIDEO_SUPPORT.md
 └── requirements.txt
 ```
 

@@ -144,14 +144,14 @@ The `op_string` defines the sequence of scrambling operations:
 
 ```python
 # aiposematic v1.1 — pass Stellar keypair, not cipher_key
-result = recover_aposematic_img(
+# Note: recover does NOT accept scramble_mode (only new_aposematic_img does)
+decoded_path = recover_aposematic_img(
     scrambled_img_path,
     stellar_keypair=subscriber_keys,    # Subscriber's Stellar25519KeyPair
     artist_public_key=creator_pub,      # Creator's public key
     op_string=op_string,
-    scramble_mode=scramble_mode
 )
-original_path = result['img_path']
+# Returns the path to the recovered image (string), not a dict
 ```
 
 ## Data Pod Encryption Metadata
@@ -207,14 +207,12 @@ async def decode_protected_images(data_pod, stellar_secret):
             decoded_path = new_deciphered_img(temp_path, cipher_key)
         elif content_type == 'aposematic':
             # aiposematic v1.1: pass keypair directly
-            result = recover_aposematic_img(
+            decoded_path = recover_aposematic_img(
                 temp_path,
                 stellar_keypair=hvym_keys,
                 artist_public_key=creator_public_key,
                 op_string=data_pod.get('op_string'),
-                scramble_mode=data_pod.get('scramble_mode')
             )
-            decoded_path = result['img_path']
 
         # Convert to base64 data URI for display
         base64_uri = image_to_base64_uri(decoded_path)
