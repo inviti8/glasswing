@@ -2265,120 +2265,24 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Invalid image state: {idex}", type="negative")
             return
 
-        # CRITICAL: Debug flow: debug key = creator, app key = recipient
+        # CRITICAL: Debug flow uses existing aposematic images as-is.
+        # The normal aposematic flow already created them with:
+        #   creator = stellar_secret (app key)
+        #   subscriber = debug_public_key (or selected recipient)
+        # The data pod stores creator_public_key = hvym_public_key so the
+        # subscriber (debug_secret) can derive the same ECDH shared key.
+        # This also means debug_secret can decrypt the media tokens, which
+        # were created with receiver = debug_public_key.
         hvym_public_key = app.storage.user.get("hvym_public_key", "")
-        current_public_key = hvym_public_key
+        debug_public_key = app.storage.user.get("debug_public_key", "")
         print(
-            f"[DEBUG] Debug flow using app public key as recipient: {current_public_key[:16]}..."
+            f"[DEBUG] Debug flow: creator=hvym ({hvym_public_key[:16]}...), subscriber=debug ({debug_public_key[:16]}...)"
         )
 
-        # CRITICAL: Recreate aposematic images with correct shared key
-        if state == "aposematic":
-            from stellar_sdk.keypair import Keypair
-            from hvym_stellar import Stellar25519KeyPair
-
-            # CRITICAL: For debugging, use debug secret key (not app's stellar_secret)
-            debug_secret = app.storage.user.get("debug_secret", "")
-            print(f"[DEBUG] Debug stellar secret (first 16): {debug_secret[:16]}...")
-
-            # Create the key pair ONCE and reuse it
-            stellar_kp = Keypair.from_secret(debug_secret)
-            creator_keys = Stellar25519KeyPair(stellar_kp)
-
-            print(f"[DEBUG] creator_keys.public_key(): {creator_keys.public_key()}")
-            print(f"[DEBUG] current_public_key (recipient): {current_public_key}")
-
-            print(
-                f"[DEBUG] Recreating aposematic images with stellar keypair for subscriber: {current_public_key[:16]}..."
-            )
-
-            # Recreate all aposematic images with the correct shared key
-            processed_hashes = app.storage.user.get("processed_img_hashes", [])
-            if processed_hashes:
-                # Fix: Properly clear and manage the aposematic hash list
-                app.storage.user["aposematic_img_hashes"] = []
-
-                for hash_value in processed_hashes:
-                    try:
-                        img_info = app.storage.user.get(hash_value)
-                        if not img_info:
-                            continue
-
-                        img_path = img_info.get("path")
-                        img_name = img_info.get("name")
-
-                        if not img_path or not os.path.exists(img_path):
-                            continue
-
-                        print(f"Recreating aposematic for: {img_name}")
-                        from aiposematic import new_aposematic_img, SCRAMBLE_MODE
-
-                        # Get op_string before cpu_bound call (can't access storage in process)
-                        op_string = app.storage.user.get("op_string", "-^+")
-
-                        # CPU-bound: aposematic encoding
-                        aposematic = await run.cpu_bound(
-                            new_aposematic_img,
-                            img_path,
-                            stellar_keypair=creator_keys,
-                            subscriber_public_key=current_public_key,
-                            op_string=op_string,
-                            scramble_mode=SCRAMBLE_MODE.BUTTERFLY,
-                        )
-
-                        aposematic_img_path = aposematic["img_path"]
-
-                        # Copy audio/video token chunks from processed image if it had media
-                        if img_info.get("has_audio", False) or img_info.get("has_video", False):
-                            print(
-                                f"Copying media chunks from {img_path} into aposematic image"
-                            )
-                            # I/O-bound: file operations
-                            aposematic_img_path = await run.io_bound(
-                                reembed_media_if_needed,
-                                aposematic_img_path, img_path
-                            )
-
-                        # I/O-bound: IPFS upload (using pure version)
-                        ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, aposematic_img_path)
-                        if not ipfs_hash:
-                            print(f"Failed to upload aposematic image to IPFS")
-                            continue
-                        # Fix: Use helper for proper persistence
-                        append_to_storage_list("aposematic_img_hashes", ipfs_hash)
-
-                        # Update info for the new hash
-                        app.storage.user[ipfs_hash] = {
-                            "path": aposematic_img_path,
-                            "name": f"aposematic_{img_name}",
-                            "original_hash": hash_value,
-                            "has_audio": img_info.get("has_audio", False),
-                            "audio_path": img_info.get("audio_path"),
-                            "audio_format": img_info.get("audio_format"),
-                            "audio_duration": img_info.get("audio_duration"),
-                            "audio_size": img_info.get("audio_size"),
-                            "audio_method": img_info.get("audio_method"),
-                            "has_video": img_info.get("has_video", False),
-                            "video_method": img_info.get("video_method"),
-                            "video_token_cid": img_info.get("video_token_cid"),
-                            "video_path": img_info.get("video_path"),
-                            "video_token_expires": img_info.get("video_token_expires"),
-                            "video_token_no_expiry": img_info.get("video_token_no_expiry"),
-                        }
-
-                    except Exception as e:
-                        print(f"Error recreating aposematic {hash_value}: {e}")
-                        continue
-
-                print(
-                    f"Recreated {len(app.storage.user.get('aposematic_img_hashes', []))} aposematic images"
-                )
-
-        debug_public_key = app.storage.user.get("debug_public_key", "")
         output_path = await create_ninjs_data_pod_with_encrypted_tokens(
             app, state,
-            receiver_public_key=current_public_key,  # App's hvym_public_key
-            creator_public_key=debug_public_key      # Debug as creator
+            receiver_public_key=debug_public_key,    # Debug key is the subscriber/receiver
+            creator_public_key=hvym_public_key        # App key is the creator
         )
 
         # I/O-bound: clean IPFS folder (pure function, no storage access)
@@ -2393,10 +2297,11 @@ async def process_debug_deploy_gallery():
             ui.notify(f"Successfully created data pod at: {output_path}")
 
             # Process data pod locally to decrypt images before rendering
-            # CRITICAL: Debug flow: app acts as subscriber to decrypt
-            subscriber_secret = app.storage.user.get("stellar_secret", "")
+            # CRITICAL: Debug flow: debug key acts as subscriber to decrypt
+            # (matches token receiver and aposematic subscriber roles)
+            subscriber_secret = app.storage.user.get("debug_secret", "")
             print(
-                f"[DEBUG] Debug flow using app secret as subscriber: {subscriber_secret[:16]}..."
+                f"[DEBUG] Debug flow using debug secret as subscriber: {subscriber_secret[:16]}..."
             )
 
             if not subscriber_secret:
