@@ -19,6 +19,7 @@ CHUNK_SIZE = 8192  # 8KB chunks for tEXt compatibility
 # Keyword patterns
 AUDIO_TOKEN_PREFIX = 'audio_token_'
 VIDEO_TOKEN_CID_PREFIX = 'video_token_cid_'
+MARKDOWN_TOKEN_PREFIX = 'markdown_token_'
 
 
 def is_valid_png(data: bytes) -> bool:
@@ -315,5 +316,38 @@ def has_video_data(png_path: str) -> Tuple[bool, str]:
         tuple: (has_video, method) where method is 'token' or None
     """
     if extract_combined_data(png_path, VIDEO_TOKEN_CID_PREFIX):
+        return True, 'token'
+    return False, None
+
+
+def embed_markdown_token(png_path: str, token: str,
+                          output_path: Optional[str] = None) -> str:
+    """
+    Embed markdown token in PNG.
+
+    Args:
+        png_path: Path to source PNG
+        token: Serialized markdown token
+        output_path: Output path (optional)
+
+    Returns:
+        str: Path to PNG with embedded token
+    """
+    return write_text_chunks(png_path, MARKDOWN_TOKEN_PREFIX, token, output_path)
+
+
+def extract_markdown_token(png_path: str) -> Optional[str]:
+    """Extract markdown token from PNG."""
+    return extract_combined_data(png_path, MARKDOWN_TOKEN_PREFIX)
+
+
+def has_markdown_data(png_path: str) -> Tuple[bool, str]:
+    """
+    Check if PNG has embedded markdown data.
+
+    Returns:
+        tuple: (has_markdown, method) where method is 'token' or None
+    """
+    if extract_combined_data(png_path, MARKDOWN_TOKEN_PREFIX):
         return True, 'token'
     return False, None

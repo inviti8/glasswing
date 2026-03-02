@@ -27,7 +27,8 @@ from video_tokens import (
     extract_video_from_token,
     detect_video_format,
 )
-from png_chunks import extract_audio_token, has_audio_data, extract_video_token_cid
+from png_chunks import extract_audio_token, has_audio_data, extract_video_token_cid, extract_markdown_token
+from markdown_tokens import extract_markdown_from_token, _unbundle_markdown_payload
 
 
 def determine_image_type(img_hash: str, img_info: Dict[str, Any], app) -> str:
@@ -113,6 +114,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         data_items = []
         audio_token_images = []  # Track which images have audio tokens
         video_token_images = []  # Track which images have video tokens
+        markdown_token_images = []  # Track which images have markdown tokens
 
         for img_hash in processed_hashes:
             try:
@@ -151,6 +153,8 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 audio_method = img_info.get("audio_method", "token")
                 has_video = img_info.get("has_video", False)
                 video_method = img_info.get("video_method", "token") if has_video else None
+                has_markdown = img_info.get("has_markdown", False)
+                markdown_method = img_info.get("markdown_method", "token") if has_markdown else None
 
                 # Get IPFS gateway settings for full URLs
                 ipfs_webui = app.storage.user.get("ipfs_webui", "127.0.0.1")
@@ -167,11 +171,13 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 # Use the existing cipher key from storage (already set during recreation)
                 cipher_key = app.storage.user.get("cipher_key", "")
 
-                # Determine item type: video takes precedence over audio
+                # Determine item type: video > audio > markdown > picture
                 if has_video:
                     item_type = "video_image"
                 elif has_audio:
                     item_type = "audio_image"
+                elif has_markdown:
+                    item_type = "markdown_image"
                 else:
                     item_type = image_type
 
@@ -200,6 +206,8 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                     "audioMethod": audio_method,
                     "hasVideo": has_video,
                     "videoMethod": video_method,
+                    "hasMarkdown": has_markdown,
+                    "markdownMethod": markdown_method,
                     "original_hash": img_info.get("original_hash"),
                 }
 
@@ -246,6 +254,27 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                         "noExpiry": video_no_expiry,
                     }
 
+                # For markdown token images, include token info and file list
+                if has_markdown and markdown_method == "token":
+                    if not receiver_public_key:
+                        raise ValueError(
+                            "Receiver public key required for token-based markdown"
+                        )
+
+                    markdown_token_images.append(img_hash)
+
+                    markdown_token_expires = img_info.get("markdown_token_expires")
+                    markdown_no_expiry = img_info.get(
+                        "markdown_token_no_expiry", markdown_token_expires is None
+                    )
+
+                    item["markdownTokenInfo"] = {
+                        "receiverPublicKey": receiver_public_key,
+                        "tokenExpiry": markdown_token_expires,
+                        "noExpiry": markdown_no_expiry,
+                    }
+                    item["markdownFiles"] = img_info.get("markdown_files", [])
+
                 if render_flag:
                     data_items.append(item)
 
@@ -265,6 +294,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
             "content_type": "mixed",  # May contain original, aposematic, enciphered
             "audio_token_images": audio_token_images,
             "video_token_images": video_token_images,
+            "markdown_token_images": markdown_token_images,
             "type_distribution": {
                 "raw": len([i for i in data_items if i["imageType"] == "raw"]),
                 "processed": len(
@@ -282,8 +312,12 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 "total_with_video": len(
                     [i for i in data_items if i.get("hasVideo", False)]
                 ),
+                "total_with_markdown": len(
+                    [i for i in data_items if i.get("hasMarkdown", False)]
+                ),
                 "audio_token_count": len(audio_token_images),
                 "video_token_count": len(video_token_images),
+                "markdown_token_count": len(markdown_token_images),
             },
         }
 
@@ -310,6 +344,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         print(f"Successfully created NINJS data pod with {len(data_items)} items")
         print(f"Audio token images: {len(audio_token_images)}")
         print(f"Video token images: {len(video_token_images)}")
+        print(f"Markdown token images: {len(markdown_token_images)}")
         print(f"Type distribution: {ninjs_data['type_distribution']}")
 
         # Store success notification
@@ -546,6 +581,43 @@ async def process_data_pod_locally(
                         except Exception as e:
                             print(f"[WARN] Pre-extraction of video CID failed: {e}")
 
+                # [INFO] CRITICAL: Pre-extract markdown token BEFORE recovery!
+                # Markdown tokens are stored in tEXt chunks which are lost during recovery.
+                pre_extracted_markdown = None
+                if item.get("hasMarkdown") and image_type in ("aposematic", "enciphered"):
+                    print(f"[MARKDOWN] Pre-extracting markdown token from {image_type} image before recovery...")
+                    if image_type == "enciphered":
+                        original_hash = item.get("original_hash")
+                        if original_hash:
+                            try:
+                                original_href = f"{gateway_base}/ipfs/{original_hash}"
+                                original_path = await run.io_bound(download_ipfs_image, original_href)
+                                if original_path:
+                                    serialized_token = extract_markdown_token(original_path)
+                                    if serialized_token:
+                                        pre_extracted_markdown = {
+                                            "type": "token",
+                                            "data": serialized_token
+                                        }
+                                        print(f"[OK] Pre-extracted markdown token from original ({len(serialized_token)} chars)")
+                                    try:
+                                        os.remove(original_path)
+                                    except:
+                                        pass
+                            except Exception as e:
+                                print(f"[WARN] Failed to extract markdown from original image: {e}")
+                    else:
+                        try:
+                            serialized_token = extract_markdown_token(temp_path)
+                            if serialized_token:
+                                pre_extracted_markdown = {
+                                    "type": "token",
+                                    "data": serialized_token
+                                }
+                                print(f"[OK] Pre-extracted markdown token ({len(serialized_token)} chars)")
+                        except Exception as e:
+                            print(f"[WARN] Pre-extraction of markdown failed: {e}")
+
                 if image_type == "enciphered":
                     print(f"[UNLOCK] Deciphering enciphered image: {item.get('title')}")
                     try:
@@ -703,7 +775,8 @@ async def process_data_pod_locally(
                             print(f"[VIDEO] Fetching video token from IPFS: {video_cid[:20]}...")
                             # Fetch serialized token from IPFS
                             token_temp_path = await run.io_bound(
-                                _ipfs_load_to_temp_file_pure, video_cid, "video_token.bin"
+                                _ipfs_load_to_temp_file_pure, video_cid, "video_token.bin",
+                                ipfs_webui, ipfs_webui_port
                             )
                             if token_temp_path:
                                 with open(token_temp_path, 'r') as vf:
@@ -776,6 +849,85 @@ async def process_data_pod_locally(
                             print(f"[ERROR] No video CID found for image")
                         elif not _ipfs_load_to_temp_file_pure:
                             print(f"[ERROR] IPFS load function not available for video token fetch")
+
+                # Extract/process markdown if present
+                if item.get("hasMarkdown"):
+                    print(f"[MARKDOWN] Processing markdown for: {item.get('title')}")
+                    markdown_extracted = False
+
+                    # Use pre-extracted markdown for aposematic/encrypted images
+                    if pre_extracted_markdown:
+                        print(f"[MARKDOWN] Using pre-extracted markdown ({pre_extracted_markdown['type']})")
+                        try:
+                            payload_bytes, metadata = extract_markdown_from_token(
+                                subscriber_keys, pre_extracted_markdown["data"], verify_hash=True
+                            )
+                            if payload_bytes:
+                                md_entries = _unbundle_markdown_payload(payload_bytes)
+                                md_files_out = []
+                                for entry in md_entries:
+                                    text = entry["content"].decode("utf-8", errors="replace")
+                                    try:
+                                        import markdown2
+                                        text_html = markdown2.markdown(
+                                            text, extras=["fenced-code-blocks", "tables"]
+                                        )
+                                    except ImportError:
+                                        text_html = f"<pre>{text}</pre>"
+                                    md_files_out.append({
+                                        "filename": entry["filename"],
+                                        "text": text,
+                                        "text_html": text_html,
+                                        "size": entry["size"],
+                                    })
+                                item["markdown"] = {
+                                    "files": md_files_out,
+                                    "method": "token",
+                                    "extractedAt": time.time(),
+                                }
+                                print(f"[OK] Markdown decrypted from pre-extracted token ({len(md_files_out)} files)")
+                                markdown_extracted = True
+                        except Exception as e:
+                            print(f"[WARN] Pre-extracted markdown processing failed: {e}")
+
+                    # For non-aposematic/encrypted images, extract token from decoded_path
+                    if not markdown_extracted:
+                        try:
+                            serialized_token = extract_markdown_token(decoded_path)
+                            if serialized_token:
+                                payload_bytes, metadata = extract_markdown_from_token(
+                                    subscriber_keys, serialized_token, verify_hash=True
+                                )
+                                if payload_bytes:
+                                    md_entries = _unbundle_markdown_payload(payload_bytes)
+                                    md_files_out = []
+                                    for entry in md_entries:
+                                        text = entry["content"].decode("utf-8", errors="replace")
+                                        try:
+                                            import markdown2
+                                            text_html = markdown2.markdown(
+                                                text, extras=["fenced-code-blocks", "tables"]
+                                            )
+                                        except ImportError:
+                                            text_html = f"<pre>{text}</pre>"
+                                        md_files_out.append({
+                                            "filename": entry["filename"],
+                                            "text": text,
+                                            "text_html": text_html,
+                                            "size": entry["size"],
+                                        })
+                                    item["markdown"] = {
+                                        "files": md_files_out,
+                                        "method": "token",
+                                        "extractedAt": time.time(),
+                                    }
+                                    print(f"[OK] Markdown extracted from token ({len(md_files_out)} files)")
+                                    markdown_extracted = True
+                        except Exception as e:
+                            print(f"[WARN] Markdown token extraction failed: {e}")
+
+                    if not markdown_extracted:
+                        print(f"[ERROR] No markdown could be extracted from image")
 
                 # Convert image to base64 for display (only if requested)
                 # For local preview with IPFS running, skip this to avoid huge HTML files

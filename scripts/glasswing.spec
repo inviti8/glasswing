@@ -72,6 +72,7 @@ hiddenimports = [
     # Local application modules
     'audio_tokens',
     'video_tokens',
+    'markdown_tokens',
     'png_chunks',
     'data_pod_audio',
     'client_rendering',

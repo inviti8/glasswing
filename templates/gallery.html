@@ -426,6 +426,98 @@
         .video-close-btn:hover {
             opacity: 1;
         }
+
+        /* Markdown content */
+        .markdown-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(46, 125, 50, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .media-badges .markdown-badge {
+            position: static;
+        }
+
+        .markdown-content {
+            padding: 20px;
+            background: #fafafa;
+            border-top: 1px solid #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.7;
+            color: #333;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3,
+        .markdown-content h4 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            color: #222;
+        }
+
+        .markdown-content p {
+            margin-bottom: 0.8em;
+        }
+
+        .markdown-content code {
+            background: #e8e8e8;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        .markdown-content pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1em 0;
+        }
+
+        .markdown-content pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        .markdown-content th {
+            background: #f0f0f0;
+            font-weight: 600;
+        }
+
+        .markdown-file-label {
+            font-size: 0.8rem;
+            color: #666;
+            font-weight: 600;
+            margin-bottom: 5px;
+            padding: 4px 8px;
+            background: #e8f5e9;
+            border-radius: 4px;
+            display: inline-block;
+        }
     </style>
     <script>
     function playPreExtractedAudio(audioData, audioFormat, playButton) {
@@ -639,14 +731,17 @@
                             <div class="image-placeholder">&#x1F5BC;&#xFE0F;</div>
                         {% endif %}
 
-                        <!-- Media badges (audio and/or video) -->
-                        {% if item.hasAudio or item.hasVideo %}
+                        <!-- Media badges (audio, video, and/or markdown) -->
+                        {% if item.hasAudio or item.hasVideo or item.hasMarkdown %}
                         <div class="media-badges">
                             {% if item.hasAudio %}
                             <div class="audio-badge">&#x1F3B5; Audio</div>
                             {% endif %}
                             {% if item.hasVideo %}
                             <div class="video-badge">&#x1F3AC; Video</div>
+                            {% endif %}
+                            {% if item.hasMarkdown %}
+                            <div class="markdown-badge">&#x1F4DD; Text</div>
                             {% endif %}
                         </div>
                         {% endif %}
@@ -697,6 +792,18 @@
                         </div>
                         {% endif %}
                     </div>
+
+                    <!-- Markdown content -->
+                    {% if item.markdown and item.markdown.files %}
+                    <div class="markdown-content">
+                        {% for md_file in item.markdown.files %}
+                            {% if item.markdown.files|length > 1 %}
+                            <div class="markdown-file-label">{{ md_file.filename }}</div>
+                            {% endif %}
+                            <div>{{ md_file.text_html|safe }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
 
                     <div class="item-content">
                         <div class="item-title">{{ item.headline or 'Untitled' }}</div>

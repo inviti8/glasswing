@@ -51,14 +51,21 @@ from audio_tokens import (
 from png_chunks import (
     has_audio_data,
     has_video_data,
+    has_markdown_data,
     copy_token_chunks,
     remove_text_chunks,
     VIDEO_TOKEN_CID_PREFIX,
+    MARKDOWN_TOKEN_PREFIX,
 )
 from video_tokens import (
     create_token_video_image,
     extract_token_video,
     is_video_file as is_video_file_check,
+)
+from markdown_tokens import (
+    create_token_markdown_image,
+    extract_token_markdowns,
+    is_markdown_file as is_markdown_file_check,
 )
 from data_pod_audio import (
     create_ninjs_data_pod_with_encrypted_tokens,
@@ -226,11 +233,13 @@ def render_gallery_html(data_pod: dict) -> str:
     colors = get_gallery_colors()
     is_dark_mode = app.storage.user.get("dark_mode", None)
 
+    _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+    _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
     template_context = {
         "data_pod": data_pod,
-        "ipfs_gateway": f"{ipfs_webui}:{ipfs_webui_port}",
-        "ipfs_webui": ipfs_webui,
-        "ipfs_webui_port": ipfs_webui_port,
+        "ipfs_gateway": f"{_gw_host}:{_gw_port}",
+        "ipfs_webui": _gw_host,
+        "ipfs_webui_port": _gw_port,
         "gallery_title": app.storage.user.get("gallery_title", ""),
         "gallery_description": app.storage.user.get("gallery_description", ""),
         "colors": colors,
@@ -416,6 +425,15 @@ def init():
             )
             app.storage.user["dark_mode"] = data.get("dark_mode", None)
             app.storage.user["debug_secret"] = data.get("debug_secret", None)
+            # IPFS settings
+            if "ipfs_webui" in data:
+                app.storage.user["ipfs_webui"] = data["ipfs_webui"]
+            if "ipfs_webui_port" in data:
+                app.storage.user["ipfs_webui_port"] = data["ipfs_webui_port"]
+            if "ipfs_endpoint" in data:
+                app.storage.user["ipfs_endpoint"] = data["ipfs_endpoint"]
+            if "ipfs_port" in data:
+                app.storage.user["port"] = data["ipfs_port"]
     else:
         # Initialize app_colors with defaults before calling persistent_save_data()
         app.storage.user["app_colors"] = {
@@ -468,6 +486,15 @@ def init():
             )
             app.storage.user["dark_mode"] = data.get("dark_mode", None)
             app.storage.user["debug_secret"] = data.get("debug_secret", None)
+            # IPFS settings
+            if "ipfs_webui" in data:
+                app.storage.user["ipfs_webui"] = data["ipfs_webui"]
+            if "ipfs_webui_port" in data:
+                app.storage.user["ipfs_webui_port"] = data["ipfs_webui_port"]
+            if "ipfs_endpoint" in data:
+                app.storage.user["ipfs_endpoint"] = data["ipfs_endpoint"]
+            if "ipfs_port" in data:
+                app.storage.user["port"] = data["ipfs_port"]
 
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
@@ -590,6 +617,10 @@ def persistent_save_data():
     gallery_description = app.storage.user.get("gallery_description", "")
     dark_mode = app.storage.user.get("dark_mode", None)
     debug_secret = app.storage.user.get("debug_secret", None)
+    ipfs_webui_setting = app.storage.user.get("ipfs_webui", ipfs_webui)
+    ipfs_webui_port_setting = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+    ipfs_endpoint_setting = app.storage.user.get("ipfs_endpoint", ipfs_endpoint)
+    ipfs_port_setting = app.storage.user.get("port", port)
     iptc_data.update_from_storage()
     print(iptc_data.to_dict())
     with open(data_file, "w") as f:
@@ -619,6 +650,10 @@ def persistent_save_data():
                 "latest_data_pod_timestamp": latest_data_pod_timestamp,
                 "gallery_title": gallery_title,
                 "gallery_description": gallery_description,
+                "ipfs_webui": ipfs_webui_setting,
+                "ipfs_webui_port": ipfs_webui_port_setting,
+                "ipfs_endpoint": ipfs_endpoint_setting,
+                "ipfs_port": ipfs_port_setting,
             },
             f,
         )
@@ -1383,7 +1418,7 @@ def ipfs_add(file_path):
     return hash_value
 
 
-def _ipfs_load_to_temp_file_pure(hash_value, filename=None):
+def _ipfs_load_to_temp_file_pure(hash_value, filename=None, gateway_host=None, gateway_port=None):
     """
     Pure IPFS load operation - no app.storage.user access.
     Safe to use with run.io_bound().
@@ -1391,15 +1426,19 @@ def _ipfs_load_to_temp_file_pure(hash_value, filename=None):
     Args:
         hash_value: IPFS hash to load
         filename: Optional filename to use (if None, uses hash_value)
+        gateway_host: IPFS gateway host (defaults to module-level ipfs_webui)
+        gateway_port: IPFS gateway port (defaults to module-level ipfs_webui_port)
 
     Returns:
         temp_path on success, None on error
     """
+    _host = gateway_host or ipfs_webui
+    _port = gateway_port or ipfs_webui_port
     print(f"Loading IPFS hash: {hash_value}")
     try:
         params = {"arg": hash_value}
         response = requests.post(
-            f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}",
+            f"{_host}:{_port}/ipfs/{hash_value}",
             params=params,
             timeout=30,
             stream=True,
@@ -1450,7 +1489,9 @@ def ipfs_load_to_temp_file(hash_value, original_filename=None):
     print(file_info)
     filename = original_filename or file_info.get("name", hash_value)
 
-    temp_path = _ipfs_load_to_temp_file_pure(hash_value, filename)
+    _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+    _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+    temp_path = _ipfs_load_to_temp_file_pure(hash_value, filename, _gw_host, _gw_port)
     if temp_path:
         app.storage.user["tmp_files"].append(temp_path)
 
@@ -2005,8 +2046,8 @@ async def process_aposematic():
 
             aposematic_img_path = aposematic["img_path"]
 
-            # Copy audio/video token chunks from processed image if it had media
-            if img_info.get("has_audio", False) or img_info.get("has_video", False):
+            # Copy audio/video/markdown token chunks from processed image if it had media
+            if img_info.get("has_audio", False) or img_info.get("has_video", False) or img_info.get("has_markdown", False):
                 print(f"Copying media chunks from {img_path} into aposematic image")
                 # I/O-bound: file operations
                 aposematic_img_path = await run.io_bound(
@@ -2041,6 +2082,11 @@ async def process_aposematic():
                 "video_path": img_info.get("video_path"),
                 "video_token_expires": img_info.get("video_token_expires"),
                 "video_token_no_expiry": img_info.get("video_token_no_expiry"),
+                "has_markdown": img_info.get("has_markdown", False),
+                "markdown_method": img_info.get("markdown_method"),
+                "markdown_files": img_info.get("markdown_files"),
+                "markdown_token_expires": img_info.get("markdown_token_expires"),
+                "markdown_token_no_expiry": img_info.get("markdown_token_no_expiry"),
             }
 
             ui.notify(f"Processed {img_name}")
@@ -2144,6 +2190,11 @@ async def process_enciphering():
                 "video_path": img_info.get("video_path"),
                 "video_token_expires": img_info.get("video_token_expires"),
                 "video_token_no_expiry": img_info.get("video_token_no_expiry"),
+                "has_markdown": img_info.get("has_markdown", False),
+                "markdown_method": img_info.get("markdown_method"),
+                "markdown_files": img_info.get("markdown_files"),
+                "markdown_token_expires": img_info.get("markdown_token_expires"),
+                "markdown_token_no_expiry": img_info.get("markdown_token_no_expiry"),
             }
 
             ui.notify(f"Enciphered {img_name}")
@@ -2263,8 +2314,8 @@ async def process_shared_iptc_metadata():
 
 
 async def process_add_mardown_file(text):
-    # TODO: Implement markdown file addition
-    ui.notify("Markdown file addition not yet implemented")
+    # Deprecated: replaced by per-image markdown embedding flow
+    ui.notify("Use the per-image 'Embed Markdown' action instead", type="info")
 
 
 async def process_debug_deploy_gallery():
@@ -2330,8 +2381,8 @@ async def process_debug_deploy_gallery():
                 ipfs_add=ipfs_add,
                 _ipfs_add_pure=_ipfs_add_pure,
                 _ipfs_load_to_temp_file_pure=_ipfs_load_to_temp_file_pure,
-                ipfs_webui=ipfs_webui,
-                ipfs_webui_port=ipfs_webui_port,
+                ipfs_webui=app.storage.user.get("ipfs_webui", ipfs_webui),
+                ipfs_webui_port=app.storage.user.get("ipfs_webui_port", ipfs_webui_port),
                 video_temp_dir=EDITOR_STORAGE_DIR,
             )
 
@@ -3009,10 +3060,13 @@ async def select_channel(subscription_name, channel_info):
         subscription = next(
             (s for s in subscriptions if s["name"] == subscription_name), None
         )
+        _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+        _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+        _gw_default = f"{_gw_host}:{_gw_port}"
         gateway = (
-            subscription.get("url", ipfs_webui + ":" + ipfs_webui_port)
+            subscription.get("url", _gw_default)
             if subscription
-            else ipfs_webui + ":" + ipfs_webui_port
+            else _gw_default
         )
 
         # Render the template
@@ -3078,6 +3132,38 @@ def render_state(hashes):
             ui.chip(f"{state} ({len(hashes)})", icon="view_array")
 
 
+def _render_markdown_below_image(hash_value, file_info):
+    """Render embedded markdown content below the image card.
+
+    Attempts to decrypt the markdown token and display each file's content.
+    Fails gracefully if the current user is not the intended recipient.
+    """
+    img_path = file_info.get("path")
+    if not img_path or not os.path.exists(img_path):
+        return
+
+    try:
+        receiver_kp = get_user_keypair(app)
+        md_files = extract_token_markdowns(img_path, receiver_kp)
+        if not md_files:
+            return
+
+        with ui.column().classes("w-full px-4 pb-4 gap-2"):
+            if len(md_files) > 1:
+                ui.separator()
+            for md_entry in md_files:
+                md_text = md_entry["content"].decode("utf-8", errors="replace")
+                if len(md_files) > 1:
+                    ui.label(md_entry["filename"]).classes(
+                        "text-xs font-medium text-gray-500"
+                    )
+                ui.markdown(md_text).classes("w-full")
+
+    except Exception:
+        # Token may be encrypted for subscriber, not creator — silently skip
+        pass
+
+
 def render_gallery(folder=None):
     # tabs.set_value('IMAGES')
     idex = app.storage.user.get("img_state", 1)
@@ -3103,20 +3189,24 @@ def render_gallery(folder=None):
 
                     # Use local editor URL for raw/processed, IPFS for protected images
                     editor_url = file_info.get("editor_url")
+                    # Read IPFS gateway settings from storage (user may have changed them)
+                    _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+                    _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
                     if editor_url and state in ("raw", "processed"):
                         img_url = editor_url
                     elif folder:
                         img_url = (
-                            f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{folder}/{hash_value}"
+                            f"{_gw_host}:{_gw_port}/ipfs/{folder}/{hash_value}"
                         )
                     else:
-                        img_url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}"
+                        img_url = f"{_gw_host}:{_gw_port}/ipfs/{hash_value}"
 
                     if not folder:
                         # Show media indicator chips, otherwise show filename
                         has_audio_chip = file_info.get("has_audio", False)
                         has_video_chip = file_info.get("has_video", False)
-                        if has_audio_chip or has_video_chip:
+                        has_markdown_chip = file_info.get("has_markdown", False)
+                        if has_audio_chip or has_video_chip or has_markdown_chip:
                             with ui.row().classes("absolute top-2 left-2 z-10 gap-1"):
                                 if has_audio_chip:
                                     ui.chip(
@@ -3130,6 +3220,12 @@ def render_gallery(folder=None):
                                         icon="videocam",
                                         color="purple",
                                     ).props("square")
+                                if has_markdown_chip:
+                                    ui.chip(
+                                        "Text",
+                                        icon="description",
+                                        color="green",
+                                    ).props("square")
                         else:
                             ui.chip(
                                 file_info.get("name", "Unknown"),
@@ -3140,6 +3236,10 @@ def render_gallery(folder=None):
                             )
 
                     img_container = ui.image(img_url).classes("w-full")
+
+                    # Auto-render markdown below image if present
+                    if file_info.get("has_markdown", False) and not folder:
+                        _render_markdown_below_image(hash_value, file_info)
 
                     # FAB container positioned absolutely over image
                     with ui.row().classes("absolute top-2 right-2 z-10"):
@@ -3196,6 +3296,23 @@ def render_gallery(folder=None):
                                         h
                                     ),
                                 ).tooltip("Add Video")
+                            # Markdown embedding (independent of audio/video)
+                            has_markdown_flag = file_info.get("has_markdown", False)
+                            if has_markdown_flag:
+                                ui.fab_action(
+                                    "text_snippet",
+                                    on_click=lambda h=hash_value: remove_markdown_from_image(
+                                        h
+                                    ),
+                                    color="negative",
+                                ).tooltip("Remove Markdown")
+                            else:
+                                ui.fab_action(
+                                    "text_snippet",
+                                    on_click=lambda h=hash_value: edit_markdown_info_main(
+                                        h
+                                    ),
+                                ).tooltip("Embed Markdown")
                             ui.fab_action(
                                 "delete",
                                 on_click=lambda h=hash_value: remove_img(h),
@@ -3262,8 +3379,10 @@ def render_watermark(watermark_container):
                 ui.image(wm_url).classes("w-full")
             else:
                 # Fallback to IPFS for watermarks stored before local storage migration
+                _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+                _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
                 ui.image(
-                    f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{wm_hash}"
+                    f"{_gw_host}:{_gw_port}/ipfs/{wm_hash}"
                 ).classes("w-full")
 
 
@@ -3556,7 +3675,9 @@ async def create_ninjs_data_pod(prefix="processed"):
 
                 # Use the IPFS gateway URL for browser access
                 # This allows the HTML to display images when loaded in a browser
-                gateway_base = f"{ipfs_webui}:{ipfs_webui_port}"
+                _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+                _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+                gateway_base = f"{_gw_host}:{_gw_port}"
                 rendition = {
                     "href": f"{gateway_base}/ipfs/{img_hash}",
                     "ipfs_hash": img_hash,  # Store the hash separately for reference
@@ -4387,17 +4508,17 @@ def main_page():
                                 with ui.row().classes("w-full items-end gap-2"):
                                     ui.input("WebUI URL", value=ipfs_webui).bind_value(
                                         app.storage.user, "ipfs_webui"
-                                    ).classes("grow")
+                                    ).on_value_change(persistent_save_data).classes("grow")
                                     ui.input("Port", value=ipfs_webui_port).bind_value(
                                         app.storage.user, "ipfs_webui_port"
-                                    ).classes("w-30")
+                                    ).on_value_change(persistent_save_data).classes("w-30")
                                 with ui.row().classes("w-full items-end gap-2"):
                                     ui.input("API URL", value=ipfs_endpoint).bind_value(
                                         app.storage.user, "ipfs_endpoint"
-                                    ).classes("grow")
+                                    ).on_value_change(persistent_save_data).classes("grow")
                                     ui.input("Port", value=port).bind_value(
                                         app.storage.user, "port"
-                                    ).classes("w-30")
+                                    ).on_value_change(persistent_save_data).classes("w-30")
                         with ui.card().classes("w-full"):
                             with ui.expansion("Pintheon").classes("w-full"):
                                 with ui.row().classes("w-full items-end gap-2"):
@@ -4524,7 +4645,9 @@ def main_page():
                                             ):
                                                 if w_img:
                                                     print(w_img)
-                                                    url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{w_img}"
+                                                    _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+                                                    _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+                                                    url = f"{_gw_host}:{_gw_port}/ipfs/{w_img}"
                                                     if url_valid(url):
                                                         render_watermark(
                                                             watermark_container
@@ -4848,6 +4971,11 @@ def reembed_media_if_needed(target_image_path, source_image_path):
             source_image_path, target_image_path,
             keyword_prefix=VIDEO_TOKEN_CID_PREFIX
         )
+        # Copy markdown token chunks
+        target_image_path = copy_token_chunks(
+            source_image_path, target_image_path,
+            keyword_prefix=MARKDOWN_TOKEN_PREFIX
+        )
     return target_image_path
 
 
@@ -4948,6 +5076,82 @@ async def process_audio_from_storage():
 def edit_audio_info_main(hash_value):
     """Edit audio information using standard dialog with process_dialog pattern."""
     edit_audio_info(hash_value, process_dialog, process_audio_from_storage, choose_files)
+
+
+def edit_markdown_info_main(hash_value):
+    """Open markdown embedding dialog using standard dialog with process_dialog pattern."""
+    edit_markdown_info(hash_value, process_dialog, process_markdown_from_storage, choose_files)
+
+
+async def process_markdown_from_storage():
+    """Process markdown embedding using params stored by edit_markdown_info dialog.
+
+    Reads parameters from app.storage.user['_markdown_embed_params'] set by the dialog.
+    """
+    params = app.storage.user.get("_markdown_embed_params")
+    if not params:
+        ui.notify("No markdown embedding parameters found", type="negative")
+        return
+
+    try:
+        img_name = params["img_name"]
+        img_path = params["img_path"]
+        hash_value = params["hash_value"]
+        markdown_files = params["markdown_files"]
+        receiver_public_key = params.get("receiver_public_key")
+        expiry_option = params.get("expiry_option", "never")
+
+        # Parse expiry option to hours (None for never)
+        expiry_mapping = {
+            'never': None,
+            '1h': 1,
+            '24h': 24,
+            '7d': 168,
+            '30d': 720,
+            '365d': 8760
+        }
+        expiry_hours = expiry_mapping.get(expiry_option)
+
+        print(f"[DEBUG process_markdown_from_storage] img_name={img_name}")
+        print(f"[DEBUG process_markdown_from_storage] hash_value={hash_value}")
+        print(f"[DEBUG process_markdown_from_storage] files={markdown_files}")
+        print(f"[DEBUG process_markdown_from_storage] expiry_option={expiry_option}")
+
+        if not markdown_files:
+            ui.notify("Please select at least one markdown file", type="warning")
+            return
+
+        # Convert hours to seconds (or None for no expiry)
+        if expiry_hours is None:
+            expires_in = None
+        else:
+            expires_in = int(expiry_hours * 3600)
+
+        result = await process_markdown_embedding(
+            img_name,
+            img_path,
+            hash_value,
+            markdown_files,
+            receiver_public_key,
+            expires_in,
+        )
+
+        if result and result[0] is not None:
+            if expires_in is None:
+                ui.notify("Markdown embedded with permanent access token", type="positive")
+            else:
+                hours = expires_in / 3600
+                ui.notify(f"Markdown embedded with {hours:.0f}h expiry token", type="positive")
+            render_gallery()
+        else:
+            ui.notify("Failed to embed markdown", type="negative")
+
+    except Exception as e:
+        ui.notify(f"Error embedding markdown: {str(e)}", type="negative")
+        print(f"Markdown embedding error: {e}")
+    finally:
+        if "_markdown_embed_params" in app.storage.user:
+            del app.storage.user["_markdown_embed_params"]
 
 
 def play_audio_from_image(hash_value):
@@ -5191,9 +5395,14 @@ async def play_video_from_image(hash_value):
         receiver_kp = get_user_keypair(app)
 
         # Fetch from IPFS and decrypt (IO-bound)
+        _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
+        _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
+        _ipfs_load_fn = lambda cid, fname: _ipfs_load_to_temp_file_pure(
+            cid, fname, gateway_host=_gw_host, gateway_port=_gw_port
+        )
         video_bytes, video_format, metadata = await run.io_bound(
             extract_token_video,
-            img_path, receiver_kp, _ipfs_load_to_temp_file_pure, True
+            img_path, receiver_kp, _ipfs_load_fn, True
         )
 
         if not video_bytes:
@@ -5427,6 +5636,193 @@ async def process_audio_embedding(
         print(f"Error in process_audio_embedding: {e}")
         ui.notify(f"Audio embedding failed: {str(e)}", type="negative")
         return None, None
+
+
+async def process_markdown_embedding(
+    img_name,
+    img_path,
+    hash_value,
+    markdown_files,
+    receiver_public_key=None,
+    expires_in=None,
+):
+    """
+    Embed markdown files into image using encrypted HVYMDataToken.
+
+    Args:
+        img_name: Image name
+        img_path: Image path
+        hash_value: Current image hash
+        markdown_files: List of markdown file paths
+        receiver_public_key: Required — subscriber's public key
+        expires_in: Token expiration time in seconds (None for no expiry)
+
+    Returns:
+        tuple: (new_hash, output_path) or (None, None) on failure
+    """
+    try:
+        # Validation
+        if not markdown_files:
+            ui.notify("No markdown files selected", type="negative")
+            return None, None
+
+        for mf in markdown_files:
+            if not os.path.exists(mf):
+                ui.notify(f"File not found: {mf}", type="negative")
+                return None, None
+
+        if not img_path.lower().endswith('.png'):
+            ui.notify("Markdown embedding requires a PNG image", type="negative")
+            return None, None
+
+        if not receiver_public_key:
+            ui.notify("Receiver public key required for markdown token", type="negative")
+            return None, None
+
+        # Create encrypted markdown token image
+        sender_kp = get_user_keypair(app)
+        print(f"[DEBUG process_markdown_embedding] Creating token markdown image...")
+        output_path = create_token_markdown_image(
+            markdown_files, img_path, sender_kp, receiver_public_key, expires_in
+        )
+
+        print(f"[DEBUG process_markdown_embedding] output_path={output_path}")
+        if not output_path:
+            return None, None
+
+        # Store locally in session temp dir
+        new_hash, _, editor_url = _local_store_image_pure(output_path)
+        print(f"[DEBUG process_markdown_embedding] new_hash={new_hash}")
+        if not new_hash:
+            return None, None
+
+        # Update storage with new image info
+        old_info = app.storage.user.get(hash_value, {})
+
+        import time as _time
+        token_expires = None
+        if expires_in is not None:
+            token_expires = _time.time() + expires_in
+
+        # Build file summary for storage
+        md_file_summaries = []
+        for mf in markdown_files:
+            md_file_summaries.append({
+                "filename": os.path.basename(mf),
+                "size": os.path.getsize(mf),
+            })
+
+        new_info = {
+            "name": f"md_{img_name}",
+            "path": output_path,
+            "editor_url": editor_url,
+            "has_markdown": True,
+            "markdown_method": "token",
+            "markdown_files": md_file_summaries,
+            "markdown_token_expires": token_expires,
+            "markdown_token_no_expiry": expires_in is None,
+            # Preserve existing audio/video info
+            "has_audio": old_info.get("has_audio", False),
+            "audio_method": old_info.get("audio_method"),
+            "audio_path": old_info.get("audio_path"),
+            "audio_token_expires": old_info.get("audio_token_expires"),
+            "audio_token_no_expiry": old_info.get("audio_token_no_expiry"),
+            "has_video": old_info.get("has_video", False),
+            "video_method": old_info.get("video_method"),
+            "video_token_cid": old_info.get("video_token_cid"),
+            "video_path": old_info.get("video_path"),
+            "video_token_expires": old_info.get("video_token_expires"),
+            "video_token_no_expiry": old_info.get("video_token_no_expiry"),
+            "image_type": old_info.get("image_type", "raw"),
+        }
+        app.storage.user[new_hash] = new_info
+
+        # Update hash list for current state
+        state_idx = app.storage.user.get("img_state", 1)
+        state_names = ["raw", "processed", "aposematic", "enciphered"]
+        state = state_names[state_idx - 1] if state_idx <= 4 else "raw"
+        hash_list_key = f"{state}_img_hashes"
+
+        hash_list = app.storage.user.get(hash_list_key, [])
+        if hash_value in hash_list:
+            idx = hash_list.index(hash_value)
+            hash_list[idx] = new_hash
+        else:
+            hash_list.append(new_hash)
+        app.storage.user[hash_list_key] = hash_list
+
+        # Clean up old entry
+        if hash_value != new_hash and hash_value in app.storage.user:
+            del app.storage.user[hash_value]
+
+        return new_hash, output_path
+
+    except Exception as e:
+        print(f"Error in process_markdown_embedding: {e}")
+        ui.notify(f"Markdown embedding failed: {str(e)}", type="negative")
+        return None, None
+
+
+async def remove_markdown_from_image(hash_value):
+    """Remove markdown from an image.
+
+    Strips markdown token tEXt chunks from PNG, updates metadata, refreshes gallery.
+    """
+    file_info = app.storage.user.get(hash_value, {})
+    if not file_info:
+        ui.notify("Image not found", type="negative")
+        return
+
+    img_path = file_info.get("path")
+    if not img_path or not os.path.exists(img_path):
+        ui.notify("Image file not found", type="negative")
+        return
+
+    try:
+        # Strip markdown token chunks from the PNG
+        await run.io_bound(
+            remove_text_chunks, img_path, MARKDOWN_TOKEN_PREFIX
+        )
+
+        # Re-store the cleaned PNG to get a new hash
+        new_hash, _, editor_url = _local_store_image_pure(img_path)
+        if not new_hash:
+            ui.notify("Failed to update image", type="negative")
+            return
+
+        # Update metadata — remove markdown fields, keep everything else
+        new_info = dict(file_info)
+        new_info["path"] = img_path
+        new_info["editor_url"] = editor_url
+        new_info["has_markdown"] = False
+        for key in ("markdown_method", "markdown_files",
+                     "markdown_token_expires", "markdown_token_no_expiry"):
+            new_info.pop(key, None)
+
+        app.storage.user[new_hash] = new_info
+
+        # Update hash list
+        state_idx = app.storage.user.get("img_state", 1)
+        state_names = ["raw", "processed", "aposematic", "enciphered"]
+        state = state_names[state_idx - 1] if state_idx <= 4 else "raw"
+        hash_list_key = f"{state}_img_hashes"
+
+        hash_list = app.storage.user.get(hash_list_key, [])
+        if hash_value in hash_list:
+            idx = hash_list.index(hash_value)
+            hash_list[idx] = new_hash
+        app.storage.user[hash_list_key] = hash_list
+
+        # Clean up old entry
+        if hash_value != new_hash and hash_value in app.storage.user:
+            del app.storage.user[hash_value]
+
+        ui.notify("Markdown removed from image", type="positive")
+        render_gallery()
+
+    except Exception as e:
+        print(f"Error removing markdown: {e}")
+        ui.notify(f"Failed to remove markdown: {str(e)}", type="negative")
 
 
 # Check native dependencies before running the app

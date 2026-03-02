@@ -16,13 +16,16 @@ from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
 from audio_tokens import is_audio_file
 from video_tokens import is_video_file
+from markdown_tokens import is_markdown_file, MAX_BUNDLE_SIZE
 from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
 # Explicit exports for PyInstaller compatibility with 'from dialogs import *'
 __all__ = [
     'create_shared_key',
     'get_recipient_options',
-    'markdown_block_dialog',
+    'edit_markdown_info',
+    'is_markdown',
+    'handle_markdown_selection',
     'edit_metadata_dialog',
     'iptc_dialog',
     'cipher_dialog',
@@ -74,15 +77,179 @@ def get_recipient_options():
 
     return options
 
-def markdown_block_dialog(on_save, process_func):
+def is_markdown(file):
+    """Check if file is a markdown/text format."""
+    return is_markdown_file(file)
 
-    with ui.dialog().on('hide', lambda: on_save()) as dialog:
-        with ui.card().classes('w-full max-w-xl'):
-            ui.label('Add Markdown Block').classes('text-lg font-semibold')
-            markdown_input = ui.textarea(value='some text').props('clearable')
-            ui.button('Save', on_click=lambda: pr(markdown_input.value)).props('flat')
+
+async def handle_markdown_selection(file_list_container, selected_files, choose_files=None):
+    """
+    Handle markdown file selection with multi-file support.
+
+    Args:
+        file_list_container: UI container to display selected files
+        selected_files: list (mutable) holding selected file paths
+        choose_files: Async callback to open file dialog
+    """
+    if not choose_files:
+        ui.notify('File selection not available', type='warning')
+        return
+    try:
+        files = await choose_files()
+        if not files:
+            return
+        for file in files:
+            if not is_markdown(file):
+                ui.notify(f'Skipped non-markdown file: {os.path.basename(file)}', type='warning')
+                continue
+            file_size = os.path.getsize(file)
+            if file_size > MAX_BUNDLE_SIZE:
+                ui.notify(f'{os.path.basename(file)} exceeds 1 MB limit', type='warning')
+                continue
+            if file not in selected_files:
+                selected_files.append(file)
+
+        # Refresh the file list display
+        file_list_container.clear()
+        with file_list_container:
+            for fp in selected_files:
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('description').classes('text-green-600')
+                    ui.label(os.path.basename(fp)).classes('text-sm')
+                    sz = os.path.getsize(fp)
+                    ui.label(f'({sz / 1024:.1f} KB)').classes('text-xs text-gray-500')
+                    ui.button(
+                        icon='close', on_click=lambda f=fp: _remove_md_file(f, selected_files, file_list_container)
+                    ).props('flat dense round size=xs')
+
+    except Exception as e:
+        ui.notify(f'Error selecting files: {str(e)}', type='negative')
+
+
+def _remove_md_file(file_path, selected_files, file_list_container):
+    """Remove a file from the selected markdown files list."""
+    if file_path in selected_files:
+        selected_files.remove(file_path)
+    file_list_container.clear()
+    with file_list_container:
+        for fp in selected_files:
+            with ui.row().classes('items-center gap-2'):
+                ui.icon('description').classes('text-green-600')
+                ui.label(os.path.basename(fp)).classes('text-sm')
+                sz = os.path.getsize(fp)
+                ui.label(f'({sz / 1024:.1f} KB)').classes('text-xs text-gray-500')
+                ui.button(
+                    icon='close', on_click=lambda f=fp: _remove_md_file(f, selected_files, file_list_container)
+                ).props('flat dense round size=xs')
+
+
+def edit_markdown_info(hash_value, on_close, process_func, choose_files=None):
+    """Dialog for embedding markdown files into an existing image with token support.
+
+    Follows the process_dialog pattern used by edit_audio_info and edit_video_info.
+
+    Args:
+        hash_value: Image hash to embed markdown into
+        on_close: Callback when dialog closes (typically process_dialog)
+        process_func: Function to process the markdown embedding
+        choose_files: Async callback to open file dialog
+    """
+    # Get image info
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+
+    # Get recipient options for token sharing
+    recipient_options = get_recipient_options()
+
+    # Track selected files (mutable list) and confirmation state
+    selected_files = []
+    confirmed = {'value': False}
+
+    def on_confirm():
+        """Store values and mark as confirmed before closing."""
+        if not selected_files:
+            ui.notify('Please select at least one markdown file', type='warning')
+            return
+
+        if not recipient_select.value:
+            ui.notify('Please select a recipient for token sharing', type='warning')
+            return
+
+        # Validate total size
+        total = sum(os.path.getsize(f) for f in selected_files if os.path.exists(f))
+        if total > MAX_BUNDLE_SIZE:
+            ui.notify(f'Total size ({total / 1024:.0f} KB) exceeds 1 MB limit', type='warning')
+            return
+
+        app.storage.user['_markdown_embed_params'] = {
+            'img_name': img_name,
+            'img_path': img_path,
+            'hash_value': hash_value,
+            'markdown_files': list(selected_files),
+            'receiver_public_key': recipient_select.value,
+            'expiry_option': expiry_select.value,
+        }
+        confirmed['value'] = True
+        dialog.close()
+
+    async def on_dialog_hide():
+        """Called when dialog closes - trigger processing if confirmed."""
+        if confirmed['value']:
+            await on_close(process_func)
+
+    with ui.dialog().on('hide', on_dialog_hide) as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Embed Markdown in Image').classes('text-lg font-semibold mb-4')
+            ui.label(f'Image: {img_name}').classes('text-sm mb-4')
+
+            # File selection
+            with ui.column().classes('w-full mb-4'):
+                with ui.row().classes('w-full items-center gap-4'):
+                    ui.label('Markdown Files:').classes('font-medium')
+                    ui.button(
+                        'Add Files',
+                        on_click=lambda: handle_markdown_selection(
+                            file_list, selected_files, choose_files
+                        )
+                    ).props('flat')
+                file_list = ui.column().classes('w-full gap-1 ml-4')
+
+            # Token sharing options
+            with ui.column().classes('w-full mb-4'):
+                ui.label('Token Sharing Options').classes('font-medium mb-2')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Recipient:').classes('font-medium')
+                    recipient_select = ui.select(
+                        options=recipient_options,
+                        value=list(recipient_options.keys())[0] if recipient_options else ''
+                    ).classes('flex-grow')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Token Expiry:').classes('font-medium')
+                    expiry_select = ui.select(
+                        options={
+                            'never': 'Never',
+                            '1h': '1 Hour',
+                            '24h': '24 Hours',
+                            '7d': '7 Days',
+                            '30d': '30 Days',
+                            '365d': '1 Year'
+                        },
+                        value='never'
+                    ).classes('flex-grow')
+
+                ui.label(
+                    'Markdown files will be encrypted and can only be accessed by the selected recipient'
+                ).classes('text-sm text-green-600')
+
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
+                ui.button('Encrypt & Embed', on_click=on_confirm).props('color=primary')
 
     dialog.open()
+    return dialog
 
 async def edit_metadata_dialog(file_path, metadata_list, on_save, *args):
     """Dialog to edit metadata with delete functionality for each field.

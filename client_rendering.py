@@ -95,7 +95,11 @@ def render_data_pod_item(item: Dict[str, Any]) -> str:
     # Audio section (already extracted during processing)
     if has_audio and item.get('audio'):
         html_parts.append(render_audio_section(item['audio'], audio_method))
-    
+
+    # Markdown section (already extracted during processing)
+    if item.get('hasMarkdown') and item.get('markdown'):
+        html_parts.append(render_markdown_section(item['markdown']))
+
     # Additional metadata
     if item.get('byline'):
         html_parts.append(f'<p>By: {item["byline"]}</p>')
@@ -159,6 +163,53 @@ def render_audio_section(audio_data: Dict[str, Any], audio_method: str) -> str:
     </div>
     ''')
     
+    return ''.join(html_parts)
+
+
+def render_markdown_section(markdown_data: Dict[str, Any]) -> str:
+    """
+    Render markdown section for extracted markdown content
+
+    Args:
+        markdown_data: Extracted markdown data with 'files' list
+
+    Returns:
+        str: HTML string for markdown section
+    """
+    html_parts = []
+
+    html_parts.append('''
+    <div class="markdown-section" style="margin-top: 10px; padding: 10px; background: #f0faf0; border-radius: 4px;">
+    ''')
+
+    html_parts.append('''
+    <p style="color: #2e7d32; font-weight: bold; margin-bottom: 5px;">[TEXT] Markdown Content</p>
+    ''')
+
+    files = markdown_data.get('files', [])
+    for md_file in files:
+        if len(files) > 1:
+            filename = md_file.get('filename', 'unknown')
+            html_parts.append(f'''
+            <p style="font-size: 12px; color: #666; font-weight: 600; margin: 8px 0 4px;">{filename}</p>
+            ''')
+
+        text_html = md_file.get('text_html', '')
+        if text_html:
+            html_parts.append(f'''
+            <div class="markdown-content">{text_html}</div>
+            ''')
+
+    if markdown_data.get('extractedAt'):
+        extracted_time = format_timestamp(markdown_data['extractedAt'])
+        html_parts.append(f'''
+        <p style="font-size: 12px; color: #666; margin-top: 5px;">Extracted: {extracted_time}</p>
+        ''')
+
+    html_parts.append('''
+    </div>
+    ''')
+
     return ''.join(html_parts)
 
 
@@ -253,17 +304,21 @@ def calculate_type_stats(items: List[Dict[str, Any]]) -> Dict[str, int]:
         'processed': 0,
         'aposematic': 0,
         'enciphered': 0,
-        'withAudio': 0
+        'withAudio': 0,
+        'withMarkdown': 0
     }
-    
+
     for item in items:
         image_type = item.get('imageType', 'raw')
         if image_type in stats:
             stats[image_type] += 1
-        
+
         if item.get('hasAudio'):
             stats['withAudio'] += 1
-    
+
+        if item.get('hasMarkdown'):
+            stats['withMarkdown'] += 1
+
     return stats
 
 
