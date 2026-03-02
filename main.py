@@ -104,7 +104,7 @@ iptc = False
 access_token = ""
 
 ipfs_webui = "http://localhost"
-ipfs_webui_port = "8081"
+ipfs_webui_port = "8080"
 
 
 pintheon_endpoint = "http://127.0.0.1"
@@ -128,6 +128,12 @@ def parse_args():
         "--console",
         action="store_true",
         help="Show console output (useful for debugging)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8081,
+        help="Port for the application UI (default: 8081)"
     )
     # Parse known args to avoid conflicts with NiceGUI/uvicorn args
     args, _ = parser.parse_known_args()
@@ -5071,6 +5077,10 @@ async def process_video_embedding(
             ui.notify("Unsupported video format", type="negative")
             return None, None
 
+        if not img_path.lower().endswith('.png'):
+            ui.notify("Video embedding requires a PNG image", type="negative")
+            return None, None
+
         if not receiver_public_key:
             ui.notify("Receiver public key required for video token", type="negative")
             return None, None
@@ -5326,6 +5336,10 @@ async def process_audio_embedding(
             ui.notify("Unsupported audio format", type="negative")
             return None, None
 
+        if not img_path.lower().endswith('.png'):
+            ui.notify("Audio embedding requires a PNG image", type="negative")
+            return None, None
+
         if not receiver_public_key:
             ui.notify("Receiver public key required for audio token", type="negative")
             return None, None
@@ -5420,6 +5434,7 @@ if __name__ in {"__main__", "__mp_main__"}:
 app.on_shutdown(on_close)
 ui.run(
     native=True,
+    port=cli_args.port,
     storage_secret="your-secret-key-here",  # Replace with a secure secret key in production
     favicon=os.path.join(static_dir, "icon.png"),
 )

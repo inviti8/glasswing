@@ -6,6 +6,8 @@ Compatible with existing image encryption flow.
 """
 
 import base64
+import os
+import tempfile
 from typing import Optional, Tuple
 
 from hvym_stellar import (
@@ -163,8 +165,6 @@ def create_token_audio_image(audio_file: str, image_file: str,
     Returns:
         str: Path to image with embedded token
     """
-    import os
-
     # Read audio as raw bytes (no base64 encoding needed)
     with open(audio_file, 'rb') as f:
         audio_data = f.read()
@@ -175,9 +175,9 @@ def create_token_audio_image(audio_file: str, image_file: str,
     # Create encrypted token with raw bytes
     token = create_audio_token(sender_kp, receiver_pub, audio_data, filename, expires_in)
 
-    # Determine output path (matching metadata flow pattern)
+    # Write to temp dir — caller copies result into session storage
     base_name = os.path.splitext(os.path.basename(image_file))[0]
-    output_path = os.path.join(os.path.dirname(image_file) or '.', f'{base_name}_audio.png')
+    output_path = os.path.join(tempfile.gettempdir(), f'{base_name}_audio.png')
 
     # Embed in image
     return embed_audio_token(image_file, token, output_path)

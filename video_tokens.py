@@ -164,10 +164,10 @@ def create_token_video_image(video_file: str, image_file: str,
         if os.path.exists(token_temp_path):
             os.unlink(token_temp_path)
 
-    # Embed CID in PNG tEXt chunk
+    # Write to temp dir — caller copies result into session storage
     base_name = os.path.splitext(os.path.basename(image_file))[0]
     output_path = os.path.join(
-        os.path.dirname(image_file) or '.', f'{base_name}_video.png'
+        tempfile.gettempdir(), f'{base_name}_video.png'
     )
     result_path = embed_video_token_cid(image_file, cid, output_path)
 
