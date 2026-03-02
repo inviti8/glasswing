@@ -376,6 +376,7 @@ def init():
             data = json.load(f)
             # Get values from data or use defaults
             stellar_secret = data["stellar_secret"]
+            app.storage.user["stellar_secret"] = stellar_secret  # Sync to storage so all code paths use the same key
             artist = data["artist"]
             app.storage.user["use_watermark"] = data["use_watermark"]
             app.storage.user["watermark"] = data["watermark"]
@@ -454,6 +455,7 @@ def init():
         with open(data_file, "r") as f:
             data = json.load(f)
             stellar_secret = data["stellar_secret"]
+            app.storage.user["stellar_secret"] = stellar_secret  # Sync to storage so all code paths use the same key
             artist = data["artist"]
             app.storage.user["use_watermark"] = data["use_watermark"]
             app.storage.user["watermark"] = data["watermark"]
@@ -4971,11 +4973,9 @@ def reembed_media_if_needed(target_image_path, source_image_path):
             source_image_path, target_image_path,
             keyword_prefix=VIDEO_TOKEN_CID_PREFIX
         )
-        # Copy markdown token chunks
-        target_image_path = copy_token_chunks(
-            source_image_path, target_image_path,
-            keyword_prefix=MARKDOWN_TOKEN_PREFIX
-        )
+        # NOTE: Markdown token chunks are NOT reembedded into aposematic/enciphered
+        # images because extra tEXt chunks can interfere with pixel recovery.
+        # Instead, the serialized markdown token is stored in the data pod JSON.
     return target_image_path
 
 

@@ -254,7 +254,10 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                         "noExpiry": video_no_expiry,
                     }
 
-                # For markdown token images, include token info and file list
+                # For markdown token images, extract serialized token and include in data pod
+                # NOTE: Markdown tokens are stored in the data pod JSON (not reembedded
+                # into aposematic/enciphered images) because extra tEXt chunks can
+                # interfere with pixel-based recovery algorithms.
                 if has_markdown and markdown_method == "token":
                     if not receiver_public_key:
                         raise ValueError(
@@ -274,6 +277,17 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                         "noExpiry": markdown_no_expiry,
                     }
                     item["markdownFiles"] = img_info.get("markdown_files", [])
+
+                    # Extract the serialized token from the source image and store
+                    # in the data pod so subscribers can decrypt without needing
+                    # the token embedded in the (possibly recovered) image
+                    try:
+                        serialized_md_token = extract_markdown_token(img_path)
+                        if serialized_md_token:
+                            item["markdownToken"] = serialized_md_token
+                            print(f"[MARKDOWN] Stored serialized token in data pod ({len(serialized_md_token)} chars)")
+                    except Exception as e:
+                        print(f"[WARN] Could not extract markdown token from {img_path}: {e}")
 
                 if render_flag:
                     data_items.append(item)
@@ -324,7 +338,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         # Add aposematic/encryption parameters if present (per ENCRYPTION.md)
         if any(i["imageType"] == "aposematic" for i in data_items):
             ninjs_data["op_string"] = app.storage.user.get(
-                "aposematic_op_string", "-^+"
+                "op_string", "-^+"
             )
             ninjs_data["scramble_mode"] = app.storage.user.get(
                 "aposematic_scramble_mode", 2
@@ -581,42 +595,15 @@ async def process_data_pod_locally(
                         except Exception as e:
                             print(f"[WARN] Pre-extraction of video CID failed: {e}")
 
-                # [INFO] CRITICAL: Pre-extract markdown token BEFORE recovery!
-                # Markdown tokens are stored in tEXt chunks which are lost during recovery.
+                # Markdown tokens are stored in the data pod JSON (not in PNG chunks)
+                # so no pre-extraction from the image is needed.
                 pre_extracted_markdown = None
-                if item.get("hasMarkdown") and image_type in ("aposematic", "enciphered"):
-                    print(f"[MARKDOWN] Pre-extracting markdown token from {image_type} image before recovery...")
-                    if image_type == "enciphered":
-                        original_hash = item.get("original_hash")
-                        if original_hash:
-                            try:
-                                original_href = f"{gateway_base}/ipfs/{original_hash}"
-                                original_path = await run.io_bound(download_ipfs_image, original_href)
-                                if original_path:
-                                    serialized_token = extract_markdown_token(original_path)
-                                    if serialized_token:
-                                        pre_extracted_markdown = {
-                                            "type": "token",
-                                            "data": serialized_token
-                                        }
-                                        print(f"[OK] Pre-extracted markdown token from original ({len(serialized_token)} chars)")
-                                    try:
-                                        os.remove(original_path)
-                                    except:
-                                        pass
-                            except Exception as e:
-                                print(f"[WARN] Failed to extract markdown from original image: {e}")
-                    else:
-                        try:
-                            serialized_token = extract_markdown_token(temp_path)
-                            if serialized_token:
-                                pre_extracted_markdown = {
-                                    "type": "token",
-                                    "data": serialized_token
-                                }
-                                print(f"[OK] Pre-extracted markdown token ({len(serialized_token)} chars)")
-                        except Exception as e:
-                            print(f"[WARN] Pre-extraction of markdown failed: {e}")
+                if item.get("hasMarkdown") and item.get("markdownToken"):
+                    pre_extracted_markdown = {
+                        "type": "token",
+                        "data": item["markdownToken"]
+                    }
+                    print(f"[MARKDOWN] Using token from data pod JSON ({len(item['markdownToken'])} chars)")
 
                 if image_type == "enciphered":
                     print(f"[UNLOCK] Deciphering enciphered image: {item.get('title')}")
@@ -636,10 +623,8 @@ async def process_data_pod_locally(
                     print(f"[UNLOCK] Recovering aposematic image: {item.get('title')}")
                     try:
                         # [INFO] Uses aiposematic v1.1 native Stellar key derivation
+                        # recover_aposematic_img auto-detects scramble_mode from the image
                         op_string = data_pod.get("op_string", "-^+")
-                        print(f"[DEBUG] DEBUG: Using op_string: '{op_string}'")
-                        print(f"[DEBUG] DEBUG: Artist public key: {creator_public_key[:16]}...")
-                        print(f"[DEBUG] DEBUG: Temp path: {temp_path}")
 
                         # CPU-bound: aposematic recovery is computationally intensive
                         result = await run.cpu_bound(
@@ -649,9 +634,6 @@ async def process_data_pod_locally(
                             artist_public_key=creator_public_key,
                             op_string=op_string,
                         )
-
-                        print(f"[DEBUG] DEBUG: Recovery result type: {type(result)}")
-                        print(f"[DEBUG] DEBUG: Recovery result: {result}")
 
                         # recover_aposematic_img returns a string path, not a dict
                         if isinstance(result, str):
