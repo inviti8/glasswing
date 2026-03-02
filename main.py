@@ -1863,9 +1863,9 @@ async def process_watermarking():
         print(processed_img_path)
         print("------------------------------------")
 
-        # Copy audio token chunks from raw image if it had audio
-        if app.storage.user[hash_value].get("has_audio", False):
-            print(f"Copying audio token from {img_path} into watermarked image")
+        # Copy audio/video token chunks from raw image if it had media
+        if app.storage.user[hash_value].get("has_audio", False) or app.storage.user[hash_value].get("has_video", False):
+            print(f"Copying media chunks from {img_path} into watermarked image")
             # I/O-bound: file operations (reembed_media_if_needed is pure)
             processed_img_path = await run.io_bound(
                 reembed_media_if_needed, processed_img_path, img_path
@@ -1880,21 +1880,26 @@ async def process_watermarking():
             ui.notify("Failed to store processed image", type="negative")
             continue
 
-        # Preserve audio metadata when processing (storage update in main thread)
-        app.storage.user[content_hash] = app.storage.user[hash_value].copy()
+        # Preserve audio/video metadata when processing (storage update in main thread)
+        raw_info = app.storage.user[hash_value]
+        app.storage.user[content_hash] = raw_info.copy()
         app.storage.user[content_hash].update(
             {
                 "path": processed_img_path,
                 "name": f"processed_{img_name}",
                 "editor_url": editor_url,
-                "has_audio": app.storage.user[hash_value].get("has_audio", False),
-                "audio_path": app.storage.user[hash_value].get(
-                    "audio_path"
-                ),  # Preserve audio_path
-                "audio_format": app.storage.user[hash_value].get("audio_format"),
-                "audio_duration": app.storage.user[hash_value].get("audio_duration"),
-                "audio_size": app.storage.user[hash_value].get("audio_size"),
-                "audio_method": app.storage.user[hash_value].get("audio_method"),
+                "has_audio": raw_info.get("has_audio", False),
+                "audio_path": raw_info.get("audio_path"),
+                "audio_format": raw_info.get("audio_format"),
+                "audio_duration": raw_info.get("audio_duration"),
+                "audio_size": raw_info.get("audio_size"),
+                "audio_method": raw_info.get("audio_method"),
+                "has_video": raw_info.get("has_video", False),
+                "video_method": raw_info.get("video_method"),
+                "video_token_cid": raw_info.get("video_token_cid"),
+                "video_path": raw_info.get("video_path"),
+                "video_token_expires": raw_info.get("video_token_expires"),
+                "video_token_no_expiry": raw_info.get("video_token_no_expiry"),
             }
         )
 
@@ -1990,9 +1995,9 @@ async def process_aposematic():
 
             aposematic_img_path = aposematic["img_path"]
 
-            # Copy audio token chunks from processed image if it had audio
-            if img_info.get("has_audio", False):
-                print(f"Copying audio token from {img_path} into aposematic image")
+            # Copy audio/video token chunks from processed image if it had media
+            if img_info.get("has_audio", False) or img_info.get("has_video", False):
+                print(f"Copying media chunks from {img_path} into aposematic image")
                 # I/O-bound: file operations
                 aposematic_img_path = await run.io_bound(
                     reembed_media_if_needed,
@@ -2015,11 +2020,17 @@ async def process_aposematic():
                 "name": f"aposematic_{img_name}",
                 "original_hash": hash_value,
                 "has_audio": img_info.get("has_audio", False),
-                "audio_path": img_info.get("audio_path"),  # Preserve audio_path
+                "audio_path": img_info.get("audio_path"),
                 "audio_format": img_info.get("audio_format"),
                 "audio_duration": img_info.get("audio_duration"),
                 "audio_size": img_info.get("audio_size"),
                 "audio_method": img_info.get("audio_method"),
+                "has_video": img_info.get("has_video", False),
+                "video_method": img_info.get("video_method"),
+                "video_token_cid": img_info.get("video_token_cid"),
+                "video_path": img_info.get("video_path"),
+                "video_token_expires": img_info.get("video_token_expires"),
+                "video_token_no_expiry": img_info.get("video_token_no_expiry"),
             }
 
             ui.notify(f"Processed {img_name}")
@@ -2112,11 +2123,17 @@ async def process_enciphering():
                 "name": f"enciphered_{img_name}",
                 "original_hash": hash_value,
                 "has_audio": img_info.get("has_audio", False),
-                "audio_path": img_info.get("audio_path"),  # Preserve audio_path
+                "audio_path": img_info.get("audio_path"),
                 "audio_format": img_info.get("audio_format"),
                 "audio_duration": img_info.get("audio_duration"),
                 "audio_size": img_info.get("audio_size"),
                 "audio_method": img_info.get("audio_method"),
+                "has_video": img_info.get("has_video", False),
+                "video_method": img_info.get("video_method"),
+                "video_token_cid": img_info.get("video_token_cid"),
+                "video_path": img_info.get("video_path"),
+                "video_token_expires": img_info.get("video_token_expires"),
+                "video_token_no_expiry": img_info.get("video_token_no_expiry"),
             }
 
             ui.notify(f"Enciphered {img_name}")
@@ -2311,10 +2328,10 @@ async def process_debug_deploy_gallery():
 
                         aposematic_img_path = aposematic["img_path"]
 
-                        # Copy audio token chunks from processed image if it had audio
-                        if img_info.get("has_audio", False):
+                        # Copy audio/video token chunks from processed image if it had media
+                        if img_info.get("has_audio", False) or img_info.get("has_video", False):
                             print(
-                                f"Copying audio token from {img_path} into aposematic image"
+                                f"Copying media chunks from {img_path} into aposematic image"
                             )
                             # I/O-bound: file operations
                             aposematic_img_path = await run.io_bound(
@@ -2341,6 +2358,12 @@ async def process_debug_deploy_gallery():
                             "audio_duration": img_info.get("audio_duration"),
                             "audio_size": img_info.get("audio_size"),
                             "audio_method": img_info.get("audio_method"),
+                            "has_video": img_info.get("has_video", False),
+                            "video_method": img_info.get("video_method"),
+                            "video_token_cid": img_info.get("video_token_cid"),
+                            "video_path": img_info.get("video_path"),
+                            "video_token_expires": img_info.get("video_token_expires"),
+                            "video_token_no_expiry": img_info.get("video_token_no_expiry"),
                         }
 
                     except Exception as e:
@@ -2957,6 +2980,7 @@ async def decode_protected_images(data_pod, stellar_secret):
 
     # Get aposematic parameters if needed
     op_string = data_pod.get("op_string", "-^+")
+    scramble_mode = get_scramble_mode_from_value(data_pod.get("scramble_mode", 2))
     # Process each item
     for item in data_pod.get("items", []):
         renditions = item.get("renditions", {})
@@ -2985,6 +3009,7 @@ async def decode_protected_images(data_pod, stellar_secret):
                     stellar_keypair=hvym_keys,
                     artist_public_key=creator_public_key,
                     op_string=op_string,
+                    scramble_mode=scramble_mode,
                 )
             else:
                 continue
