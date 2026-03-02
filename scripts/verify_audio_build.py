@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Verify audio feature dependencies are correctly bundled.
-Run this after building to ensure all audio modules work.
+Verify audio and video feature dependencies are correctly bundled.
+Run this after building to ensure all media modules work.
 """
 
 import sys
@@ -19,13 +19,18 @@ CROSS = '[X]'
 
 
 def verify_audio_modules():
-    """Verify all audio-related modules can be imported."""
-    print("Verifying audio feature modules...\n")
+    """Verify all audio and video related modules can be imported."""
+    print("Verifying media feature modules...\n")
 
     modules = [
         ('audio_tokens', 'Audio token creation/extraction'),
+        ('video_tokens', 'Video token creation/extraction'),
         ('png_chunks', 'PNG tEXt chunk manipulation'),
-        ('data_pod_audio', 'Data pod audio processing'),
+        ('data_pod_audio', 'Data pod audio/video processing'),
+        ('client_rendering', 'Client-side rendering'),
+        ('dialogs', 'UI dialogs'),
+        ('metadata', 'IPTC metadata handling'),
+        ('img_edit', 'Image editing operations'),
         ('hvym_stellar', 'HVYM Stellar cryptography'),
         ('biscuit_auth', 'Biscuit token library'),
         ('nacl', 'NaCl cryptography (PyNaCl)'),
@@ -129,7 +134,7 @@ def verify_png_chunks():
 
 def main():
     print("=" * 50)
-    print("Audio Feature Build Verification")
+    print("Media Feature Build Verification")
     print("=" * 50 + "\n")
 
     results = []
@@ -140,7 +145,7 @@ def main():
 
     print("\n" + "=" * 50)
     if all(results):
-        print(f"{CHECK} All audio feature verifications passed!")
+        print(f"{CHECK} All media feature verifications passed!")
         return 0
     else:
         print(f"{CROSS} Some verifications failed!")

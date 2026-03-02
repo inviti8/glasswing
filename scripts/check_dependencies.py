@@ -96,6 +96,7 @@ def main():
         Path('static/icon.png'),
         Path('static/OCR-A.ttf'),
         Path('static/PhinoVariation.ttf'),
+        Path('static/logo.json'),
         Path('templates/gallery.html'),
     ]
 

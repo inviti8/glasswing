@@ -56,17 +56,22 @@ hiddenimports = [
     'skimage',
     'numpy',
     'scipy',
-    # Audio feature imports
+    # Local application modules
     'audio_tokens',
+    'video_tokens',
     'png_chunks',
     'data_pod_audio',
+    'client_rendering',
+    'dialogs',
+    'metadata',
+    'img_edit',
+    'task_runner',
+    # Crypto / token dependencies
     'biscuit_auth',
     'biscuit_auth.biscuit',
     'nacl',
     'nacl.bindings',
     'nacl.secret',
-    # Task runner for non-blocking operations
-    'task_runner',
 ]
 
 # Exclusions to reduce size
