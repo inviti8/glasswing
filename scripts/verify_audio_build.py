@@ -95,7 +95,8 @@ def verify_png_chunks():
     print("\nVerifying PNG chunk operations...")
 
     try:
-        from png_chunks import embed_audio_base64, extract_audio_base64
+        from png_chunks import (embed_audio_token, extract_audio_token,
+                                embed_video_token_cid, extract_video_token_cid)
         from PIL import Image
         import tempfile
 
@@ -106,26 +107,38 @@ def verify_png_chunks():
         img = Image.new('RGB', (100, 100), color='red')
         img.save(test_img_path)
 
-        # Test embedding
-        test_audio = "dGVzdCBhdWRpbyBkYXRh"  # base64 of "test audio data"
-        output_path = test_img_path.replace('.png', '_audio.png')
+        all_ok = True
 
-        embed_audio_base64(test_img_path, test_audio, output_path)
+        # Test audio token embed/extract
+        test_token = "test_serialized_token_data_here"
+        audio_output = test_img_path.replace('.png', '_audio.png')
+        embed_audio_token(test_img_path, test_token, audio_output)
+        extracted_token = extract_audio_token(audio_output)
 
-        # Test extraction
-        extracted = extract_audio_base64(output_path)
+        if extracted_token == test_token:
+            print(f"  {CHECK} PNG audio token embed/extract works")
+        else:
+            print(f"  {CROSS} PNG audio token extract mismatch")
+            all_ok = False
+
+        # Test video CID embed/extract
+        test_cid = "QmTestCid1234567890abcdef"
+        video_output = test_img_path.replace('.png', '_video.png')
+        embed_video_token_cid(test_img_path, test_cid, video_output)
+        extracted_cid = extract_video_token_cid(video_output)
+
+        if extracted_cid == test_cid:
+            print(f"  {CHECK} PNG video CID embed/extract works")
+        else:
+            print(f"  {CROSS} PNG video CID extract mismatch")
+            all_ok = False
 
         # Cleanup
-        os.unlink(test_img_path)
-        if os.path.exists(output_path):
-            os.unlink(output_path)
+        for f in [test_img_path, audio_output, video_output]:
+            if os.path.exists(f):
+                os.unlink(f)
 
-        if extracted == test_audio:
-            print(f"  {CHECK} PNG chunk embed/extract works")
-            return True
-        else:
-            print(f"  {CROSS} PNG chunk extract mismatch")
-            return False
+        return all_ok
 
     except Exception as e:
         print(f"  {CROSS} PNG chunk operations failed: {e}")
