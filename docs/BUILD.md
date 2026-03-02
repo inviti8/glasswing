@@ -79,16 +79,32 @@ glasswing/
 │   ├── build_cross_platform.py
 │   ├── generate_icons.py
 │   ├── check_dependencies.py
+│   ├── verify_audio_build.py
 │   └── glasswing.spec
 ├── docs/
-│   ├── INSTALL.md
-│   └── BUILD.md
+│   ├── ARCHITECTURE.md
+│   ├── BUILD.md
+│   ├── DATA_STRUCTURES.md
+│   ├── ENCRYPTION.md
+│   └── INSTALL.md
 ├── main.py
 ├── dialogs.py
 ├── img_edit.py
 ├── metadata.py
+├── data_pod_audio.py
+├── audio_tokens.py
+├── video_tokens.py
+├── png_chunks.py
+├── client_rendering.py
+├── task_runner.py
 ├── static/
+│   ├── icon.png
+│   ├── OCR-A.ttf
+│   ├── PhinoVariation.ttf
+│   └── logo.json
 ├── templates/
+│   └── gallery.html
+├── VIDEO_SUPPORT.md
 └── requirements.txt
 ```
 

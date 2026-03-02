@@ -8,6 +8,8 @@ Andromica provides two methods of content protection:
 
 Both methods use a shared key scheme based on Stellar/Curve25519 cryptography.
 
+Additionally, media (audio/video) can be embedded in images as encrypted tokens using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305). An image supports audio OR video, not both.
+
 ## Shared Key Scheme
 
 ### Key Hierarchy
@@ -32,6 +34,10 @@ stellar_secret ──┐                   stellar_secret ──┐
 
 ### Key Generation Flow
 
+Two patterns exist depending on the operation:
+
+**For enciphered images and non-aposematic operations** — derive `cipher_key` manually:
+
 ```python
 # Creator side (dialogs.py)
 def create_shared_key(receiver_public_key):
@@ -42,12 +48,18 @@ def create_shared_key(receiver_public_key):
     shared_key = StellarSharedKey(hvym_keys, receiver_public_key)
     cipher_key = shared_key.shared_secret_as_hex()
     return cipher_key
+```
 
-# Consumer side (main.py - decode_protected_images)
-stellar_keys = Keypair.from_secret(subscriber_stellar_secret)
-hvym_keys = Stellar25519KeyPair(stellar_keys)
-shared_key = StellarSharedKey(hvym_keys, recipient_public_key)
-cipher_key = shared_key.shared_secret_as_hex()
+**For aposematic images (aiposematic v1.1)** — pass Stellar keypairs directly; the library derives the cipher key internally using domain-separated hashing: `SHA256(shared_secret + ":aiposematic:sbox")[:32]`.
+
+```python
+# Creator side — no manual cipher_key derivation needed
+creator_keys = Stellar25519KeyPair(Keypair.from_secret(stellar_secret))
+new_aposematic_img(img, stellar_keypair=creator_keys, subscriber_public_key=recipient_pub)
+
+# Consumer side — same pattern
+subscriber_keys = Stellar25519KeyPair(Keypair.from_secret(subscriber_secret))
+recover_aposematic_img(img, stellar_keypair=subscriber_keys, artist_public_key=creator_pub)
 ```
 
 ### Cryptographic Primitives
@@ -110,10 +122,12 @@ Aposematic images use visual scrambling to obscure content. The term comes from 
 ### Parameters
 
 ```python
+# aiposematic v1.1 — native Stellar key integration
 aposematic = new_aposematic_img(
     img_path,
-    cipher_key=cipher_key,      # Shared key for scrambling
-    op_string='-^+',            # Operation sequence
+    stellar_keypair=creator_keys,         # Creator's Stellar25519KeyPair
+    subscriber_public_key=recipient_pub,  # Recipient's public key
+    op_string='-^+',                      # Operation sequence
     scramble_mode=SCRAMBLE_MODE.BUTTERFLY
 )
 ```
@@ -129,9 +143,11 @@ The `op_string` defines the sequence of scrambling operations:
 ### Recovery
 
 ```python
+# aiposematic v1.1 — pass Stellar keypair, not cipher_key
 result = recover_aposematic_img(
     scrambled_img_path,
-    cipher_key=cipher_key,
+    stellar_keypair=subscriber_keys,    # Subscriber's Stellar25519KeyPair
+    artist_public_key=creator_pub,      # Creator's public key
     op_string=op_string,
     scramble_mode=scramble_mode
 )
@@ -173,24 +189,28 @@ async def decode_protected_images(data_pod, stellar_secret):
     if content_type == 'original':
         return data_pod  # No decoding needed
 
-    # Generate shared key
-    recipient_public_key = data_pod.get('recipient_public_key')
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
-    shared_key = StellarSharedKey(hvym_keys, recipient_public_key)
-    cipher_key = shared_key.shared_secret_as_hex()
+    creator_public_key = data_pod.get('creator_public_key')
+
+    # For enciphered: derive cipher_key manually
+    if content_type == 'encrypted':
+        shared_key = StellarSharedKey(hvym_keys, creator_public_key)
+        cipher_key = shared_key.shared_secret_as_hex()
 
     # Decode each image
     for item in data_pod['items']:
-        href = item['renditions']['original']['href']
+        href = item['renditions'][0]['href']
         temp_path = download_ipfs_image(href)
 
         if content_type == 'encrypted':
             decoded_path = new_deciphered_img(temp_path, cipher_key)
         elif content_type == 'aposematic':
+            # aiposematic v1.1: pass keypair directly
             result = recover_aposematic_img(
                 temp_path,
-                cipher_key=cipher_key,
+                stellar_keypair=hvym_keys,
+                artist_public_key=creator_public_key,
                 op_string=data_pod.get('op_string'),
                 scramble_mode=data_pod.get('scramble_mode')
             )
@@ -198,10 +218,51 @@ async def decode_protected_images(data_pod, stellar_secret):
 
         # Convert to base64 data URI for display
         base64_uri = image_to_base64_uri(decoded_path)
-        item['renditions']['original']['href'] = base64_uri
+        item['renditions'][0]['href'] = base64_uri
 
     return data_pod
 ```
+
+## Media Token Encryption
+
+### Audio Tokens
+
+Audio is encrypted as an HVYMDataToken and embedded directly in the PNG image's tEXt chunks (`audio_token_001`, `audio_token_002`, ...). The token uses ChaCha20-Poly1305 symmetric encryption with an ECDH-derived key.
+
+```python
+# Creation (audio_tokens.py)
+token = create_audio_token(sender_kp, receiver_pub, audio_data, filename, expires_in)
+output_path = embed_audio_token(image_file, token)
+
+# Extraction (audio_tokens.py)
+audio_bytes, metadata = extract_audio_from_token(receiver_kp, serialized_token)
+```
+
+### Video Tokens
+
+Video tokens follow the same HVYMDataToken encryption but are too large for PNG tEXt chunks. Instead, the encrypted token is stored on IPFS and only the CID (~50 bytes) is embedded in the PNG.
+
+```python
+# Creation (video_tokens.py)
+token = create_video_token(sender_kp, receiver_pub, video_data, filename, expires_in)
+cid = ipfs_add(token_file)
+embed_video_token_cid(image_file, cid)
+
+# Extraction (video_tokens.py)
+token_data = ipfs_load(cid)
+video_bytes, metadata = extract_video_from_token(receiver_kp, token_data)
+```
+
+### Token Lifecycle
+
+| Step | Audio | Video |
+|------|-------|-------|
+| Encrypt | `HVYMDataToken.create_from_bytes()` | `HVYMDataToken.create_from_bytes()` |
+| Store | PNG tEXt chunks | IPFS (CID in PNG tEXt chunks) |
+| Survive processing | `reembed_media_if_needed()` copies chunks | `reembed_media_if_needed()` copies CID chunks |
+| Pre-extract (recovery) | `extract_audio_token()` before image recovery | `extract_video_token_cid()` before image recovery |
+| Decrypt | `HVYMDataToken.extract_from_token()` | `HVYMDataToken.extract_from_token()` |
+| Cleanup | Strip tEXt chunks | Unpin CID from IPFS + strip tEXt chunks |
 
 ## Debug Key
 
@@ -242,3 +303,5 @@ The debug key appears as "Debug (Test Key)" in recipient dropdowns, allowing cre
 2. Use aposematic for "preview protection" scenarios
 3. Regularly rotate subscriber keys for high-security use cases
 4. Consider the trust model when adding subscribers
+5. Large video files (500MB+) may be slow to encrypt/decrypt — consider file size when embedding
+6. MP4 (H.264) and WebM (VP8/VP9) have the best browser playback support

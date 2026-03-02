@@ -34,13 +34,16 @@ For `aposematic` or `enciphered` content:
     "scramble_mode": 2,
     "items": [...],
     "audio_token_images": ["QmHash1...", "QmHash2..."],
+    "video_token_images": ["QmHash3..."],
     "type_distribution": {
         "raw": 0,
         "processed": 0,
         "aposematic": 3,
         "enciphered": 0,
         "total_with_audio": 2,
-        "audio_token_count": 2
+        "audio_token_count": 2,
+        "total_with_video": 1,
+        "video_token_count": 1
     }
 }
 ```
@@ -52,7 +55,8 @@ For `aposematic` or `enciphered` content:
 | `op_string` | Aposematic operation sequence (e.g., "-^+") |
 | `scramble_mode` | Aposematic mode (1=BUTTERFLY, 2=BUTTERFLY, 3=QR) |
 | `audio_token_images` | List of image hashes containing encrypted audio tokens |
-| `type_distribution` | Counts of each image type in the data pod |
+| `video_token_images` | List of image hashes containing video token CID references |
+| `type_distribution` | Counts of each image/media type in the data pod |
 
 ### Item Structure
 
@@ -60,7 +64,7 @@ Each image in the gallery:
 
 ```json
 {
-    "type": "audio_image",
+    "type": "video_image",
     "guid": "urn:uuid:QmHash...",
     "version": "1",
     "language": "en",
@@ -69,7 +73,7 @@ Each image in the gallery:
     "byline": "Creator Name",
     "creditline": "Photographer Name",
     "copyright": "All Rights Reserved",
-    "ednote": "Type: aposematic, Audio method: token",
+    "ednote": "Type: aposematic, Video method: token",
     "renditions": [
         {
             "name": "original",
@@ -80,10 +84,14 @@ Each image in the gallery:
         }
     ],
     "imageType": "aposematic",
-    "hasAudio": true,
+    "hasAudio": false,
     "audioMethod": "token",
+    "hasVideo": true,
+    "videoMethod": "token",
+    "videoTokenCid": "QmVideoCID...",
     "original_hash": "QmOriginalProcessedHash...",
-    "audioTokenInfo": {
+    "audioTokenInfo": null,
+    "videoTokenInfo": {
         "receiverPublicKey": "GXYZ123...",
         "tokenExpiry": null,
         "noExpiry": true
@@ -93,16 +101,22 @@ Each image in the gallery:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | `"audio_image"` if has audio, otherwise image type |
+| `type` | string | `"video_image"`, `"audio_image"`, or image type (`"picture"`) |
 | `guid` | string | Unique identifier using IPFS hash |
 | `imageType` | string | `"raw"`, `"processed"`, `"aposematic"`, or `"enciphered"` |
-| `hasAudio` | boolean | Whether image contains embedded audio |
-| `audioMethod` | string | `"token"` (encrypted) or `"metadata"` (base64) |
-| `original_hash` | string | For enciphered images: hash of original processed image (for audio extraction) |
-| `audioTokenInfo` | object | Only for token method: receiver key, expiry, and noExpiry flag |
+| `hasAudio` | boolean | Whether image contains embedded audio token |
+| `audioMethod` | string | `"token"` (encrypted) |
+| `hasVideo` | boolean | Whether image contains embedded video token CID |
+| `videoMethod` | string | `"token"` (encrypted, stored on IPFS) |
+| `videoTokenCid` | string | IPFS CID for the encrypted video token |
+| `original_hash` | string | For enciphered images: hash of original processed image (for media extraction) |
+| `audioTokenInfo` | object | Receiver key, expiry for audio token |
+| `videoTokenInfo` | object | Receiver key, expiry for video token |
 | `renditions` | array | List of image renditions (note: array, not object) |
 
-**audioTokenInfo Fields:**
+**Item Type Precedence:** `video_image` > `audio_image` > `picture`
+
+**audioTokenInfo / videoTokenInfo Fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -110,15 +124,20 @@ Each image in the gallery:
 | `tokenExpiry` | number/null | Unix timestamp when token expires, or `null` for no expiry |
 | `noExpiry` | boolean | `true` if token never expires |
 
-### Audio in Processed Items
+### Media in Processed Items
 
-After `process_data_pod_locally()`, items may include decoded audio:
+After `process_data_pod_locally()`, items may include decoded audio and/or video:
 
 ```json
 {
     "audio": {
         "data": "base64_encoded_audio_data...",
         "format": "wav"
+    },
+    "video": {
+        "src": "/editor/video_abc123.mp4",
+        "format": "mp4",
+        "localPath": "/tmp/glasswing_editor_xxx/video_abc123.mp4"
     }
 }
 ```
@@ -181,7 +200,7 @@ For each image hash in storage (`app.storage.user[hash_value]`):
 {
     "path": "/path/to/local/file.png",
     "name": "original_filename.png",
-    "ipns_path": null,
+    "editor_url": "/editor/abc123def.png",
     "extension": ".png",
     "render_metadata": true,
     "image_type": "aposematic",
@@ -193,6 +212,12 @@ For each image hash in storage (`app.storage.user[hash_value]`):
     "audio_size": 230400,
     "audio_token_expires": null,
     "audio_token_no_expiry": true,
+    "has_video": false,
+    "video_method": null,
+    "video_token_cid": null,
+    "video_path": null,
+    "video_token_expires": null,
+    "video_token_no_expiry": false,
     "original_hash": "QmOriginalProcessedHash..."
 }
 ```
@@ -201,36 +226,38 @@ For each image hash in storage (`app.storage.user[hash_value]`):
 |-------|------|-------------|
 | `path` | string | Local filesystem path to image |
 | `name` | string | Original filename |
+| `editor_url` | string | `/editor/{filename}` URL for display in UI |
 | `image_type` | string | Current state: `raw`, `processed`, `aposematic`, `enciphered` |
-| `has_audio` | boolean | Whether audio is embedded |
-| `audio_method` | string | `"token"` or `"metadata"` |
+| `has_audio` | boolean | Whether audio token is embedded |
+| `audio_method` | string | `"token"` |
 | `audio_path` | string | Path to original audio file |
 | `audio_format` | string | Audio format (e.g., `"wav"`, `"mp3"`) |
 | `audio_duration` | float | Audio duration in seconds |
 | `audio_size` | integer | Audio file size in bytes |
 | `audio_token_expires` | number/null | Unix timestamp when token expires, or `null` for no expiry |
 | `audio_token_no_expiry` | boolean | `true` if token never expires |
-| `original_hash` | string | For enciphered: hash of processed image (contains audio) |
+| `has_video` | boolean | Whether video token CID is embedded |
+| `video_method` | string | `"token"` |
+| `video_token_cid` | string | IPFS CID for encrypted video token |
+| `video_path` | string | Path to original video file |
+| `video_token_expires` | number/null | Unix timestamp when token expires |
+| `video_token_no_expiry` | boolean | `true` if token never expires |
+| `original_hash` | string | For enciphered: hash of processed image (contains media) |
 
-## Audio Embedding
+## Media Embedding
 
-### Two Audio Methods
+### Audio and Video Methods
 
-| Method | Storage | Encryption | Use Case |
-|--------|---------|------------|----------|
-| `metadata` | PNG tEXt chunks as base64 | None | Public audio |
-| `token` | PNG tEXt chunks as HVYMDataToken | ECDH + Biscuit | Subscriber-only audio |
+An image supports **audio OR video, not both**. Both use HVYMDataToken encryption.
 
-### PNG tEXt Chunk Keywords
+| Media | Storage | Encryption | tEXt Chunk Keywords |
+|-------|---------|------------|---------------------|
+| Audio | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `audio_token_001`, `audio_token_002`, ... |
+| Video | Encrypted token on IPFS; CID in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `video_token_cid_001`, `video_token_cid_002`, ... |
 
-| Method | Chunk Keywords | Description |
-|--------|----------------|-------------|
-| Metadata | `audio_base64_001`, `audio_base64_002`, ... | Chunked base64 audio (8KB per chunk) |
-| Token | `audio_token_001`, `audio_token_002`, ... | Chunked encrypted token |
+### HVYMDataToken Structure
 
-### Audio Token Structure (HVYMDataToken)
-
-Encrypted audio tokens use the hvym-stellar library's Biscuit-based format:
+Both audio and video tokens use the hvym-stellar library's Biscuit-based format:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -251,6 +278,13 @@ Encrypted audio tokens use the hvym-stellar library's Biscuit-based format:
 1. Receiver's Stellar secret key
 2. Sender's public key (from data pod)
 3. ECDH shared secret derivation
+
+### Video Token IPFS Storage
+
+Video tokens are too large for PNG tEXt chunks. Instead:
+1. The encrypted video token is uploaded to IPFS as a standalone file
+2. The IPFS CID (~50 bytes) is embedded in the PNG tEXt chunks
+3. On playback, the CID is extracted → token is fetched from IPFS → decrypted
 
 ## App Colors Configuration
 
@@ -437,12 +471,10 @@ Additional runtime-only fields (not persisted to data.json):
     "recipient_public_key": "G...",
     "cipher_key": "hex_shared_key...",
     "img_state": 2,
-    "raw_img_hashes": ["QmHash1...", "QmHash2..."],
-    "processed_img_hashes": ["QmHash3..."],
+    "raw_img_hashes": ["hash1...", "hash2..."],
+    "processed_img_hashes": ["hash3..."],
     "aposematic_img_hashes": ["QmHash4..."],
-    "enciphered_img_hashes": ["QmHash5..."],
-    "audio_data": "base64_or_path...",
-    "audio_src_img": "QmHashOfImageWithAudio..."
+    "enciphered_img_hashes": ["QmHash5..."]
 }
 ```
 
@@ -453,6 +485,6 @@ Additional runtime-only fields (not persisted to data.json):
 | `recipient_public_key` | Currently selected subscriber's key |
 | `cipher_key` | Current ECDH shared key (hex) |
 | `img_state` | Current view state (1-4) |
-| `*_img_hashes` | IPFS hashes for each image state |
-| `audio_data` | Current audio data for embedding |
-| `audio_src_img` | Image hash that has audio embedded |
+| `*_img_hashes` | Local hashes (raw/processed) or IPFS hashes (aposematic/enciphered) |
+
+**Note:** Raw and processed images are stored in the session-scoped `EDITOR_STORAGE_DIR` (a `tempfile.mkdtemp()` served at `/editor`). They are NOT uploaded to IPFS until deployment. Aposematic and enciphered images are stored on IPFS.

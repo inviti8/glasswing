@@ -35,11 +35,13 @@ sudo apt update
 sudo apt install imagemagick libmagickwand-dev exiftool libexiv2-27
 ```
 
-### Optional: IPFS Features
+### Required for Media & Deployment: IPFS
 
-To use IPFS integration features:
+IPFS is required for video embedding (encrypted video tokens are stored on IPFS) and all deployment features. Audio embedding works without IPFS since tokens are stored directly in PNG tEXt chunks.
+
 - Install [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/)
 - Or install IPFS daemon and run: `ipfs daemon`
+- Default API port: 5001, Gateway port: 8080
 
 ## Installation
 
@@ -97,7 +99,7 @@ If not found:
 ### "IPFS features unavailable"
 
 IPFS features require a running IPFS daemon at 127.0.0.1:5001.
-These features are optional - the application will work without them.
+Basic image editing works without IPFS, but video embedding and deployment require it.
 
 To enable IPFS:
 1. Install IPFS Desktop or IPFS daemon

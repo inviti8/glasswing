@@ -2,7 +2,7 @@
 
 ## Overview
 
-Andromica is a decentralized content creation and distribution system built on IPFS and Stellar cryptography. It enables creators to publish protected galleries that can only be viewed by authorized subscribers. The application supports audio embedding in images using two methods: metadata (base64) and encrypted tokens.
+Andromica is a decentralized content creation and distribution system built on IPFS and Stellar cryptography. It enables creators to publish protected galleries that can only be viewed by authorized subscribers. The application supports embedding encrypted audio and video tokens in images using HVYMDataToken (Biscuit-based, ChaCha20-Poly1305 encryption). An image supports audio OR video, not both.
 
 ## System Components
 
@@ -17,10 +17,10 @@ Andromica is a decentralized content creation and distribution system built on I
 │  │ • Import images     │    │ • Subscribe to      │            │
 │  │ • Process/watermark │    │   channels          │            │
 │  │ • Add metadata      │    │ • Fetch data pods   │            │
-│  │ • Embed audio       │    │ • Decrypt content   │            │
-│  │ • Create aposematic │    │ • Extract audio     │            │
-│  │ • Encrypt images    │    │ • Render galleries  │            │
-│  │ • Deploy to IPFS    │    │                     │            │
+│  │ • Embed audio/video │    │ • Decrypt content   │            │
+│  │ • Create aposematic │    │ • Extract audio/    │            │
+│  │ • Encrypt images    │    │   video tokens      │            │
+│  │ • Deploy to IPFS    │    │ • Render galleries  │            │
 │  └─────────────────────┘    └─────────────────────┘            │
 ├─────────────────────────────────────────────────────────────────┤
 │                      SHARED SERVICES                             │
@@ -43,44 +43,70 @@ Primary application entry point and UI orchestration.
 - `process_aposematic()` - Generate scrambled images with visual noise
 - `process_enciphering()` - Generate encrypted images via ImageMagick
 - `process_deciphering()` - Decrypt enciphered images
-- `process_audio_embedding()` - Embed audio via metadata or token method
-- `reembed_audio_if_needed()` - Re-embed audio after image processing
-- `create_ninjs_data_pod_with_encrypted_tokens()` - Create NINJS-format data pods
+- `process_audio_embedding()` - Embed encrypted audio token in image
+- `process_video_embedding()` - Embed encrypted video token in image (via IPFS CID)
+- `reembed_media_if_needed()` - Re-embed audio/video chunks after image processing
+- `play_video_from_image()` - Fetch, decrypt, and play video from image
+- `remove_video_from_image()` - Strip video CID chunks and unpin from IPFS
+- `create_ninjs_data_pod()` - Create NINJS-format data pod from current images
 - `process_debug_deploy_gallery()` - Debug deployment with local decryption
 - `process_pintheon_deploy_gallery()` - Production deployment to Pintheon node
 - `select_channel()` - Browser mode channel rendering
 - `decode_protected_images()` - Decrypt/descramble for viewing
+
+**Session-Scoped Storage:**
+- `EDITOR_STORAGE_DIR` - `tempfile.mkdtemp()` served via FastAPI StaticFiles at `/editor`
+- Raw and processed images stored locally (not on IPFS) during editing
+- `_local_store_image_pure()` - Store image in session temp dir, returns `(hash, name, editor_url)`
 
 **Global State:**
 - `app.storage.user` - Persistent user data (NiceGUI storage)
 - `img_states = {1: 'raw', 2: 'processed', 3: 'aposematic', 4: 'enciphered'}`
 
 ### data_pod_audio.py
-Data pod creation and processing with audio token support.
+Data pod creation and processing with audio/video token support.
 
 **Key Functions:**
 - `determine_image_type()` - Identify image state from metadata/storage
-- `create_ninjs_data_pod_with_encrypted_tokens()` - Create encrypted data pods
-- `process_data_pod_locally()` - Decrypt data pod for subscriber viewing
+- `create_ninjs_data_pod_with_encrypted_tokens()` - Create encrypted data pods with audio/video metadata
+- `process_data_pod_locally()` - Decrypt data pod for subscriber viewing (audio + video recovery)
 
 ### audio_tokens.py
 Encrypted audio token handling using HVYMDataToken.
 
 **Key Functions:**
 - `create_audio_token()` - Create encrypted audio token
-- `create_token_audio_image()` - Embed encrypted token in image
+- `create_token_audio_image()` - Embed encrypted token in image PNG tEXt chunks
 - `extract_audio_from_token()` - Decrypt audio from token
 - `extract_token_audio()` - Full extraction pipeline from image
 
-### png_chunks.py
-PNG tEXt chunk manipulation for audio embedding.
+### video_tokens.py
+Encrypted video token handling using HVYMDataToken + IPFS.
+
+Video tokens are too large for PNG tEXt chunks, so the encrypted token is stored on IPFS and only the CID (~50 bytes) is embedded in the PNG.
 
 **Key Functions:**
-- `embed_audio_base64()` - Embed base64-encoded audio in PNG
-- `embed_audio_token()` - Embed encrypted token in PNG
-- `extract_audio_base64()` - Extract base64 audio from PNG
-- `extract_audio_token()` - Extract token from PNG
-- `has_audio_data()` - Check if PNG contains audio
+- `create_video_token()` - Create encrypted video token
+- `create_token_video_image()` - Encrypt video → upload to IPFS → embed CID in PNG
+- `extract_video_from_token()` - Decrypt video from token
+- `extract_token_video()` - Fetch CID from PNG → download from IPFS → decrypt
+- `detect_video_format()` - Detect format via magic bytes
+- `is_video_file()` - Check file extension against supported formats
+
+**Supported Formats:** MP4, WebM, MOV, AVI, MKV
+
+### png_chunks.py
+PNG tEXt chunk manipulation for audio/video embedding.
+
+**Key Functions:**
+- `embed_audio_token()` - Embed encrypted audio token in PNG tEXt chunks
+- `extract_audio_token()` - Extract audio token from PNG
+- `has_audio_data()` - Check if PNG contains audio token
+- `embed_video_token_cid()` - Embed video IPFS CID in PNG tEXt chunks
+- `extract_video_token_cid()` - Extract video CID from PNG
+- `has_video_data()` - Check if PNG contains video CID
+- `copy_token_chunks()` - Copy tEXt chunks between PNGs (used during reprocessing)
+- `remove_text_chunks()` - Strip tEXt chunks by prefix (used when removing media)
 
 ### img_edit.py
 Image processing and manipulation.
@@ -99,6 +125,9 @@ UI dialog components for user interactions.
 - `get_recipient_options()` - Build subscriber dropdown options
 - `cipher_dialog()` - Encryption recipient selection
 - `aposematic_dialog()` - Aposematic settings and recipient selection
+- `edit_audio_info()` - Audio embedding dialog (file picker, recipient, expiry)
+- `edit_video_info()` - Video embedding dialog (file picker, recipient, expiry)
+- `process_dialog()` - Async task runner with progress UI
 
 ---
 
@@ -116,7 +145,7 @@ UI dialog components for user interactions.
   Import       Watermark,                  Select recipient,
   from         resize,                     generate shared key,
   folder       add metadata,               apply protection
-               embed audio
+               embed audio/video
 ```
 
 ### Image States
@@ -124,7 +153,7 @@ UI dialog components for user interactions.
 | State | Index | Description | Storage Key |
 |-------|-------|-------------|-------------|
 | Raw | 1 | Original imported images | `raw_img_hashes` |
-| Processed | 2 | Watermarked, metadata added, audio embedded | `processed_img_hashes` |
+| Processed | 2 | Watermarked, metadata added, audio/video embedded | `processed_img_hashes` |
 | Aposematic | 3 | Visually scrambled (reversible with key) | `aposematic_img_hashes` |
 | Enciphered | 4 | Fully encrypted (ImageMagick cipher) | `enciphered_img_hashes` |
 
@@ -132,7 +161,6 @@ UI dialog components for user interactions.
 
 #### 1. Watermarking (`process_watermarking()`)
 ```python
-# main.py:1640-1694
 async def process_watermarking():
     for hash_value in raw_img_hashes:
         # Apply watermark overlay
@@ -142,47 +170,44 @@ async def process_watermarking():
             position=watermark_position,
             padding=watermark_padding
         )
-        # Re-embed audio if original had it
-        if audio_path:
-            watermarked_path = reembed_audio_if_needed(watermarked_path, audio_path)
-        # Add to IPFS and update storage
-        ipfs_hash = ipfs_add(watermarked_path)
-        processed_img_hashes.append(ipfs_hash)
+        # Re-embed audio/video chunks if original had them
+        watermarked_path = reembed_media_if_needed(watermarked_path, original_path)
+        # Store locally and update storage
+        new_hash, _, editor_url = _local_store_image_pure(watermarked_path)
+        processed_img_hashes.append(new_hash)
 ```
 
 #### 2. Aposematic Processing (`process_aposematic()`)
 ```python
-# main.py:1707-1787
 async def process_aposematic():
     for hash_value in processed_img_hashes:
-        # Apply visual scrambling
+        # Apply visual scrambling (aiposematic v1.1 native Stellar key integration)
         aposematic = new_aposematic_img(
             img_path,
-            cipher_key=cipher_key,        # Shared key for recipient
-            op_string="-^+",              # Operation sequence
-            scramble_mode=SCRAMBLE_MODE   # BUTTERFLY or QR
+            stellar_keypair=creator_keys,           # Creator's Stellar25519KeyPair
+            subscriber_public_key=recipient_pub,    # Recipient's public key
+            op_string="-^+",                        # Operation sequence
+            scramble_mode=SCRAMBLE_MODE             # BUTTERFLY or QR
         )
         aposematic_img_path = aposematic["img_path"]
 
-        # CRITICAL: Re-embed audio (scrambling creates new PNG without tEXt chunks)
-        if audio_path:
-            aposematic_img_path = reembed_audio_if_needed(aposematic_img_path, audio_path)
+        # CRITICAL: Re-embed audio/video (scrambling creates new PNG without tEXt chunks)
+        aposematic_img_path = reembed_media_if_needed(aposematic_img_path, original_path)
 
         # Add to IPFS
-        ipfs_hash = ipfs_add(aposematic_img_path)
+        ipfs_hash, _, _ = _ipfs_add_pure(aposematic_img_path)
         aposematic_img_hashes.append(ipfs_hash)
 ```
 
 **Aposematic Characteristics:**
-- Uses `aiposematic` library for visual noise patterns
+- Uses `aiposematic` v1.1 with native Stellar key derivation (domain-separated hashing)
 - Scramble modes: BUTTERFLY (default), QR
 - Operation string (`op_string`) controls scramble sequence
-- Reversible with same cipher_key and op_string
-- Creates NEW PNG file (does not preserve tEXt chunks - audio must be re-embedded)
+- Reversible with same Stellar keypair and op_string
+- Creates NEW PNG file (does not preserve tEXt chunks — media must be re-embedded)
 
 #### 3. Enciphering (`process_enciphering()`)
 ```python
-# main.py:1790-1868
 async def process_enciphering():
     for hash_value in processed_img_hashes:
         # Encrypt via ImageMagick
@@ -191,22 +216,22 @@ async def process_enciphering():
             img_path,
             cipher_key
         )
-        # NOTE: Audio is NOT re-embedded for enciphered images
+        # NOTE: Audio/video is NOT re-embedded for enciphered images
         # (encryption would corrupt embedded data)
 
-        ipfs_hash = ipfs_add(enciphered_path)
+        ipfs_hash, _, _ = _ipfs_add_pure(enciphered_path)
         enciphered_img_hashes.append(ipfs_hash)
 ```
 
 **Enciphering Characteristics:**
 - Uses ImageMagick's `encipher()` function
 - Full image encryption (pixels become unrecognizable)
-- Audio cannot be preserved in enciphered images (data corruption)
+- Audio/video cannot be preserved in enciphered images (data corruption)
 - Requires exact cipher_key for decryption
+- Audio/video tokens extracted from original processed image via `original_hash`
 
 #### 4. Deciphering (`process_deciphering()`)
 ```python
-# main.py:1871-1886
 async def process_deciphering():
     for hash_value in enciphered_img_hashes:
         deciphered_path = new_deciphered_img(
@@ -214,8 +239,8 @@ async def process_deciphering():
             encrypted_img_path,
             cipher_key
         )
-        ipfs_hash = ipfs_add(deciphered_path)
-        deciphered_img_hashes.append(ipfs_hash)
+        new_hash, _, editor_url = _local_store_image_pure(deciphered_path)
+        deciphered_img_hashes.append(new_hash)
 ```
 
 ### Aposematic vs Enciphered Comparison
@@ -223,48 +248,53 @@ async def process_deciphering():
 | Feature | Aposematic | Enciphered |
 |---------|------------|------------|
 | Visual appearance | Scrambled pattern visible | Completely encrypted |
-| Audio support | Yes (re-embedded after scramble) | Yes (via `original_hash` reference) |
-| Audio location | In the aposematic image itself | Extracted from original processed image |
-| Reversibility | Same key + op_string | Same cipher_key only |
-| Library | aiposematic | ImageMagick (Wand) |
-| Use case | Visual protection with audio | Maximum security with audio |
+| Media support | Yes (re-embedded after scramble) | Yes (via `original_hash` reference) |
+| Media location | In the aposematic image tEXt chunks | Extracted from original processed image |
+| Reversibility | Same Stellar keypair + op_string | Same cipher_key only |
+| Library | aiposematic v1.1 | ImageMagick (Wand) |
+| Key input | `stellar_keypair` + `subscriber_public_key` | `cipher_key` (ECDH hex) |
+| Use case | Visual protection with media | Maximum security with media |
 
-**Note on Enciphered Audio:** ImageMagick's `encipher()` creates a new PNG that doesn't preserve tEXt chunks. Audio cannot be re-embedded into enciphered images because it would corrupt the encryption. Instead, audio is extracted from the original processed image using the `original_hash` reference stored in the data pod.
+**Note on Enciphered Media:** ImageMagick's `encipher()` creates a new PNG that doesn't preserve tEXt chunks. Audio/video cannot be re-embedded into enciphered images because it would corrupt the encryption. Instead, media tokens are extracted from the original processed image using the `original_hash` reference stored in the data pod.
 
 ---
 
-## Audio Embedding Flow
+## Media Embedding Flow
 
-### Two Audio Methods
+### Audio vs Video Embedding
 
-#### 1. Metadata Method (Base64)
-- Audio encoded as base64 string
-- Stored in PNG tEXt chunks
-- Keywords: `audio_base64_001`, `audio_base64_002`, etc.
-- No encryption - anyone can extract
-- Use case: Public audio, no subscriber restriction
+An image supports **audio OR video, not both**. The editor UI enforces this: when one media type is embedded, the FAB button for the other type is hidden.
 
-#### 2. Token Method (Encrypted)
-- Audio encrypted using HVYMDataToken (Biscuit-based)
-- Stored in PNG tEXt chunks
-- Keywords: `audio_token_001`, `audio_token_002`, etc.
-- Only recipient with correct key can decrypt
-- Use case: Protected audio for subscribers only
+| Media | Storage | Encryption | tEXt Chunk Keywords |
+|-------|---------|------------|---------------------|
+| Audio | Encrypted token in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `audio_token_001`, `audio_token_002`, ... |
+| Video | Encrypted token on IPFS; CID in PNG tEXt chunks | HVYMDataToken (ChaCha20-Poly1305) | `video_token_cid_001`, `video_token_cid_002`, ... |
 
-### Audio Embedding Functions
+### Audio Token Embedding
 
 ```python
-# Metadata method (main.py:4587-4632)
-def create_audio_image(audio_file, image_file):
-    audio_data = read_audio_bytes(audio_file)
-    audio_base64 = base64.b64encode(audio_data).decode()
-    return embed_audio_base64(image_file, audio_base64, output_path)
-
-# Token method (audio_tokens.py:149-183)
+# audio_tokens.py
 def create_token_audio_image(audio_file, image_file, sender_kp, receiver_pub, expires_in):
     audio_data = read_audio_bytes(audio_file)
     token = create_audio_token(sender_kp, receiver_pub, audio_data, filename, expires_in)
     return embed_audio_token(image_file, token, output_path)
+```
+
+### Video Token Embedding
+
+Video tokens are too large for PNG tEXt chunks, so they are stored on IPFS with only the CID embedded in the PNG.
+
+```python
+# video_tokens.py
+def create_token_video_image(video_file, image_file, sender_kp, receiver_pub,
+                             expires_in=3600, ipfs_add_fn=None):
+    video_data = read_video_bytes(video_file)
+    token = create_video_token(sender_kp, receiver_pub, video_data, filename, expires_in)
+    # Upload encrypted token to IPFS
+    cid = ipfs_add_fn(token_temp_path)
+    # Embed only the CID (~50 bytes) in the PNG
+    output_path = embed_video_token_cid(image_file, cid)
+    return output_path, cid
 ```
 
 ### PNG tEXt Chunk Storage
@@ -278,68 +308,51 @@ def create_token_audio_image(audio_file, image_file, sender_kp, receiver_pub, ex
 │  ... other chunks ...                                   │
 │  IDAT chunks (pixel data - may be scrambled)           │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │  tEXt chunk: audio_base64_001 = <base64 data>   │   │
-│  │  tEXt chunk: audio_base64_002 = <base64 data>   │   │
+│  │  tEXt: audio_token_001 = <encrypted token>      │   │
+│  │  tEXt: audio_token_002 = <encrypted token>      │   │
 │  │  ... (8KB max per chunk)                        │   │
+│  │                 OR                               │   │
+│  │  tEXt: video_token_cid_001 = <IPFS CID>        │   │
 │  └─────────────────────────────────────────────────┘   │
 │  IEND chunk                                             │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Critical: Audio Preservation Through Pipeline
+### Critical: Media Preservation Through Pipeline
 
 **Problem:** Image transformation functions create NEW PNG files that don't preserve tEXt chunks:
 - `new_aposematic_img()` / `recover_aposematic_img()` - PIL creates new image
 - `new_enciphered_img()` / `new_deciphered_img()` - ImageMagick creates new image
 
-**Solution for Aposematic:** Extract audio BEFORE transformation, re-embed AFTER.
+**Solution — Creator Side:** `reembed_media_if_needed()` copies both audio and video tEXt chunks from the source PNG into the target PNG after any transformation.
 
 ```python
-# Re-embedding helper (main.py:4500-4505)
-def reembed_audio_if_needed(image_path, audio_path):
-    if audio_path and os.path.exists(audio_path):
-        return create_audio_image(audio_path, image_path)
-    return image_path
+def reembed_media_if_needed(target_image_path, source_image_path):
+    if source_image_path and os.path.exists(source_image_path):
+        target_image_path = copy_token_chunks(source_image_path, target_image_path)
+        target_image_path = copy_token_chunks(
+            source_image_path, target_image_path,
+            keyword_prefix=VIDEO_TOKEN_CID_PREFIX
+        )
+    return target_image_path
+```
 
-# During data pod processing - pre-extract from aposematic image
-pre_extracted_audio = None
-if item.get("hasAudio") and image_type == "aposematic":
-    # Extract from temp_path (aposematic image still has tEXt chunks)
-    has_audio, actual_method = has_audio_data(temp_path)
-    if actual_method == "token":
-        serialized_token = extract_audio_token(temp_path)
-        pre_extracted_audio = {"type": "token", "data": serialized_token}
+**Solution — Subscriber Side (Aposematic):** Pre-extract audio tokens and video CIDs from the encrypted PNG BEFORE recovery, since recovery creates a new PNG that loses tEXt chunks.
+
+```python
+# Pre-extract before recovery (data_pod_audio.py)
+pre_extracted_audio = extract_audio_token(temp_path)
+pre_extracted_video_cid = extract_video_token_cid(temp_path)
 
 # THEN recover the image (creates new PNG without tEXt chunks)
-decoded_path = recover_aposematic_img(temp_path, cipher_key, op_string)
+decoded_path = recover_aposematic_img(temp_path, stellar_keypair=..., artist_public_key=...)
 ```
 
-**Solution for Enciphered:** Extract audio from ORIGINAL processed image (via `original_hash`).
-
-```python
-# During data pod processing (data_pod_audio.py:415-447)
-if item.get("hasAudio") and image_type == "enciphered":
-    # Enciphered images lose audio during encryption - extract from original
-    original_hash = item.get("original_hash")
-    if original_hash:
-        # Download original processed image from IPFS
-        original_href = f"{gateway_base}/ipfs/{original_hash}"
-        original_path = download_ipfs_image(original_href)
-
-        # Extract audio from original (has tEXt chunks intact)
-        has_audio, actual_method = has_audio_data(original_path)
-        if actual_method == "token":
-            serialized_token = extract_audio_token(original_path)
-            pre_extracted_audio = {"type": "token", "data": serialized_token}
-
-# THEN decipher the enciphered image (for display)
-decoded_path = new_deciphered_img(temp_path, cipher_key)
-```
+**Solution — Subscriber Side (Enciphered):** Extract media from ORIGINAL processed image (via `original_hash`), since enciphered images can't preserve tEXt chunks at all.
 
 **Why Enciphered is Different:**
 - ImageMagick `encipher()` encrypts the entire image data structure
-- Re-embedding audio after encryption would corrupt the encrypted payload
-- Decryption would fail or produce garbage
+- Re-embedding media after encryption would corrupt the encrypted payload
 - Solution: Keep reference to original processed image via `original_hash`
 
 ---
@@ -358,23 +371,32 @@ decoded_path = new_deciphered_img(temp_path, cipher_key)
 
 ### ECDH Shared Key Derivation
 
+Two patterns are used depending on the operation:
+
+**Aposematic (aiposematic v1.1 — native Stellar):** Pass keypairs directly; aiposematic derives the cipher key internally using domain-separated hashing: `SHA256(shared_secret + ":aiposematic:sbox")[:32]`.
+
+```python
+from hvym_stellar import Stellar25519KeyPair
+from stellar_sdk import Keypair
+
+# Creator side — pass keypair + subscriber public key
+creator_keys = Stellar25519KeyPair(Keypair.from_secret(creator_stellar_secret))
+new_aposematic_img(img, stellar_keypair=creator_keys, subscriber_public_key=recipient_pub)
+
+# Subscriber side — pass keypair + artist public key
+subscriber_keys = Stellar25519KeyPair(Keypair.from_secret(subscriber_secret))
+recover_aposematic_img(img, stellar_keypair=subscriber_keys, artist_public_key=creator_pub)
+```
+
+**Enciphered (ImageMagick) and non-aposematic operations:** Derive `cipher_key` manually.
+
 ```python
 from hvym_stellar import StellarSharedKey, Stellar25519KeyPair
 from stellar_sdk import Keypair
 
-# Creator side
-creator_kp = Keypair.from_secret(creator_stellar_secret)
-creator_keys = Stellar25519KeyPair(creator_kp)
-
-# Generate shared key with recipient's public key
+creator_keys = Stellar25519KeyPair(Keypair.from_secret(creator_stellar_secret))
 shared_key = StellarSharedKey(creator_keys, recipient_public_key)
-cipher_key = shared_key.shared_secret().hex()
-
-# Subscriber side (same result!)
-subscriber_kp = Keypair.from_secret(subscriber_stellar_secret)
-subscriber_keys = Stellar25519KeyPair(subscriber_kp)
-shared_key_sub = StellarSharedKey(subscriber_keys, creator_public_key)
-cipher_key_sub = shared_key_sub.shared_secret().hex()  # Same key!
+cipher_key = shared_key.shared_secret_as_hex()
 ```
 
 ### Key Flow in Debug vs Production
@@ -413,10 +435,10 @@ cipher_key_sub = shared_key_sub.shared_secret().hex()  # Same key!
 **Steps:**
 1. Validate image state
 2. If aposematic: Recreate with correct shared key (debug→app)
-3. Re-embed audio into aposematic images
+3. Re-embed audio/video media into aposematic images
 4. Create data pod with `debug_public_key` as creator
-5. Process data pod locally using `stellar_secret`
-6. Render HTML with decrypted images
+5. Process data pod locally using `stellar_secret` (decrypts images + audio/video tokens)
+6. Render HTML with decrypted images and media
 7. Display in browser tab
 
 ### Pintheon Deployment (`process_pintheon_deploy_gallery()`)
@@ -455,16 +477,16 @@ cipher_key_sub = shared_key_sub.shared_secret().hex()  # Same key!
 
 ```
 ┌─────────────┐    ┌───────────┐    ┌─────────────┐    ┌──────────┐
-│  DOWNLOAD   │───▶│ PRE-EXTRACT│───▶│   DECRYPT   │───▶│  RENDER  │
-│  data pod   │    │   AUDIO   │    │   images    │    │  gallery │
+│  DOWNLOAD   │───▶│PRE-EXTRACT│───▶│   DECRYPT   │───▶│  RENDER  │
+│  data pod   │    │AUDIO+VIDEO│    │   images    │    │  gallery │
 │  + images   │    │  (before  │    │  + process  │    │  with    │
-│  from IPFS  │    │  recovery)│    │   audio     │    │  audio   │
+│  from IPFS  │    │  recovery)│    │ audio/video │    │  media   │
 └─────────────┘    └───────────┘    └─────────────┘    └──────────┘
       │                  │                 │                 │
       ▼                  ▼                 ▼                 ▼
-   Load JSON,       Extract from      Generate shared    HTML with
-   fetch images     encrypted PNG     key, recover       base64 images
-   via IPFS API     (tEXt chunks)     aposematic         + audio player
+   Load JSON,       Extract tokens    Generate keys,     HTML with
+   fetch images     and video CIDs    recover images,    base64 images
+   via IPFS API     from PNG chunks   decrypt tokens     + media players
 ```
 
 **Processing Steps:**
@@ -476,21 +498,24 @@ cipher_key_sub = shared_key_sub.shared_secret().hex()  # Same key!
 2. **Generate Shared Key**
    ```python
    subscriber_keys = Stellar25519KeyPair(Keypair.from_secret(subscriber_secret))
-   shared_key = StellarSharedKey(subscriber_keys, creator_public_key)
-   cipher_key = shared_key.shared_secret().hex()
+   # For aposematic: pass keypair directly to recover_aposematic_img()
+   # For enciphered: derive cipher_key via StellarSharedKey
    ```
 
 3. **For Each Item:**
    - Download image from IPFS
-   - **Pre-extract audio** (BEFORE recovery - critical!)
+   - **Pre-extract audio token** (BEFORE recovery - critical!)
+   - **Pre-extract video CID** (BEFORE recovery - critical!)
    - Decrypt/recover image based on type
-   - Process pre-extracted audio (decrypt token if needed)
-   - Update item with decrypted image href and audio data
+   - Process pre-extracted audio (decrypt token)
+   - Process pre-extracted video (fetch from IPFS → decrypt token → write to temp dir)
+   - Update item with decrypted image href, audio data, and video src URL
 
 4. **Render Gallery**
    - Use Jinja2 template with processed data pod
    - Images as IPFS URLs or base64 data URIs
    - Audio as base64 in `<audio>` element
+   - Video as `/editor/{filename}` URL in `<video>` element with fullscreen player overlay
 
 ---
 
@@ -513,7 +538,7 @@ Browser Mode is a viewing/consumption mode for displaying gallery content from P
 │         ▼                    ▼                    ▼                      │
 │   • Pintheon URL       • Fetch channels    • Render HTML               │
 │   • IPNS Hash          • Select from list  • Display in iframe         │
-│   • Store locally      • Load data pod     • Play audio                │
+│   • Store locally      • Load data pod     • Play audio/video          │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -698,11 +723,13 @@ Channels contain NINJS-format data pods:
         "recipient_public_key": "GEFGH...",
         "items": [
             {
-                "type": "audio_image",
+                "type": "video_image",
                 "headline": "Image Title",
                 "renditions": [{"href": "ipfs://..."}],
-                "hasAudio": true,
-                "audioMethod": "token",
+                "hasAudio": false,
+                "hasVideo": true,
+                "videoMethod": "token",
+                "videoTokenCid": "QmCID...",
                 # ...
             }
         ]
@@ -793,7 +820,7 @@ User switches to BROWSER tab
 ┌─────────────────────────────┐
 │  Gallery renders in iframe  │
 │  • Images displayed         │
-│  • Audio playable           │
+│  • Audio/video playable     │
 │  • Metadata visible         │
 └─────────────────────────────┘
 ```
@@ -806,7 +833,7 @@ User switches to BROWSER tab
 {
   "uri": "urn:ninjs:v2:com.example.gallery:aposematic",
   "version": "http://iptc.org/std/ninjs/2.1",
-  "content_created": "2024-01-15T10:30:00Z",
+  "content_created": "2026-01-15T10:30:00Z",
 
   "creator_public_key": "GABCD...",
   "recipient_public_key": "GEFGH...",
@@ -815,32 +842,38 @@ User switches to BROWSER tab
 
   "items": [
     {
-      "type": "audio_image",
+      "type": "video_image",
       "guid": "urn:uuid:QmXYZ...",
       "title": "image_name.png",
       "imageType": "aposematic",
-      "hasAudio": true,
-      "audioMethod": "token",
+      "hasAudio": false,
+      "hasVideo": true,
+      "videoMethod": "token",
+      "videoTokenCid": "QmVideoCID...",
       "renditions": [{
         "name": "original",
         "href": "http://localhost:8080/ipfs/QmXYZ...",
         "mimetype": "image/png"
       }],
-      "audioTokenInfo": {
+      "videoTokenInfo": {
         "receiverPublicKey": "GEFGH...",
-        "tokenExpiry": 1705312200
+        "tokenExpiry": null,
+        "noExpiry": true
       }
     }
   ],
 
-  "audio_token_images": ["QmXYZ..."],
+  "audio_token_images": ["QmAudioImg..."],
+  "video_token_images": ["QmVideoImg..."],
   "type_distribution": {
     "raw": 0,
     "processed": 0,
     "aposematic": 3,
     "enciphered": 0,
-    "total_with_audio": 2,
-    "audio_token_count": 2
+    "total_with_audio": 1,
+    "audio_token_count": 1,
+    "total_with_video": 1,
+    "video_token_count": 1
   }
 }
 ```
@@ -883,20 +916,27 @@ User switches to BROWSER tab
     "recipient_public_key": str,    # Selected recipient
     "cipher_key": str,              # Current shared key (hex)
     "img_state": int,               # Current view (1-4)
-    "raw_img_hashes": [str],        # IPFS hashes
+    "raw_img_hashes": [str],        # Local hashes (raw/processed) or IPFS hashes
     "processed_img_hashes": [str],
     "aposematic_img_hashes": [str],
     "enciphered_img_hashes": [str],
     "{hash}": {                     # Per-image metadata
         "path": str,
         "name": str,
+        "editor_url": str,          # /editor/{filename} URL for display
         "image_type": str,
         "has_audio": bool,
-        "audio_method": str,        # "metadata" or "token"
+        "audio_method": str,        # "token"
         "audio_path": str,
         "audio_format": str,
         "audio_duration": float,
         "audio_size": int,
+        "has_video": bool,
+        "video_method": str,        # "token"
+        "video_token_cid": str,     # IPFS CID for encrypted video token
+        "video_path": str,
+        "video_token_expires": float,
+        "video_token_no_expiry": bool,
         "original_hash": str        # For processed images
     }
 }
@@ -911,8 +951,9 @@ User switches to BROWSER tab
 | UI Framework | NiceGUI | Web-based desktop UI |
 | Desktop Wrapper | pywebview | Native window container |
 | Image Processing | Wand/ImageMagick | Encryption, watermarking |
-| Aposematic | aiposematic | Visual scrambling |
+| Aposematic | aiposematic v1.1 | Visual scrambling (native Stellar key derivation) |
 | Audio Tokens | hvym-stellar (HVYMDataToken) | Encrypted audio tokens |
+| Video Tokens | hvym-stellar (HVYMDataToken) + IPFS | Encrypted video tokens (CID in PNG) |
 | Metadata | exiftool, exiv2 | IPTC/EXIF/XMP handling |
 | Cryptography | hvym-stellar | Stellar-based ECDH keys |
 | Storage | IPFS | Decentralized file storage |
@@ -926,26 +967,30 @@ User switches to BROWSER tab
 ```
 andromica/
 ├── main.py              # Application entry, UI, core logic
-├── dialogs.py           # Dialog components
+├── dialogs.py           # Dialog components (audio/video embed, cipher, aposematic)
 ├── img_edit.py          # Image processing (watermark, encrypt)
 ├── metadata.py          # IPTC data management
-├── data_pod_audio.py    # Data pod creation and processing
+├── data_pod_audio.py    # Data pod creation and processing (audio + video)
 ├── audio_tokens.py      # HVYMDataToken audio encryption
-├── png_chunks.py        # PNG tEXt chunk manipulation
+├── video_tokens.py      # HVYMDataToken video encryption + IPFS CID
+├── png_chunks.py        # PNG tEXt chunk manipulation (audio tokens + video CIDs)
 ├── client_rendering.py  # Gallery HTML rendering
+├── task_runner.py       # Async task runner with progress UI
 ├── data.json            # Persistent user data
 ├── static/
 │   ├── icon.png         # App icon
 │   ├── OCR-A.ttf        # Font for aposematic
+│   ├── PhinoVariation.ttf # Additional font
 │   └── logo.json        # Logo configuration
 ├── templates/
-│   └── gallery.html     # Jinja2 gallery template
+│   └── gallery.html     # Jinja2 gallery template (audio + video player)
 ├── docs/
 │   ├── ARCHITECTURE.md  # This file
 │   ├── ENCRYPTION.md    # Cryptography details
 │   ├── DATA_STRUCTURES.md
 │   ├── INSTALL.md
 │   └── BUILD.md
+├── VIDEO_SUPPORT.md     # Video feature implementation plan
 └── scripts/
     └── ...              # Build scripts
 ```
@@ -1041,8 +1086,8 @@ The application uses a combination of:
 
 ## Critical Implementation Notes
 
-### Audio Preservation
-PNG tEXt chunks (where audio is stored) are NOT preserved when:
+### Media Preservation
+PNG tEXt chunks (where audio tokens and video CIDs are stored) are NOT preserved when:
 - `new_aposematic_img()` creates scrambled image
 - `recover_aposematic_img()` recovers original
 - `new_enciphered_img()` encrypts image
@@ -1050,12 +1095,21 @@ PNG tEXt chunks (where audio is stored) are NOT preserved when:
 
 **Solutions by Image Type:**
 
-| Image Type | Audio Strategy |
+| Image Type | Media Strategy |
 |------------|----------------|
-| Aposematic | Re-embed after scramble; pre-extract before recovery |
+| Aposematic | `reembed_media_if_needed()` after scramble; pre-extract before recovery |
 | Enciphered | Extract from original processed image via `original_hash` |
 
 **Why Enciphered Cannot Re-embed:** ImageMagick encryption modifies the entire image data structure. Adding tEXt chunks after encryption corrupts the payload and breaks decryption.
+
+### Video Token Cleanup
+When removing an image (`remove_img()`), the video token CID is unpinned from IPFS before the image itself is removed. Similarly, `remove_video_from_image()` unpins the CID and strips the tEXt chunks.
+
+### No Dual Media Embedding
+An image supports audio OR video, not both. The editor FAB uses `if/elif/else` logic:
+- If audio embedded: show Play Audio + Remove Audio
+- Elif video embedded: show Play Video + Remove Video
+- Else: show Add Audio + Add Video
 
 ### NiceGUI Storage Persistence
 In-place list modifications don't trigger persistence:
@@ -1073,4 +1127,5 @@ app.storage.user["list"] = lst
 ECDH key derivation must use consistent parameters:
 - Same `op_string` for aposematic
 - Same `scramble_mode` for aposematic
-- Creator and subscriber derive same `cipher_key` independently
+- For aposematic (v1.1): `stellar_keypair` + `subscriber_public_key`/`artist_public_key` — key derivation is handled internally by aiposematic with domain-separated hashing
+- For enciphered: Creator and subscriber derive same `cipher_key` via `StellarSharedKey` independently
