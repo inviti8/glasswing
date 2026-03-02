@@ -280,12 +280,27 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
 
                     # Extract the serialized token from the source image and store
                     # in the data pod so subscribers can decrypt without needing
-                    # the token embedded in the (possibly recovered) image
+                    # the token embedded in the (possibly recovered) image.
+                    # NOTE: Markdown chunks are NOT reembedded into aposematic/enciphered
+                    # images, so we may need to fall back to the original processed image.
                     try:
                         serialized_md_token = extract_markdown_token(img_path)
+                        if not serialized_md_token:
+                            # Aposematic/enciphered images don't have markdown chunks —
+                            # extract from the original processed image instead
+                            original_hash = img_info.get("original_hash")
+                            if original_hash:
+                                original_info = app.storage.user.get(original_hash, {})
+                                original_path = original_info.get("path")
+                                if original_path and os.path.exists(original_path):
+                                    serialized_md_token = extract_markdown_token(original_path)
+                                    if serialized_md_token:
+                                        print(f"[MARKDOWN] Extracted token from original image ({original_hash[:16]}...)")
                         if serialized_md_token:
                             item["markdownToken"] = serialized_md_token
                             print(f"[MARKDOWN] Stored serialized token in data pod ({len(serialized_md_token)} chars)")
+                        else:
+                            print(f"[WARN] No markdown token found in image or original")
                     except Exception as e:
                         print(f"[WARN] Could not extract markdown token from {img_path}: {e}")
 

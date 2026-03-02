@@ -380,9 +380,24 @@ def init():
             artist = data["artist"]
             app.storage.user["use_watermark"] = data["use_watermark"]
             app.storage.user["watermark"] = data["watermark"]
+            app.storage.user["watermark_path"] = data.get("watermark_path")
             app.storage.user["watermark_size"] = data["watermark_size"]
             app.storage.user["watermark_position"] = data["watermark_position"]
             app.storage.user["watermark_padding"] = data["watermark_padding"]
+            # Restore watermark file into session temp dir if source still exists
+            wm_hash = data.get("watermark")
+            wm_source_path = data.get("watermark_path")
+            if wm_hash and wm_source_path and os.path.exists(wm_source_path):
+                restored_hash, restored_name, restored_url = _local_store_image_pure(wm_source_path)
+                if restored_hash:
+                    app.storage.user[restored_hash] = {
+                        "name": restored_name,
+                        "path": wm_source_path,
+                        "editor_url": restored_url,
+                    }
+                    if restored_hash != wm_hash:
+                        app.storage.user["watermark"] = restored_hash
+                    print(f"Watermark restored from {wm_source_path}")
             app.storage.user["scramble_mode"] = data["scramble_mode"]
             app.storage.user["op_string"] = data["op_string"]
             app.storage.user["use_iptc"] = data["use_iptc"]
@@ -459,6 +474,7 @@ def init():
             artist = data["artist"]
             app.storage.user["use_watermark"] = data["use_watermark"]
             app.storage.user["watermark"] = data["watermark"]
+            app.storage.user["watermark_path"] = data.get("watermark_path")
             app.storage.user["watermark_size"] = data["watermark_size"]
             app.storage.user["watermark_position"] = data["watermark_position"]
             app.storage.user["watermark_padding"] = data["watermark_padding"]
@@ -581,6 +597,7 @@ def persistent_save_data():
     artist = app.storage.user.get("artist", "unknown")
     use_watermark = app.storage.user.get("use_watermark", False)
     watermark = app.storage.user.get("watermark", None)
+    watermark_path = app.storage.user.get("watermark_path", None)
     watermark_size = app.storage.user.get("watermark_size", 0.2)
     watermark_position = app.storage.user.get("watermark_position", 1)
     watermark_padding = app.storage.user.get("watermark_padding", 0.05)
@@ -633,6 +650,7 @@ def persistent_save_data():
                 "artist": artist,
                 "use_watermark": use_watermark,
                 "watermark": watermark,
+                "watermark_path": watermark_path,
                 "watermark_size": watermark_size,
                 "watermark_position": watermark_position,
                 "watermark_padding": watermark_padding,
@@ -1668,6 +1686,7 @@ async def choose_watermark(watermark_container):
             ui.notify("Failed to store watermark", type="negative")
             return
         app.storage.user["watermark"] = content_hash
+        app.storage.user["watermark_path"] = file
         app.storage.user[content_hash] = {
             "name": file_name,
             "path": file,
