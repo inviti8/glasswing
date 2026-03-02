@@ -1,5 +1,5 @@
 """
-PNG Chunk Utilities for Audio/Data Embedding
+PNG Chunk Utilities for Audio/Video/Data Embedding
 
 Unified PNG tEXt chunk handling for the application.
 All PNG chunk read/write operations should use this module.
@@ -17,8 +17,8 @@ PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 CHUNK_SIZE = 8192  # 8KB chunks for tEXt compatibility
 
 # Keyword patterns
-AUDIO_BASE64_PREFIX = 'audio_base64_'
 AUDIO_TOKEN_PREFIX = 'audio_token_'
+VIDEO_TOKEN_CID_PREFIX = 'video_token_cid_'
 
 
 def is_valid_png(data: bytes) -> bool:
@@ -32,7 +32,7 @@ def read_text_chunks(png_path: str, keyword_prefix: str) -> Dict[int, str]:
 
     Args:
         png_path: Path to PNG file
-        keyword_prefix: Prefix to match (e.g., 'audio_base64_', 'audio_token_')
+        keyword_prefix: Prefix to match (e.g., 'audio_token_')
 
     Returns:
         dict: {chunk_number: chunk_data} sorted by chunk number
@@ -70,7 +70,7 @@ def read_text_chunks(png_path: str, keyword_prefix: str) -> Dict[int, str]:
                 data = chunk_data[null_pos+1:].decode('ascii')
 
                 if keyword.startswith(keyword_prefix):
-                    # Extract chunk number from keyword (e.g., audio_base64_001 -> 1)
+                    # Extract chunk number from keyword (e.g., audio_token_001 -> 1)
                     chunk_num = int(keyword.split('_')[-1])
                     chunks[chunk_num] = data
             except (ValueError, UnicodeDecodeError):
@@ -88,7 +88,7 @@ def write_text_chunks(png_path: str, keyword_prefix: str, data: str,
 
     Args:
         png_path: Path to source PNG file
-        keyword_prefix: Prefix for chunk keywords (e.g., 'audio_base64_')
+        keyword_prefix: Prefix for chunk keywords (e.g., 'audio_token_')
         data: Data to embed (will be split into chunks)
         output_path: Output path (defaults to temp file)
 
@@ -167,21 +167,6 @@ def extract_combined_data(png_path: str, keyword_prefix: str) -> Optional[str]:
     return ''.join(sorted_chunks)
 
 
-def embed_audio_base64(png_path: str, audio_base64: str, output_path: Optional[str] = None) -> str:
-    """
-    Embed base64-encoded audio data in PNG.
-
-    Args:
-        png_path: Path to source PNG
-        audio_base64: Base64-encoded audio data
-        output_path: Output path (optional)
-
-    Returns:
-        str: Path to PNG with embedded audio
-    """
-    return write_text_chunks(png_path, AUDIO_BASE64_PREFIX, audio_base64, output_path)
-
-
 def embed_audio_token(png_path: str, token: str, output_path: Optional[str] = None) -> str:
     """
     Embed audio token in PNG.
@@ -197,11 +182,6 @@ def embed_audio_token(png_path: str, token: str, output_path: Optional[str] = No
     return write_text_chunks(png_path, AUDIO_TOKEN_PREFIX, token, output_path)
 
 
-def extract_audio_base64(png_path: str) -> Optional[str]:
-    """Extract base64-encoded audio from PNG."""
-    return extract_combined_data(png_path, AUDIO_BASE64_PREFIX)
-
-
 def extract_audio_token(png_path: str) -> Optional[str]:
     """Extract audio token from PNG."""
     return extract_combined_data(png_path, AUDIO_TOKEN_PREFIX)
@@ -212,10 +192,128 @@ def has_audio_data(png_path: str) -> Tuple[bool, str]:
     Check if PNG has embedded audio data.
 
     Returns:
-        tuple: (has_audio, method) where method is 'base64', 'token', or None
+        tuple: (has_audio, method) where method is 'token' or None
     """
     if extract_combined_data(png_path, AUDIO_TOKEN_PREFIX):
         return True, 'token'
-    if extract_combined_data(png_path, AUDIO_BASE64_PREFIX):
-        return True, 'base64'
+    return False, None
+
+
+def copy_token_chunks(source_png: str, target_png: str,
+                      keyword_prefix: str = AUDIO_TOKEN_PREFIX,
+                      output_path: Optional[str] = None) -> str:
+    """
+    Copy tEXt chunks matching a prefix from one PNG to another.
+
+    Used to preserve audio token chunks when an image is re-processed
+    (e.g., watermarking, aposematic) and the output PNG loses tEXt chunks.
+
+    Args:
+        source_png: PNG file containing the chunks to copy
+        target_png: PNG file to copy chunks into
+        keyword_prefix: Prefix to match (default: audio token prefix)
+        output_path: Output path (defaults to overwriting target_png)
+
+    Returns:
+        str: Path to the target PNG with copied chunks
+    """
+    # Extract combined token data from source
+    token_data = extract_combined_data(source_png, keyword_prefix)
+    if not token_data:
+        # No chunks to copy — return target unchanged
+        return target_png
+
+    # Write the token data into the target PNG
+    if output_path is None:
+        output_path = target_png
+    return write_text_chunks(target_png, keyword_prefix, token_data, output_path)
+
+
+def remove_text_chunks(png_path: str, keyword_prefix: str,
+                       output_path: Optional[str] = None) -> str:
+    """
+    Remove all tEXt chunks matching a keyword prefix from a PNG file.
+
+    Args:
+        png_path: Path to PNG file
+        keyword_prefix: Prefix to match for removal
+        output_path: Output path (defaults to overwriting png_path)
+
+    Returns:
+        str: Path to modified PNG
+    """
+    with open(png_path, 'rb') as f:
+        png_data = f.read()
+
+    if not is_valid_png(png_data):
+        raise ValueError(f"Invalid PNG file: {png_path}")
+
+    result = bytearray()
+    result.extend(png_data[:8])  # PNG signature
+    pos = 8
+
+    while pos < len(png_data):
+        if pos + 8 > len(png_data):
+            break
+
+        chunk_length = int.from_bytes(png_data[pos:pos+4], byteorder='big')
+        chunk_type = png_data[pos+4:pos+8]
+        chunk_end = pos + 8 + chunk_length + 4  # header + data + CRC
+
+        skip = False
+        if chunk_type == b'tEXt':
+            chunk_data = png_data[pos+8:pos+8+chunk_length]
+            if b'\x00' in chunk_data:
+                try:
+                    null_pos = chunk_data.index(b'\x00')
+                    keyword = chunk_data[:null_pos].decode('ascii')
+                    if keyword.startswith(keyword_prefix):
+                        skip = True
+                except (ValueError, UnicodeDecodeError):
+                    pass
+
+        if not skip:
+            result.extend(png_data[pos:chunk_end])
+
+        pos = chunk_end
+
+    if output_path is None:
+        output_path = png_path
+
+    with open(output_path, 'wb') as f:
+        f.write(result)
+
+    return output_path
+
+
+def embed_video_token_cid(png_path: str, cid: str,
+                           output_path: Optional[str] = None) -> str:
+    """
+    Embed video token IPFS CID in PNG.
+
+    Args:
+        png_path: Path to source PNG
+        cid: IPFS CID string for the encrypted video token
+        output_path: Output path (optional)
+
+    Returns:
+        str: Path to PNG with embedded CID
+    """
+    return write_text_chunks(png_path, VIDEO_TOKEN_CID_PREFIX, cid, output_path)
+
+
+def extract_video_token_cid(png_path: str) -> Optional[str]:
+    """Extract video token IPFS CID from PNG."""
+    return extract_combined_data(png_path, VIDEO_TOKEN_CID_PREFIX)
+
+
+def has_video_data(png_path: str) -> Tuple[bool, str]:
+    """
+    Check if PNG has embedded video data (CID reference).
+
+    Returns:
+        tuple: (has_video, method) where method is 'token' or None
+    """
+    if extract_combined_data(png_path, VIDEO_TOKEN_CID_PREFIX):
+        return True, 'token'
     return False, None

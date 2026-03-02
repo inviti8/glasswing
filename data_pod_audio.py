@@ -23,7 +23,11 @@ from audio_tokens import (
     extract_audio_from_token,
     detect_audio_format,
 )
-from png_chunks import extract_audio_token, extract_audio_base64, has_audio_data
+from video_tokens import (
+    extract_video_from_token,
+    detect_video_format,
+)
+from png_chunks import extract_audio_token, has_audio_data, extract_video_token_cid
 
 
 def determine_image_type(img_hash: str, img_info: Dict[str, Any], app) -> str:
@@ -108,6 +112,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         # Create list to hold all news items
         data_items = []
         audio_token_images = []  # Track which images have audio tokens
+        video_token_images = []  # Track which images have video tokens
 
         for img_hash in processed_hashes:
             try:
@@ -143,7 +148,9 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 # Build news item with type-specific rendering
                 render_flag = img_info.get("render_metadata", True)
                 has_audio = img_info.get("has_audio", False)
-                audio_method = img_info.get("audio_method", "metadata")
+                audio_method = img_info.get("audio_method", "token")
+                has_video = img_info.get("has_video", False)
+                video_method = img_info.get("video_method", "token") if has_video else None
 
                 # Get IPFS gateway settings for full URLs
                 ipfs_webui = app.storage.user.get("ipfs_webui", "127.0.0.1")
@@ -160,8 +167,16 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 # Use the existing cipher key from storage (already set during recreation)
                 cipher_key = app.storage.user.get("cipher_key", "")
 
+                # Determine item type: video takes precedence over audio
+                if has_video:
+                    item_type = "video_image"
+                elif has_audio:
+                    item_type = "audio_image"
+                else:
+                    item_type = image_type
+
                 item = {
-                    "type": "audio_image" if has_audio else image_type,
+                    "type": item_type,
                     "guid": f"urn:uuid:{img_hash}",
                     "version": "1",
                     "language": "en",
@@ -170,22 +185,21 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                     "byline": metadata.get("By-line", ""),
                     "creditline": metadata.get("Credit", ""),
                     "copyright": metadata.get("Copyright Notice", ""),
-                    "ednote": f"Type: {image_type}, Audio method: {audio_method}",
+                    "ednote": f"Type: {image_type}, Audio: {audio_method}, Video: {video_method}",
                     "renditions": [
                         {
                             "name": "original",
-                            "href": f"{gateway_base}/ipfs/{img_hash}",  # Full URL for downloading
+                            "href": f"{gateway_base}/ipfs/{img_hash}",
                             "mimetype": "image/png",
                             "width": metadata.get("ImageWidth", 0),
                             "height": metadata.get("ImageHeight", 0),
                         }
                     ],
-                    # CRITICAL: Include image type for client-side rendering decisions
                     "imageType": image_type,
                     "hasAudio": has_audio,
                     "audioMethod": audio_method,
-                    # For enciphered images, include original_hash so audio can be extracted
-                    # (enciphered images lose audio during ImageMagick encryption)
+                    "hasVideo": has_video,
+                    "videoMethod": video_method,
                     "original_hash": img_info.get("original_hash"),
                 }
 
@@ -210,6 +224,28 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                         "noExpiry": no_expiry,
                     }
 
+                # For video token images, include CID and token info
+                if has_video and video_method == "token":
+                    if not receiver_public_key:
+                        raise ValueError(
+                            "Receiver public key required for token-based video"
+                        )
+
+                    video_token_images.append(img_hash)
+
+                    video_token_cid = img_info.get("video_token_cid")
+                    video_token_expires = img_info.get("video_token_expires")
+                    video_no_expiry = img_info.get(
+                        "video_token_no_expiry", video_token_expires is None
+                    )
+
+                    item["videoTokenCid"] = video_token_cid
+                    item["videoTokenInfo"] = {
+                        "receiverPublicKey": receiver_public_key,
+                        "tokenExpiry": video_token_expires,
+                        "noExpiry": video_no_expiry,
+                    }
+
                 if render_flag:
                     data_items.append(item)
 
@@ -227,8 +263,8 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
             "creator_public_key": creator_public_key or get_user_public_key(app),
             "recipient_public_key": receiver_public_key,  # Subscriber's key
             "content_type": "mixed",  # May contain original, aposematic, enciphered
-            "audio_token_images": audio_token_images,  # NEW: Track token-based images
-            # Include type distribution metadata
+            "audio_token_images": audio_token_images,
+            "video_token_images": video_token_images,
             "type_distribution": {
                 "raw": len([i for i in data_items if i["imageType"] == "raw"]),
                 "processed": len(
@@ -243,7 +279,11 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
                 "total_with_audio": len(
                     [i for i in data_items if i.get("hasAudio", False)]
                 ),
+                "total_with_video": len(
+                    [i for i in data_items if i.get("hasVideo", False)]
+                ),
                 "audio_token_count": len(audio_token_images),
+                "video_token_count": len(video_token_images),
             },
         }
 
@@ -269,6 +309,7 @@ async def create_ninjs_data_pod_with_encrypted_tokens(
         app.storage.user["latest_data_pod_timestamp"] = timestamp
         print(f"Successfully created NINJS data pod with {len(data_items)} items")
         print(f"Audio token images: {len(audio_token_images)}")
+        print(f"Video token images: {len(video_token_images)}")
         print(f"Type distribution: {ninjs_data['type_distribution']}")
 
         # Store success notification
@@ -299,18 +340,14 @@ async def process_data_pod_locally(
     image_to_base64_uri=None,
     ipfs_add=None,
     _ipfs_add_pure=None,
+    _ipfs_load_to_temp_file_pure=None,
     ipfs_webui="http://localhost",
     ipfs_webui_port="8080",
+    video_temp_dir=None,
 ) -> Dict[str, Any]:
     """
-    Process downloaded data pod locally - decrypt images and audio tokens
-    This runs on subscriber's machine following ENCRYPTION.md pattern
-
-    [INFO] CRITICAL: This follows ENCRYPTION.md browser-side decoding exactly:
-    - Generate shared key using recipient_public_key from data pod
-    - Use same StellarSharedKey ECDH derivation as image decryption
-    - Process all content types (images + audio tokens) in unified pass
-    - Optionally convert to base64 for offline rendering
+    Process downloaded data pod locally - decrypt images, audio tokens, and video tokens.
+    This runs on subscriber's machine following ENCRYPTION.md pattern.
 
     Args:
         data_pod_path: Path to downloaded data pod JSON file
@@ -318,15 +355,16 @@ async def process_data_pod_locally(
         app: NiceGUI app instance
         embed_images_as_base64: If True, embed images as base64 data URIs (for offline HTML).
                                 If False, keep IPFS URLs (for local preview with IPFS running).
-                                Default False to avoid large HTML files.
         download_ipfs_image: Function to download image from IPFS
         new_deciphered_img: Function to decipher encrypted images
         recover_aposematic_img: Function to recover aposematic images
         image_to_base64_uri: Function to convert image to base64 URI
         ipfs_add: Function to add file to IPFS
         _ipfs_add_pure: Pure version for threading
+        _ipfs_load_to_temp_file_pure: Function to load IPFS content to temp file (for video tokens)
         ipfs_webui: IPFS gateway host
         ipfs_webui_port: IPFS gateway port
+        video_temp_dir: Directory to write decrypted video files for serving
 
     Returns:
         dict: Processed data pod with decrypted content ready for rendering
@@ -441,32 +479,19 @@ async def process_data_pod_locally(
                     if image_type == "enciphered":
                         original_hash = item.get("original_hash")
                         if original_hash:
-                            print(f"[DEBUG] Enciphered image - extracting audio from original: {original_hash[:16]}...")
+                            print(f"[DEBUG] Enciphered image - extracting audio token from original: {original_hash[:16]}...")
                             try:
                                 # I/O-bound: Download original processed image
                                 original_href = f"{gateway_base}/ipfs/{original_hash}"
                                 original_path = await run.io_bound(download_ipfs_image, original_href)
                                 if original_path:
-                                    has_audio, actual_method = has_audio_data(original_path)
-                                    print(f"[DEBUG] Audio check on original: has_audio={has_audio}, actual_method={actual_method}")
-
-                                    if has_audio:
-                                        if actual_method == "token" or item.get("audioMethod") == "token":
-                                            serialized_token = extract_audio_token(original_path)
-                                            if serialized_token:
-                                                pre_extracted_audio = {
-                                                    "type": "token",
-                                                    "data": serialized_token
-                                                }
-                                                print(f"[OK] Pre-extracted audio token from original ({len(serialized_token)} chars)")
-                                        if not pre_extracted_audio and (actual_method == "base64" or has_audio):
-                                            audio_base64 = extract_audio_base64(original_path)
-                                            if audio_base64:
-                                                pre_extracted_audio = {
-                                                    "type": "base64",
-                                                    "data": audio_base64
-                                                }
-                                                print(f"[OK] Pre-extracted audio base64 from original ({len(audio_base64)} chars)")
+                                    serialized_token = extract_audio_token(original_path)
+                                    if serialized_token:
+                                        pre_extracted_audio = {
+                                            "type": "token",
+                                            "data": serialized_token
+                                        }
+                                        print(f"[OK] Pre-extracted audio token from original ({len(serialized_token)} chars)")
                                     # Clean up temp file
                                     try:
                                         os.remove(original_path)
@@ -477,30 +502,49 @@ async def process_data_pod_locally(
                         else:
                             print(f"[WARN] Enciphered image has no original_hash - cannot extract audio")
                     else:
-                        # For aposematic images, audio is in the image itself (re-embedded after scramble)
+                        # For aposematic images, audio token is in the image itself
                         try:
-                            has_audio, actual_method = has_audio_data(temp_path)
-                            print(f"[DEBUG] Audio check on source: has_audio={has_audio}, actual_method={actual_method}")
-
-                            if has_audio:
-                                if actual_method == "token" or item.get("audioMethod") == "token":
-                                    serialized_token = extract_audio_token(temp_path)
-                                    if serialized_token:
-                                        pre_extracted_audio = {
-                                            "type": "token",
-                                            "data": serialized_token
-                                        }
-                                        print(f"[OK] Pre-extracted audio token ({len(serialized_token)} chars)")
-                                if not pre_extracted_audio and (actual_method == "base64" or has_audio):
-                                    audio_base64 = extract_audio_base64(temp_path)
-                                    if audio_base64:
-                                        pre_extracted_audio = {
-                                            "type": "base64",
-                                            "data": audio_base64
-                                        }
-                                        print(f"[OK] Pre-extracted audio base64 ({len(audio_base64)} chars)")
+                            serialized_token = extract_audio_token(temp_path)
+                            if serialized_token:
+                                pre_extracted_audio = {
+                                    "type": "token",
+                                    "data": serialized_token
+                                }
+                                print(f"[OK] Pre-extracted audio token ({len(serialized_token)} chars)")
                         except Exception as e:
                             print(f"[WARN] Pre-extraction of audio failed: {e}")
+
+                # [INFO] CRITICAL: Pre-extract video CID BEFORE recovery!
+                # Video CID is stored in tEXt chunks which are lost during recovery.
+                # Try data pod metadata first (most reliable), then fall back to PNG extraction.
+                pre_extracted_video_cid = item.get("videoTokenCid")
+                if pre_extracted_video_cid:
+                    print(f"[VIDEO] CID from data pod metadata: {pre_extracted_video_cid[:20]}...")
+                elif item.get("hasVideo") and image_type in ("aposematic", "enciphered"):
+                    print(f"[VIDEO] Pre-extracting video CID from {image_type} image before recovery...")
+                    if image_type == "enciphered":
+                        original_hash = item.get("original_hash")
+                        if original_hash:
+                            try:
+                                original_href = f"{gateway_base}/ipfs/{original_hash}"
+                                original_path = await run.io_bound(download_ipfs_image, original_href)
+                                if original_path:
+                                    pre_extracted_video_cid = extract_video_token_cid(original_path)
+                                    if pre_extracted_video_cid:
+                                        print(f"[OK] Pre-extracted video CID from original: {pre_extracted_video_cid[:20]}...")
+                                    try:
+                                        os.remove(original_path)
+                                    except:
+                                        pass
+                            except Exception as e:
+                                print(f"[WARN] Failed to extract video CID from original: {e}")
+                    else:
+                        try:
+                            pre_extracted_video_cid = extract_video_token_cid(temp_path)
+                            if pre_extracted_video_cid:
+                                print(f"[OK] Pre-extracted video CID ({pre_extracted_video_cid[:20]}...)")
+                        except Exception as e:
+                            print(f"[WARN] Pre-extraction of video CID failed: {e}")
 
                 if image_type == "enciphered":
                     print(f"[UNLOCK] Deciphering enciphered image: {item.get('title')}")
@@ -568,10 +612,45 @@ async def process_data_pod_locally(
                     if pre_extracted_audio:
                         print(f"[AUDIO] Using pre-extracted audio ({pre_extracted_audio['type']})")
                         try:
-                            if pre_extracted_audio["type"] == "token":
-                                # Decrypt the token
+                            # Decrypt the pre-extracted token
+                            audio_bytes, metadata = extract_audio_from_token(
+                                subscriber_keys, pre_extracted_audio["data"], verify_hash=True
+                            )
+
+                            if audio_bytes:
+                                audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+                                audio_format = None
+                                if metadata:
+                                    filename = metadata.get("filename", "")
+                                    if filename and "." in filename:
+                                        audio_format = filename.rsplit(".", 1)[-1].lower()
+                                if not audio_format:
+                                    audio_format = detect_audio_format(audio_bytes)
+
+                                item["audio"] = {
+                                    "data": audio_base64,
+                                    "format": audio_format,
+                                    "extractedAt": time.time(),
+                                    "method": "token",
+                                    "metadata": {
+                                        "fileSize": metadata.get("size") if metadata else len(audio_bytes),
+                                        "fileHash": metadata.get("hash") if metadata else None,
+                                        "fileName": metadata.get("filename") if metadata else None,
+                                        "verified": metadata is not None,
+                                    },
+                                }
+                                print(f"[OK] Audio decrypted from pre-extracted token ({len(audio_base64)} chars)")
+                                audio_extracted = True
+                        except Exception as e:
+                            print(f"[WARN] Pre-extracted audio processing failed: {e}")
+
+                    # For non-aposematic/encrypted images, extract token from decoded_path
+                    if not audio_extracted:
+                        try:
+                            serialized_token = extract_audio_token(decoded_path)
+                            if serialized_token:
                                 audio_bytes, metadata = extract_audio_from_token(
-                                    subscriber_keys, pre_extracted_audio["data"], verify_hash=True
+                                    subscriber_keys, serialized_token, verify_hash=True
                                 )
 
                                 if audio_bytes:
@@ -596,95 +675,107 @@ async def process_data_pod_locally(
                                             "verified": metadata is not None,
                                         },
                                     }
-                                    print(f"[OK] Audio decrypted from pre-extracted token ({len(audio_base64)} chars)")
+                                    print(f"[OK] Audio extracted from token ({len(audio_base64)} chars)")
                                     audio_extracted = True
-                            else:
-                                # Pre-extracted base64 audio
-                                audio_base64 = pre_extracted_audio["data"]
-                                audio_bytes = base64.b64decode(audio_base64)
-                                audio_format = detect_audio_format(audio_bytes)
-
-                                item["audio"] = {
-                                    "data": audio_base64,
-                                    "format": audio_format,
-                                    "extractedAt": time.time(),
-                                    "method": "metadata",
-                                    "metadata": {
-                                        "fileSize": len(audio_bytes),
-                                        "verified": True,
-                                    },
-                                }
-                                print(f"[OK] Audio from pre-extracted base64 ({len(audio_base64)} chars)")
-                                audio_extracted = True
                         except Exception as e:
-                            print(f"[WARN] Pre-extracted audio processing failed: {e}")
-
-                    # For non-aposematic/encrypted images, extract from decoded_path
-                    if not audio_extracted:
-                        has_audio, actual_method = has_audio_data(decoded_path)
-                        print(f"[DEBUG] Audio check on decoded: has_audio={has_audio}, actual_method={actual_method}")
-
-                        # Try token extraction first if that's what we expect
-                        if actual_method == "token" or item.get("audioMethod") == "token":
-                            try:
-                                serialized_token = extract_audio_token(decoded_path)
-                                if serialized_token:
-                                    audio_bytes, metadata = extract_audio_from_token(
-                                        subscriber_keys, serialized_token, verify_hash=True
-                                    )
-
-                                    if audio_bytes:
-                                        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
-                                        audio_format = None
-                                        if metadata:
-                                            filename = metadata.get("filename", "")
-                                            if filename and "." in filename:
-                                                audio_format = filename.rsplit(".", 1)[-1].lower()
-                                        if not audio_format:
-                                            audio_format = detect_audio_format(audio_bytes)
-
-                                        item["audio"] = {
-                                            "data": audio_base64,
-                                            "format": audio_format,
-                                            "extractedAt": time.time(),
-                                            "method": "token",
-                                            "metadata": {
-                                                "fileSize": metadata.get("size") if metadata else len(audio_bytes),
-                                                "fileHash": metadata.get("hash") if metadata else None,
-                                                "fileName": metadata.get("filename") if metadata else None,
-                                                "verified": metadata is not None,
-                                            },
-                                        }
-                                        print(f"[OK] Audio extracted from token ({len(audio_base64)} chars)")
-                                        audio_extracted = True
-                            except Exception as e:
-                                print(f"[WARN] Token extraction failed: {e}")
-
-                        # Fallback: try base64/metadata extraction
-                        if not audio_extracted and (actual_method == "base64" or has_audio):
-                            try:
-                                audio_base64 = extract_audio_base64(decoded_path)
-                                if audio_base64:
-                                    audio_bytes = base64.b64decode(audio_base64)
-                                    audio_format = detect_audio_format(audio_bytes)
-
-                                    item["audio"] = {
-                                        "data": audio_base64,
-                                        "format": audio_format,
-                                        "extractedAt": time.time(),
-                                        "method": "metadata",
-                                        "metadata": {
-                                            "fileSize": len(audio_bytes),
-                                            "verified": True,
-                                        },
-                                    }
-                                    print(f"[OK] Audio extracted from metadata ({len(audio_base64)} chars)")
-                                    audio_extracted = True
-                            except Exception as e:
-                                print(f"[WARN] Metadata extraction failed: {e}")
+                            print(f"[WARN] Token extraction failed: {e}")
 
                     if not audio_extracted:
                         print(f"[ERROR] No audio could be extracted from image")
+
+                # Extract/process video if present
+                if item.get("hasVideo"):
+                    print(f"[VIDEO] Processing video for: {item.get('title')}")
+                    video_extracted = False
+
+                    # Get CID from pre-extraction or data pod metadata or decoded image
+                    video_cid = pre_extracted_video_cid if pre_extracted_video_cid else None
+                    if not video_cid:
+                        video_cid = item.get("videoTokenCid")
+                    if not video_cid:
+                        try:
+                            video_cid = extract_video_token_cid(decoded_path)
+                        except Exception:
+                            pass
+
+                    if video_cid and _ipfs_load_to_temp_file_pure:
+                        try:
+                            print(f"[VIDEO] Fetching video token from IPFS: {video_cid[:20]}...")
+                            # Fetch serialized token from IPFS
+                            token_temp_path = await run.io_bound(
+                                _ipfs_load_to_temp_file_pure, video_cid, "video_token.bin"
+                            )
+                            if token_temp_path:
+                                with open(token_temp_path, 'r') as vf:
+                                    serialized_token = vf.read()
+                                # Clean up token temp file
+                                try:
+                                    os.remove(token_temp_path)
+                                    token_dir = os.path.dirname(token_temp_path)
+                                    if token_dir and os.path.isdir(token_dir):
+                                        os.rmdir(token_dir)
+                                except OSError:
+                                    pass
+
+                                # Decrypt video token
+                                video_bytes, video_metadata = extract_video_from_token(
+                                    subscriber_keys, serialized_token, verify_hash=True
+                                )
+
+                                if video_bytes:
+                                    # Detect format
+                                    video_format = None
+                                    if video_metadata:
+                                        vfn = video_metadata.get("filename", "")
+                                        if vfn and "." in vfn:
+                                            video_format = vfn.rsplit(".", 1)[-1].lower()
+                                    if not video_format:
+                                        video_format = detect_video_format(video_bytes)
+                                    if not video_format or video_format == 'unknown':
+                                        video_format = 'mp4'
+
+                                    # Write decrypted video to temp file for serving
+                                    import uuid
+                                    vid_filename = f"video_{uuid.uuid4().hex[:12]}.{video_format}"
+                                    if video_temp_dir and os.path.isdir(video_temp_dir):
+                                        vid_path = os.path.join(video_temp_dir, vid_filename)
+                                    else:
+                                        import tempfile as _tf
+                                        vid_path = os.path.join(_tf.gettempdir(), vid_filename)
+
+                                    with open(vid_path, 'wb') as vf:
+                                        vf.write(video_bytes)
+
+                                    # Build served URL if video is in the editor temp dir
+                                    video_served_url = f"/editor/{vid_filename}" if video_temp_dir else vid_path
+
+                                    item["video"] = {
+                                        "src": video_served_url,
+                                        "localPath": vid_path,
+                                        "filename": vid_filename,
+                                        "format": video_format,
+                                        "method": "token",
+                                        "metadata": {
+                                            "fileSize": video_metadata.get("size") if video_metadata else len(video_bytes),
+                                            "fileHash": video_metadata.get("hash") if video_metadata else None,
+                                            "fileName": video_metadata.get("filename") if video_metadata else None,
+                                            "verified": video_metadata is not None,
+                                        },
+                                    }
+                                    print(f"[OK] Video decrypted ({len(video_bytes)} bytes) -> {vid_path}")
+                                    video_extracted = True
+                                else:
+                                    print(f"[ERROR] Failed to decrypt video token")
+                            else:
+                                print(f"[ERROR] Failed to fetch video token from IPFS: {video_cid}")
+                        except Exception as e:
+                            print(f"[WARN] Video token extraction failed: {e}")
+
+                    if not video_extracted:
+                        if not video_cid:
+                            print(f"[ERROR] No video CID found for image")
+                        elif not _ipfs_load_to_temp_file_pure:
+                            print(f"[ERROR] IPFS load function not available for video token fetch")
 
                 # Convert image to base64 for display (only if requested)
                 # For local preview with IPFS running, skip this to avoid huge HTML files
@@ -772,7 +863,7 @@ async def process_data_pod_locally(
         print(f"[DEBUG] Final data_pod keys: {list(data_pod.keys())}")
         print(f"[DEBUG] Final processed_items count: {len(processed_items)}")
         for i, item in enumerate(processed_items):
-            print(f"[DEBUG] Returning item {i}: {item.get('title')}, hasAudio={item.get('hasAudio')}")
+            print(f"[DEBUG] Returning item {i}: {item.get('title')}, hasAudio={item.get('hasAudio')}, hasVideo={item.get('hasVideo')}")
         return data_pod
 
     except Exception as e:

@@ -142,6 +142,12 @@
             transform: scale(1.1);
         }
 
+        .audio-play-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .audio-info {
             flex: 1;
             color: white;
@@ -256,11 +262,6 @@
             opacity: 0.8;
         }
 
-        .ipfs-link::before {
-            content: "🔗";
-            margin-right: 6px;
-        }
-
         .restrictions {
             background: #fff3cd;
             border-left: 4px solid #ffc107;
@@ -296,357 +297,315 @@
             color: {{ colors.text }};
             opacity: 0.7;
         }
+
+        /* Video badge */
+        .video-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(128, 0, 128, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .media-badges {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 6px;
+            z-index: 2;
+        }
+
+        .media-badges .audio-badge,
+        .media-badges .video-badge {
+            position: static;
+        }
+
+        /* Video controls overlay */
+        .video-controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            padding: 20px 15px 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .video-play-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(128, 0, 128, 0.9);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            transition: all 0.2s;
+        }
+
+        .video-play-btn:hover {
+            background: rgba(128, 0, 128, 1);
+            transform: scale(1.1);
+        }
+
+        .video-play-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .video-info {
+            flex: 1;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        /* Video player overlay */
+        .video-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .video-modal {
+            position: relative;
+            max-width: 90vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .video-modal-title {
+            color: white;
+            font-size: 1rem;
+            margin-bottom: 10px;
+            opacity: 0.8;
+        }
+
+        .video-player {
+            max-width: 90vw;
+            max-height: 80vh;
+            border-radius: 8px;
+            background: black;
+        }
+
+        .video-close-btn {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 5px 10px;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .video-close-btn:hover {
+            opacity: 1;
+        }
     </style>
     <script>
-    function extractAudioFromImage(imageSrc, callback) {
-        console.log('Extracting audio from image:', imageSrc);
-        
-        fetch(imageSrc)
-            .then(response => response.arrayBuffer())
-            .then(buffer => {
-                const uint8Array = new Uint8Array(buffer);
-                const audioData = extractAudioChunks(uint8Array);
-                
-                if (audioData && audioData.length > 0) {
-                    // Convert to base64
-                    const base64Audio = arrayBufferToBase64(audioData);
-                    const audioFormat = detectAudioFormat(audioData);
-                    
-                    console.log('Audio extracted successfully:', {
-                        format: audioFormat,
-                        size: audioData.length,
-                        base64Length: base64Audio.length
-                    });
-                    
-                    callback(base64Audio, audioFormat);
-                } else {
-                    console.error('No audio data found in image');
-                    callback(null, null);
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching image:', error);
-                callback(null, null);
-            });
-    }
-
-    function extractAudioChunks(pngData) {
-        // Check PNG signature
-        if (pngData.length < 8 || 
-            pngData[0] !== 0x89 || pngData[1] !== 0x50 || pngData[2] !== 0x4E || pngData[3] !== 0x47) {
-            console.error('Not a valid PNG file');
-            return null;
-        }
-        
-        let offset = 8; // Skip PNG signature
-        let audioChunks = {};
-        
-        while (offset < pngData.length) {
-            // Read chunk header (4 bytes length + 4 bytes type)
-            if (offset + 8 > pngData.length) break;
-            
-            const length = (pngData[offset] << 24) | (pngData[offset + 1] << 16) | 
-                           (pngData[offset + 2] << 8) | pngData[offset + 3];
-            const type = String.fromCharCode(pngData[offset + 4], pngData[offset + 5], 
-                                           pngData[offset + 6], pngData[offset + 7]);
-            
-            // Check if this is a tEXt chunk with audio data
-            if (type === 'tEXt') {
-                const chunkData = pngData.slice(offset + 8, offset + 8 + length);
-                
-                // Parse tEXt chunk: keyword\x00data
-                let nullByteIndex = -1;
-                for (let i = 0; i < chunkData.length; i++) {
-                    if (chunkData[i] === 0) {
-                        nullByteIndex = i;
-                        break;
-                    }
-                }
-                
-                if (nullByteIndex !== -1) {
-                    const keyword = String.fromCharCode(...chunkData.slice(0, nullByteIndex));
-                    const data = chunkData.slice(nullByteIndex + 1);
-                    
-                    // Check if this is an audio base64 chunk
-                    if (keyword.startsWith('audio_base64_')) {
-                        const chunkNum = parseInt(keyword.split('_').pop());
-                        const base64Text = String.fromCharCode(...data);
-                        audioChunks[chunkNum] = base64Text;
-                        console.log(`Found base64 audio chunk: ${keyword}, size: ${data.length} chars`);
-                    }
-                }
-            }
-            
-            // Move to next chunk
-            offset += 8 + length + 4; // length + type + data + CRC
-            
-            // Stop at IEND chunk
-            if (type === 'IEND') break;
-        }
-        
-        if (Object.keys(audioChunks).length === 0) {
-            console.log('No audio base64 chunks found in PNG');
-            return null;
-        }
-        
-        // Combine base64 chunks in order
-        const sortedKeys = Object.keys(audioChunks).map(k => parseInt(k)).sort((a, b) => a - b);
-        const combinedBase64 = sortedKeys.map(k => audioChunks[k]).join('');
-        
-        console.log(`Combined ${sortedKeys.length} base64 chunks, total length: ${combinedBase64.length}`);
-        
-        // Decode base64 to binary audio data
-        try {
-            const binaryString = atob(combinedBase64);
-            const audioBytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                audioBytes[i] = binaryString.charCodeAt(i);
-            }
-            console.log(`Successfully decoded ${audioBytes.length} bytes of audio data`);
-            return audioBytes;
-        } catch (error) {
-            console.error('Base64 decode error:', error);
-            return null;
-        }
-    }
-
-    function detectAudioFormat(data) {
-        if (data.length < 4) return 'unknown';
-        
-        // Check for common audio file signatures
-        const header = data.slice(0, 4);
-        
-        // WAV: 'RIFF'
-        if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46) {
-            return 'wav';
-        }
-        // MP3: 'ID3' or MPEG frame sync
-        else if ((header[0] === 0x49 && header[1] === 0x44 && header[2] === 0x33) || 
-                 (header[0] === 0xFF && (header[1] & 0xE0) === 0xE0)) {
-            return 'mp3';
-        }
-        // OGG: 'OggS'
-        else if (header[0] === 0x4F && header[1] === 0x67 && header[2] === 0x67 && header[3] === 0x53) {
-            return 'ogg';
-        }
-        // FLAC: 'fLaC'
-        else if (header[0] === 0x66 && header[1] === 0x4C && header[2] === 0x61 && header[3] === 0x43) {
-            return 'flac';
-        }
-        
-        return 'unknown';
-    }
-
-    function arrayBufferToBase64(buffer) {
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return btoa(binary);
-    }
-
     function playPreExtractedAudio(audioData, audioFormat, playButton) {
         // For token-based audio that was pre-extracted during data pod processing
         console.log('Playing pre-extracted audio, format:', audioFormat);
 
         if (playButton) {
             playButton.disabled = true;
-            playButton.innerHTML = '⏳';
+            playButton.innerHTML = '\u23F3';
         }
 
         playExtractedAudio(audioData, audioFormat || 'wav', playButton);
     }
 
-    function playAudioFromImage(imageSrc, audioMethod) {
-        console.log('Initiating audio playback from image:', imageSrc, 'method:', audioMethod);
-
-        // Show loading state
-        const playButton = event.target.closest('.audio-play-btn');
-        if (playButton) {
-            playButton.disabled = true;
-            playButton.innerHTML = '⏳';
-        }
-
-        // Token-based audio requires server-side decryption
-        if (audioMethod === 'token') {
-            console.warn('Token-based audio requires decryption - should be pre-extracted');
-            alert('Token audio requires decryption. Please ensure the data pod was processed correctly.');
-            if (playButton) {
-                playButton.disabled = false;
-                playButton.innerHTML = '▶️';
-            }
-            return;
-        }
-
-        // Extract and play audio (metadata/base64 method)
-        extractAudioFromImage(imageSrc, function(audioData, audioFormat) {
-            if (!audioData || !audioFormat) {
-                console.error('No audio data found in image');
-                alert('No audio data found in this image');
-                if (playButton) {
-                    playButton.disabled = false;
-                    playButton.innerHTML = '▶️';
-                }
-                return;
-            }
-
-            console.log('Audio extracted successfully, format:', audioFormat);
-
-            // Play the extracted audio
-            playExtractedAudio(audioData, audioFormat, playButton);
-        });
-    }
-
     function playExtractedAudio(audioData, audioFormat, playButton) {
         console.log('Playing extracted audio, format:', audioFormat);
-        
+
         // Try data URI method first
         const dataUri = `data:audio/${audioFormat};base64,${audioData}`;
         const audio = new Audio(dataUri);
-        
+
         audio.oncanplay = function() {
             console.log('Audio is ready to play');
             if (playButton) {
                 playButton.disabled = false;
-                playButton.innerHTML = '⏸️';
+                playButton.innerHTML = '\u23F8\uFE0F';
             }
-            
+
             // Set up play/pause toggle
             playButton.onclick = function() {
                 if (audio.paused) {
                     audio.play();
-                    playButton.innerHTML = '⏸️';
+                    playButton.innerHTML = '\u23F8\uFE0F';
                 } else {
                     audio.pause();
-                    playButton.innerHTML = '▶️';
+                    playButton.innerHTML = '\u25B6\uFE0F';
                 }
             };
-            
+
             // Play the audio
             audio.play().catch(error => {
                 console.error('Error playing audio with data URI:', error);
-                // Fallback to blob method
                 tryBlobMethod(audioData, audioFormat, playButton);
             });
         };
-        
+
         audio.onerror = function() {
             console.error('Error with audio element');
-            // Fallback to blob method
             tryBlobMethod(audioData, audioFormat, playButton);
         };
-        
+
         audio.onended = function() {
             console.log('Playback finished');
             if (playButton) {
-                playButton.innerHTML = '▶️';
+                playButton.innerHTML = '\u25B6\uFE0F';
             }
         };
     }
 
     function tryBlobMethod(audioData, audioFormat, playButton) {
         console.log('Trying blob method for audio playback');
-        
+
         try {
-            // Decode base64 to binary
             const byteCharacters = atob(audioData);
             const byteNumbers = new Array(byteCharacters.length);
-            
+
             for (let i = 0; i < byteCharacters.length; i++) {
                 byteNumbers[i] = byteCharacters.charCodeAt(i);
             }
-            
+
             const byteArray = new Uint8Array(byteNumbers);
-            
-            // Try different MIME types
             const mimeTypes = [`audio/${audioFormat}`, 'audio/wav', 'audio/mp3', 'audio/ogg', 'audio/mpeg'];
             let audioBlob = null;
             let audioUrl = null;
-            
+
             for (const mimeType of mimeTypes) {
                 try {
                     audioBlob = new Blob([byteArray], { type: mimeType });
                     audioUrl = URL.createObjectURL(audioBlob);
-                    console.log(`✅ Blob created with MIME: ${mimeType}`);
                     break;
                 } catch (e) {
-                    console.log(`❌ MIME ${mimeType} failed: ${e.message}`);
                     continue;
                 }
             }
-            
+
             if (!audioUrl) {
-                console.error('Could not create blob with any MIME type');
                 alert('Failed to create audio blob');
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '▶️';
+                    playButton.innerHTML = '\u25B6\uFE0F';
                 }
                 return;
             }
-            
-            console.log(`Blob size: ${audioBlob.size} bytes`);
-            
-            // Create audio player with blob
+
             const audio = new Audio(audioUrl);
-            
+
             audio.oncanplay = function() {
-                console.log('Blob audio is ready to play');
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '⏸️';
+                    playButton.innerHTML = '\u23F8\uFE0F';
                 }
-                
-                // Set up play/pause toggle
+
                 playButton.onclick = function() {
                     if (audio.paused) {
                         audio.play();
-                        playButton.innerHTML = '⏸️';
+                        playButton.innerHTML = '\u23F8\uFE0F';
                     } else {
                         audio.pause();
-                        playButton.innerHTML = '▶️';
+                        playButton.innerHTML = '\u25B6\uFE0F';
                     }
                 };
-                
-                // Play the audio
+
                 audio.play().catch(error => {
                     console.error('Error playing blob audio:', error);
                     alert('Failed to play audio');
                     if (playButton) {
                         playButton.disabled = false;
-                        playButton.innerHTML = '▶️';
+                        playButton.innerHTML = '\u25B6\uFE0F';
                     }
                 });
             };
-            
+
             audio.onerror = function() {
-                console.error('Error with blob audio element');
                 alert('Failed to load audio');
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '▶️';
+                    playButton.innerHTML = '\u25B6\uFE0F';
                 }
             };
-            
+
             audio.onended = function() {
-                console.log('Blob audio playback finished');
                 if (playButton) {
-                    playButton.innerHTML = '▶️';
+                    playButton.innerHTML = '\u25B6\uFE0F';
                 }
-                // Clean up blob URL
                 URL.revokeObjectURL(audioUrl);
             };
-            
+
         } catch (error) {
             console.error('Blob method failed:', error);
             alert('Failed to play audio: ' + error.message);
             if (playButton) {
                 playButton.disabled = false;
-                playButton.innerHTML = '▶️';
+                playButton.innerHTML = '\u25B6\uFE0F';
             }
         }
+    }
+
+    function openVideoPlayer(videoSrc, videoFormat, videoName) {
+        // Create fullscreen overlay with video player
+        const overlay = document.createElement('div');
+        overlay.className = 'video-overlay';
+        overlay.onclick = function(e) {
+            if (e.target === overlay) overlay.remove();
+        };
+
+        let titleHtml = '';
+        if (videoName) {
+            titleHtml = '<div class="video-modal-title">' + videoName + '</div>';
+        }
+
+        overlay.innerHTML =
+            '<div class="video-modal">' +
+                '<button class="video-close-btn" onclick="this.parentElement.parentElement.remove()">&times;</button>' +
+                titleHtml +
+                '<video controls autoplay class="video-player">' +
+                    '<source src="' + videoSrc + '" type="video/' + (videoFormat || 'mp4') + '">' +
+                    'Your browser does not support video playback.' +
+                '</video>' +
+            '</div>';
+
+        document.body.appendChild(overlay);
+
+        // Close on Escape key
+        function handleEscape(e) {
+            if (e.key === 'Escape') {
+                overlay.remove();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        }
+        document.addEventListener('keydown', handleEscape);
     }
     </script>
 </head>
@@ -668,64 +627,76 @@
             <div class="gallery">
                 {% for item in data_pod['items'] %}
                 <div class="gallery-item">
-                    {% if item.type == 'audio_image' or item.hasAudio %}
-                        <!-- Audio Image Container -->
-                        <div class="audio-container">
-                            {% if item.renditions and item.renditions|length > 0 %}
-                                <img src="{{ item.renditions[0].href }}"
-                                     alt="{{ item.headline }}"
-                                     class="audio-image"
-                                     id="audio-img-{{ loop.index }}"
-                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                                <div class="image-placeholder" style="display:none;">🖼️</div>
+                    <!-- Image container with optional media overlays -->
+                    <div class="image-container" style="position: relative;">
+                        {% if item.renditions and item.renditions|length > 0 %}
+                            <img src="{{ item.renditions[0].href }}"
+                                 alt="{{ item.headline }}"
+                                 id="img-{{ loop.index }}"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                            <div class="image-placeholder" style="display:none;">&#x1F5BC;&#xFE0F;</div>
+                        {% else %}
+                            <div class="image-placeholder">&#x1F5BC;&#xFE0F;</div>
+                        {% endif %}
 
-                                <!-- Audio Badge -->
-                                <div class="audio-badge">
-                                    🎵 Audio{% if item.audioMethod %} ({{ item.audioMethod }}){% endif %}
-                                </div>
-
-                                <!-- Audio Controls -->
-                                <div class="audio-controls">
-                                    {% if item.audio and item.audio.data %}
-                                    <!-- Pre-extracted audio (token method - decrypted server-side) -->
-                                    <button class="audio-play-btn" onclick="playPreExtractedAudio('{{ item.audio.data }}', '{{ item.audio.format }}', this)">
-                                        ▶️
-                                    </button>
-                                    {% else %}
-                                    <!-- Extract from image via JavaScript (metadata method) -->
-                                    <button class="audio-play-btn" onclick="playAudioFromImage('{{ item.renditions[0].href }}', '{{ item.audioMethod }}')">
-                                        ▶️
-                                    </button>
-                                    {% endif %}
-                                    <div class="audio-info">
-                                        {% if item.audio_format %}
-                                        Format: {{ item.audio_format.upper() }}
-                                        {% endif %}
-                                        {% if item.audio_duration %}
-                                        • Duration: {{ "%.1f"|format(item.audio_duration) }}s
-                                        {% endif %}
-                                        {% if item.audio_size %}
-                                        • Size: {{ "%.1f"|format(item.audio_size / 1024 / 1024) }}MB
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            {% else %}
-                                <div class="image-placeholder">🖼️</div>
+                        <!-- Media badges (audio and/or video) -->
+                        {% if item.hasAudio or item.hasVideo %}
+                        <div class="media-badges">
+                            {% if item.hasAudio %}
+                            <div class="audio-badge">&#x1F3B5; Audio</div>
+                            {% endif %}
+                            {% if item.hasVideo %}
+                            <div class="video-badge">&#x1F3AC; Video</div>
                             {% endif %}
                         </div>
-                    {% else %}
-                        <!-- Regular Image Container -->
-                        <div class="image-container">
-                            {% if item.renditions and item.renditions|length > 0 %}
-                                <img src="{{ item.renditions[0].href }}"
-                                     alt="{{ item.headline }}"
-                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                                <div class="image-placeholder" style="display:none;">🖼️</div>
+                        {% endif %}
+
+                        <!-- Audio controls -->
+                        {% if item.hasAudio %}
+                        <div class="audio-controls">
+                            {% if item.audio and item.audio.data %}
+                            <button class="audio-play-btn" onclick="playPreExtractedAudio('{{ item.audio.data }}', '{{ item.audio.format }}', this)">
+                                &#x25B6;&#xFE0F;
+                            </button>
                             {% else %}
-                                <div class="image-placeholder">🖼️</div>
+                            <button class="audio-play-btn" disabled title="Audio requires decryption">
+                                &#x1F512;
+                            </button>
                             {% endif %}
+                            <div class="audio-info">
+                                {% if item.audio_format %}
+                                Format: {{ item.audio_format.upper() }}
+                                {% endif %}
+                                {% if item.audio_duration %}
+                                &bull; Duration: {{ "%.1f"|format(item.audio_duration) }}s
+                                {% endif %}
+                            </div>
                         </div>
-                    {% endif %}
+                        {% endif %}
+
+                        <!-- Video controls -->
+                        {% if item.hasVideo %}
+                        <div class="video-controls" {% if item.hasAudio %}style="bottom: 60px;"{% endif %}>
+                            {% if item.video and item.video.src %}
+                            <button class="video-play-btn" onclick="openVideoPlayer('{{ item.video.src }}', '{{ item.video.format }}', '{{ item.video.metadata.fileName or item.headline }}')">
+                                &#x25B6;&#xFE0F;
+                            </button>
+                            {% else %}
+                            <button class="video-play-btn" disabled title="Video requires decryption">
+                                &#x1F512;
+                            </button>
+                            {% endif %}
+                            <div class="video-info">
+                                {% if item.video and item.video.format %}
+                                Video: {{ item.video.format.upper() }}
+                                {% endif %}
+                                {% if item.video and item.video.metadata and item.video.metadata.fileSize %}
+                                &bull; Size: {{ "%.1f"|format(item.video.metadata.fileSize / 1024 / 1024) }}MB
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
 
                     <div class="item-content">
                         <div class="item-title">{{ item.headline or 'Untitled' }}</div>
@@ -763,7 +734,7 @@
                                 {% if item.renditions[0].width and item.renditions[0].height %}
                                 <div class="meta-row">
                                     <span class="meta-label">Dimensions:</span>
-                                    <span class="meta-value">{{ item.renditions[0].width }} × {{ item.renditions[0].height }}px</span>
+                                    <span class="meta-value">{{ item.renditions[0].width }} &times; {{ item.renditions[0].height }}px</span>
                                 </div>
                                 {% endif %}
 
@@ -785,7 +756,7 @@
 
                             {% if item.restrictions %}
                             <div class="restrictions">
-                                <strong>⚠️ Restrictions:</strong><br>
+                                <strong>&#x26A0;&#xFE0F; Restrictions:</strong><br>
                                 {{ item.restrictions.constraints|join(', ') if item.restrictions.constraints is iterable else item.restrictions.constraints }}
                             </div>
                             {% endif %}

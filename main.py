@@ -45,10 +45,16 @@ from audio_tokens import (
     is_audio_file,
 )
 from png_chunks import (
-    embed_audio_base64,
-    extract_audio_base64,
     has_audio_data,
-    AUDIO_BASE64_PREFIX,
+    has_video_data,
+    copy_token_chunks,
+    remove_text_chunks,
+    VIDEO_TOKEN_CID_PREFIX,
+)
+from video_tokens import (
+    create_token_video_image,
+    extract_token_video,
+    is_video_file as is_video_file_check,
 )
 from data_pod_audio import (
     create_ninjs_data_pod_with_encrypted_tokens,
@@ -1549,6 +1555,16 @@ async def remove_img(hash_value):
     idex = app.storage.user.get("img_state", 1)
     state = img_states[idex]
 
+    # Clean up video token from IPFS if present
+    file_info = app.storage.user.get(hash_value, {})
+    video_cid = file_info.get("video_token_cid")
+    if video_cid and is_ipfs_running():
+        try:
+            ipfs_remove(video_cid)
+            print(f"Unpinned video token CID: {video_cid}")
+        except Exception as e:
+            print(f"Error unpinning video token CID: {e}")
+
     if state in ("raw", "processed"):
         # Local session storage — remove from temp dir
         local_remove_image(hash_value)
@@ -1847,13 +1863,12 @@ async def process_watermarking():
         print(processed_img_path)
         print("------------------------------------")
 
-        # Re-embed audio if the original image had audio
-        audio_path = app.storage.user[hash_value].get("audio_path")
-        if audio_path and os.path.exists(audio_path):
-            print(f"Re-embedding audio from {audio_path} into watermarked image")
-            # I/O-bound: file operations (reembed_audio_if_needed is pure)
+        # Copy audio token chunks from raw image if it had audio
+        if app.storage.user[hash_value].get("has_audio", False):
+            print(f"Copying audio token from {img_path} into watermarked image")
+            # I/O-bound: file operations (reembed_media_if_needed is pure)
             processed_img_path = await run.io_bound(
-                reembed_audio_if_needed, processed_img_path, audio_path
+                reembed_media_if_needed, processed_img_path, img_path
             )
 
         # Store processed image locally in session temp dir (not IPFS)
@@ -1975,15 +1990,14 @@ async def process_aposematic():
 
             aposematic_img_path = aposematic["img_path"]
 
-            # Re-embed audio if the original image had audio
-            audio_path = img_info.get("audio_path")
-            if audio_path and os.path.exists(audio_path):
-                print(f"Re-embedding audio from {audio_path} into aposematic image")
+            # Copy audio token chunks from processed image if it had audio
+            if img_info.get("has_audio", False):
+                print(f"Copying audio token from {img_path} into aposematic image")
                 # I/O-bound: file operations
                 aposematic_img_path = await run.io_bound(
-                    reembed_audio_if_needed,
+                    reembed_media_if_needed,
                     aposematic_img_path,
-                    audio_path
+                    img_path
                 )
 
             # I/O-bound: network request to IPFS (using pure version)
@@ -2081,7 +2095,7 @@ async def process_enciphering():
                 )
                 print(f"Enciphered images should not be modified after encryption")
                 # CRITICAL: Do NOT re-embed audio for enciphered images
-                # create_audio_image() would overwrite and destroy enciphered data
+                # Modifying the PNG would destroy the enciphered data
 
             # I/O-bound: network request to IPFS (using pure version)
             ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, enciphered_img_path)
@@ -2297,18 +2311,15 @@ async def process_debug_deploy_gallery():
 
                         aposematic_img_path = aposematic["img_path"]
 
-                        # Re-embed audio if the original image had audio
-                        # NOTE: embed_audio_base64() preserves existing PNG chunks (including
-                        # scrambled aposematic pixels), so this is safe to call
-                        audio_path = img_info.get("audio_path")
-                        if audio_path and os.path.exists(audio_path):
+                        # Copy audio token chunks from processed image if it had audio
+                        if img_info.get("has_audio", False):
                             print(
-                                f"Re-embedding audio from {audio_path} into aposematic image"
+                                f"Copying audio token from {img_path} into aposematic image"
                             )
                             # I/O-bound: file operations
                             aposematic_img_path = await run.io_bound(
-                                reembed_audio_if_needed,
-                                aposematic_img_path, audio_path
+                                reembed_media_if_needed,
+                                aposematic_img_path, img_path
                             )
 
                         # I/O-bound: IPFS upload (using pure version)
@@ -2380,8 +2391,10 @@ async def process_debug_deploy_gallery():
                 image_to_base64_uri=image_to_base64_uri,
                 ipfs_add=ipfs_add,
                 _ipfs_add_pure=_ipfs_add_pure,
+                _ipfs_load_to_temp_file_pure=_ipfs_load_to_temp_file_pure,
                 ipfs_webui=ipfs_webui,
                 ipfs_webui_port=ipfs_webui_port,
+                video_temp_dir=EDITOR_STORAGE_DIR,
             )
 
             if processed_data_pod:
@@ -3162,15 +3175,23 @@ def render_gallery(folder=None):
                         img_url = f"{ipfs_webui}:{ipfs_webui_port}/ipfs/{hash_value}"
 
                     if not folder:
-                        # Show audio indicator chip if has_audio, otherwise show filename
-                        if file_info.get("has_audio", False):
-                            ui.chip(
-                                "Audio",
-                                icon="music_note",
-                                color="blue",
-                            ).props("square").classes(
-                                "absolute top-2 left-2 z-10"
-                            )
+                        # Show media indicator chips, otherwise show filename
+                        has_audio_chip = file_info.get("has_audio", False)
+                        has_video_chip = file_info.get("has_video", False)
+                        if has_audio_chip or has_video_chip:
+                            with ui.row().classes("absolute top-2 left-2 z-10 gap-1"):
+                                if has_audio_chip:
+                                    ui.chip(
+                                        "Audio",
+                                        icon="music_note",
+                                        color="blue",
+                                    ).props("square")
+                                if has_video_chip:
+                                    ui.chip(
+                                        "Video",
+                                        icon="videocam",
+                                        color="purple",
+                                    ).props("square")
                         else:
                             ui.chip(
                                 file_info.get("name", "Unknown"),
@@ -3192,9 +3213,9 @@ def render_gallery(folder=None):
                                     "copy_all",
                                     on_click=lambda h=hash_value: copy_img(h),
                                 ).tooltip("Copy image")
-                            # NEW: Audio embedding actions
+                            # Audio/Video embedding actions (mutually exclusive)
                             has_audio_flag = file_info.get("has_audio", False)
-                            print(f"[DEBUG render_gallery] Audio check for {hash_value}: has_audio={has_audio_flag}")
+                            has_video_flag = file_info.get("has_video", False)
                             if has_audio_flag:
                                 ui.fab_action(
                                     "music_note",
@@ -3203,19 +3224,28 @@ def render_gallery(folder=None):
                                     ),
                                 ).tooltip("Play Audio")
                                 ui.fab_action(
-                                    "edit",
-                                    on_click=lambda h=hash_value: replace_audio_dialog(
-                                        h
-                                    ),
-                                ).tooltip("Replace Audio")
-                                ui.fab_action(
-                                    "delete",
+                                    "music_off",
                                     on_click=lambda h=hash_value: remove_audio_from_image(
                                         h
                                     ),
                                     color="negative",
                                 ).tooltip("Remove Audio")
+                            elif has_video_flag:
+                                ui.fab_action(
+                                    "videocam",
+                                    on_click=lambda h=hash_value: play_video_from_image(
+                                        h
+                                    ),
+                                ).tooltip("Play Video")
+                                ui.fab_action(
+                                    "videocam_off",
+                                    on_click=lambda h=hash_value: remove_video_from_image(
+                                        h
+                                    ),
+                                    color="negative",
+                                ).tooltip("Remove Video")
                             else:
+                                # No media embedded — show both "Add" options
                                 ui.fab_action(
                                     "music_note",
                                     on_click=lambda h=hash_value: edit_audio_info_main(
@@ -3223,10 +3253,16 @@ def render_gallery(folder=None):
                                     ),
                                 ).tooltip("Add Audio")
                                 ui.fab_action(
-                                    "delete",
-                                    on_click=lambda h=hash_value: remove_img(h),
-                                    color="negative",
-                                ).tooltip("Delete image")
+                                    "videocam",
+                                    on_click=lambda h=hash_value: edit_video_info_main(
+                                        h
+                                    ),
+                                ).tooltip("Add Video")
+                            ui.fab_action(
+                                "delete",
+                                on_click=lambda h=hash_value: remove_img(h),
+                                color="negative",
+                            ).tooltip("Delete image")
                         with ui.fab("data_object", direction="left").classes(
                             "q-secondary-color"
                         ):
@@ -3482,22 +3518,15 @@ async def create_ninjs_data_pod(prefix="processed"):
                         or not metadata_list[0]
                     ):
                         print(f"Warning: No metadata found for {img_path}")
-                        # For audio images, create basic metadata if ExifTool fails
-                        if img_info.get("has_audio", False):
+                        # For media images, create basic metadata if ExifTool fails
+                        if img_info.get("has_audio", False) or img_info.get("has_video", False):
                             print(
-                                f"Creating basic metadata for audio image: {img_path}"
+                                f"Creating basic metadata for media image: {img_path}"
                             )
                             metadata = {
                                 "FileName": os.path.basename(img_path),
                                 "FileSize": os.path.getsize(img_path),
                                 "FileType": "PNG",
-                                "has_audio": True,
-                                "audio_format": img_info.get("audio_format", "unknown"),
-                                "audio_duration": img_info.get("audio_duration", 0),
-                                "audio_size": img_info.get("audio_size", 0),
-                                "audio_method": img_info.get(
-                                    "audio_method", "metadata"
-                                ),
                             }
                         else:
                             error_count += 1
@@ -3506,20 +3535,14 @@ async def create_ninjs_data_pod(prefix="processed"):
                         metadata = metadata_list[0]
                 except Exception as e:
                     print(f"Error getting metadata for {img_path}: {str(e)}")
-                    # For audio images, create basic metadata if ExifTool fails
-                    if img_info.get("has_audio", False):
+                    if img_info.get("has_audio", False) or img_info.get("has_video", False):
                         print(
-                            f"Creating basic metadata for audio image due to ExifTool error: {img_path}"
+                            f"Creating basic metadata for media image due to ExifTool error: {img_path}"
                         )
                         metadata = {
                             "FileName": os.path.basename(img_path),
                             "FileSize": os.path.getsize(img_path),
                             "FileType": "PNG",
-                            "has_audio": True,
-                            "audio_format": img_info.get("audio_format", "unknown"),
-                            "audio_duration": img_info.get("audio_duration", 0),
-                            "audio_size": img_info.get("audio_size", 0),
-                            "audio_method": img_info.get("audio_method", "metadata"),
                         }
                     else:
                         error_count += 1
@@ -3529,11 +3552,17 @@ async def create_ninjs_data_pod(prefix="processed"):
                 render_flag = img_info.get("render_metadata", True)
                 print(f"DEBUG: render_metadata for {img_hash} = {render_flag}")
 
-                # Check if this is an audio image
+                # Check media flags
                 has_audio = img_info.get("has_audio", False)
+                has_video = img_info.get("has_video", False)
 
-                # Set type based on whether it has audio
-                item_type = "audio_image" if has_audio else "picture"
+                # Set type: video takes precedence over audio
+                if has_video:
+                    item_type = "video_image"
+                elif has_audio:
+                    item_type = "audio_image"
+                else:
+                    item_type = "picture"
 
                 data_item = {
                     "uri": f"{app.storage.user.get('gateway_url', '')}:{img_hash}",
@@ -3546,12 +3575,12 @@ async def create_ninjs_data_pod(prefix="processed"):
                     "headline": safe_get(
                         metadata,
                         "IPTC:ObjectName",
-                        "Audio Image" if has_audio else "Untitled",
+                        "Video Image" if has_video else ("Audio Image" if has_audio else "Untitled"),
                     ),
                     "description_text": safe_get(
                         metadata,
                         "IPTC:Caption-Abstract",
-                        "Audio encoded in image" if has_audio else "",
+                        "Video encoded in image" if has_video else ("Audio encoded in image" if has_audio else ""),
                     ),
                     "keywords": safe_list_from_metadata(metadata, "IPTC:Keywords"),
                     "copyrightnotice": safe_get(metadata, "IPTC:CopyrightNotice", ""),
@@ -3562,19 +3591,22 @@ async def create_ninjs_data_pod(prefix="processed"):
 
                 # Add audio-specific fields if this is an audio image
                 if has_audio:
-                    # Get audio format from image (don't embed full audio data in HTML - too large)
-                    audio_data, audio_format = extract_audio_from_image(img_path)
-
                     data_item.update(
                         {
-                            # Don't embed audio_data inline - let JavaScript extract from image
-                            # This prevents 30MB+ HTML files for large audio
-                            "audio_format": img_info.get(
-                                "audio_format", audio_format if audio_format else "wav"
-                            ),
+                            "audio_format": img_info.get("audio_format", "wav"),
                             "audio_duration": img_info.get("audio_duration", 0),
-                            "audio_size": len(audio_data) if audio_data else img_info.get("audio_size", 0),
-                            "audio_method": img_info.get("audio_method", "metadata"),
+                            "audio_size": img_info.get("audio_size", 0),
+                            "audio_method": "token",
+                        }
+                    )
+
+                # Add video-specific fields if this image has video
+                if has_video:
+                    data_item.update(
+                        {
+                            "has_video": True,
+                            "video_method": "token",
+                            "video_token_cid": img_info.get("video_token_cid"),
                         }
                     )
 
@@ -4855,31 +4887,30 @@ def check_native_dependencies():
     return True
 
 
-# PNG Custom Chunks Audio Implementation
-def extract_audio_from_image(file_path):
-    """Extract and decode base64 audio data from PNG tEXt chunks."""
-    try:
-        audio_base64 = extract_audio_base64(file_path)
-        if not audio_base64:
-            print(f"No audio data found in {file_path}")
-            return None, None
+def reembed_media_if_needed(target_image_path, source_image_path):
+    """Copy audio token and video CID chunks from source image to target image.
 
-        audio_data = base64.b64decode(audio_base64)
-        audio_format = detect_audio_format(audio_data)
-        print(f"Extracted {len(audio_data)} bytes of {audio_format} audio")
-        return audio_data, audio_format
+    Used when an image is re-processed (watermarking, aposematic) and the
+    output PNG loses tEXt chunks. Copies encrypted audio tokens and video
+    CID references from the source image into the new target image.
 
-    except Exception as e:
-        print(f"Error extracting audio: {e}")
-        return None, None
+    Args:
+        target_image_path: New PNG that needs media chunks
+        source_image_path: Original PNG that contains media chunks
 
-
-def reembed_audio_if_needed(image_path, audio_path):
-    """Re-embed audio from stored audio_path if available"""
-    if audio_path and os.path.exists(audio_path):
-        print(f"Re-embedding audio from {audio_path} into {image_path}")
-        return create_audio_image(audio_path, image_path)
-    return image_path
+    Returns:
+        str: Path to target image (modified in-place with copied chunks)
+    """
+    if source_image_path and os.path.exists(source_image_path):
+        # Copy audio token chunks
+        print(f"Copying media chunks from {source_image_path} into {target_image_path}")
+        target_image_path = copy_token_chunks(source_image_path, target_image_path)
+        # Copy video CID chunks
+        target_image_path = copy_token_chunks(
+            source_image_path, target_image_path,
+            keyword_prefix=VIDEO_TOKEN_CID_PREFIX
+        )
+    return target_image_path
 
 
 async def process_audio_from_storage():
@@ -4958,15 +4989,11 @@ async def process_audio_from_storage():
             print(f"[DEBUG process_audio_from_storage] new_hash={result[0]}, output_path={result[1]}")
 
         if result and result[0] is not None:
-            # Show appropriate message based on audio method and expiry
-            if audio_method == "token":
-                if expires_in is None:
-                    ui.notify("Audio embedded with permanent access token", type="positive")
-                else:
-                    hours = expires_in / 3600
-                    ui.notify(f"Audio embedded with {hours:.0f}h expiry token", type="positive")
+            if expires_in is None:
+                ui.notify("Audio embedded with permanent access token", type="positive")
             else:
-                ui.notify("Audio embedded successfully!", type="positive")
+                hours = expires_in / 3600
+                ui.notify(f"Audio embedded with {hours:.0f}h expiry token", type="positive")
             render_gallery()
         else:
             ui.notify("Failed to embed audio", type="negative")
@@ -4985,145 +5012,356 @@ def edit_audio_info_main(hash_value):
     edit_audio_info(hash_value, process_dialog, process_audio_from_storage, choose_files)
 
 
-def create_audio_image(audio_file, image_file=None):
-    """Create audio-encoded image using base64-encoded tEXt chunks."""
-    # Read audio data
-    with open(audio_file, "rb") as f:
-        audio_data = f.read()
+def play_audio_from_image(hash_value):
+    """Play audio from an image with embedded audio token."""
+    ui.notify("Audio playback not yet implemented", type="info")
 
-    # Determine source image
-    if image_file and os.path.exists(image_file):
-        source_path = image_file
-    else:
-        # Create placeholder image
-        from PIL import Image, ImageDraw, ImageFont
 
-        img = Image.new("RGB", (800, 600), color="#25F5F8")
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("arial.ttf", 40)
-        except:
-            font = ImageFont.load_default()
-        draw.text((400, 300), "Audio Embedded", fill="white", anchor="mm", font=font)
+def remove_audio_from_image(hash_value):
+    """Remove audio from an image."""
+    ui.notify("Audio removal not yet implemented", type="info")
 
-        source_path = os.path.join(tempfile.gettempdir(), "temp_audio_source.png")
-        img.save(source_path, "PNG")
 
-    # Encode audio as base64
-    audio_base64 = base64.b64encode(audio_data).decode("ascii")
-    print(f"Audio: {len(audio_data)} bytes -> {len(audio_base64)} base64 chars")
+def edit_video_info_main(hash_value):
+    """Open video embedding dialog using standard dialog with process_dialog pattern."""
+    edit_video_info(hash_value, process_dialog, process_video_from_storage, choose_files)
 
-    # Determine output path
-    if image_file:
-        base_name = os.path.splitext(os.path.basename(image_file))[0]
-        output_path = os.path.join(
-            os.path.dirname(image_file) or ".", f"{base_name}_audio.png"
+
+async def process_video_from_storage():
+    """Process video embedding using params stored by edit_video_info dialog.
+
+    Reads parameters from app.storage.user['_video_embed_params'] set by the dialog.
+    """
+    params = app.storage.user.get("_video_embed_params")
+    if not params:
+        ui.notify("No video embedding parameters found", type="negative")
+        return
+
+    try:
+        img_name = params["img_name"]
+        img_path = params["img_path"]
+        hash_value = params["hash_value"]
+        video_file = params["video_file"]
+        receiver_public_key = params.get("receiver_public_key")
+        expiry_option = params.get("expiry_option", "never")
+
+        # Parse expiry option to hours (None for never)
+        expiry_mapping = {
+            'never': None,
+            '1h': 1,
+            '24h': 24,
+            '7d': 168,
+            '30d': 720,
+            '365d': 8760
+        }
+        expiry_hours = expiry_mapping.get(expiry_option)
+
+        print(f"[DEBUG process_video_from_storage] img_name={img_name}")
+        print(f"[DEBUG process_video_from_storage] hash_value={hash_value}")
+        print(f"[DEBUG process_video_from_storage] expiry_option={expiry_option}, expiry_hours={expiry_hours}")
+
+        if not video_file:
+            ui.notify("Please select a video file", type="warning")
+            return
+
+        if not os.path.exists(video_file):
+            ui.notify("Video file not found", type="negative")
+            return
+
+        if not is_video_file_check(video_file):
+            ui.notify(
+                "Unsupported video format. Please select MP4, WebM, MOV, AVI, or MKV file.",
+                type="negative",
+            )
+            return
+
+        # Convert hours to seconds (or None for no expiry)
+        if expiry_hours is None:
+            expires_in = None
+        else:
+            expires_in = int(expiry_hours * 3600)
+
+        result = await process_video_embedding(
+            img_name,
+            img_path,
+            hash_value,
+            video_file,
+            receiver_public_key,
+            expires_in,
         )
-    else:
-        base_name = os.path.splitext(os.path.basename(audio_file))[0]
-        output_path = f"{base_name}_audio.png"
 
-    # Embed audio using unified PNG chunk utility
-    result_path = embed_audio_base64(source_path, audio_base64, output_path)
-
-    # Clean up temp source if created
-    if not image_file and os.path.exists(source_path):
-        os.remove(source_path)
-
-    return result_path
-
-
-def create_audio_visualization(audio_data):
-    """Generate a visual representation of audio (spectrogram/waveform)"""
-    try:
-        import numpy as np
-        from scipy import signal
-        import matplotlib.pyplot as plt
-        import matplotlib
-
-        matplotlib.use("Agg")  # Use non-interactive backend
-
-        # Create spectrogram visualization
-        fig, ax = plt.subplots(figsize=(12, 8))
-
-        # Convert audio data to numpy array if needed
-        if isinstance(audio_data, bytes):
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        if result and result[0] is not None:
+            if expires_in is None:
+                ui.notify("Video embedded with permanent access token", type="positive")
+            else:
+                hours = expires_in / 3600
+                ui.notify(f"Video embedded with {hours:.0f}h expiry token", type="positive")
+            render_gallery()
         else:
-            audio_array = np.array(audio_data, dtype=np.int16)
-
-        # Create spectrogram
-        f, t, Sxx = signal.spectrogram(audio_array, 44100)
-        ax.pcolormesh(t, f, 10 * np.log10(Sxx), shading="gouraud")
-        ax.set_ylabel("Frequency [Hz]")
-        ax.set_xlabel("Time [sec]")
-        ax.set_title("Audio Spectrogram")
-
-        # Save to PIL Image
-        fig.canvas.draw()
-        img_array = np.array(fig.canvas.renderer.buffer_rgba())
-        plt.close(fig)
-
-        # Convert to PIL Image (remove alpha channel)
-        img = PIL.Image.fromarray(img_array[..., :3], "RGB")
-        return img
-
-    except ImportError as e:
-        print(f"Missing dependencies for spectrogram generation: {e}")
-        # Fallback: create a simple gradient image
-        from PIL import Image, ImageDraw, ImageFont
-
-        img = Image.new("RGB", (800, 600), color="#25F5F8")
-        draw = ImageDraw.Draw(img)
-
-        # Try to use a nicer font, fallback to default
-        try:
-            font = ImageFont.truetype("arial.ttf", 40)
-        except:
-            font = ImageFont.load_default()
-
-        draw.text((400, 280), "[AUDIO] Audio Image", fill="white", anchor="mm", font=font)
-        return img
+            ui.notify("Failed to embed video", type="negative")
 
     except Exception as e:
-        print(f"Error creating audio visualization: {e}")
-        # Fallback: simple colored image
-        from PIL import Image, ImageDraw, ImageFont
-
-        img = Image.new("RGB", (800, 600), color="#25F5F8")
-        draw = ImageDraw.Draw(img)
-
-        try:
-            font = ImageFont.truetype("arial.ttf", 40)
-        except:
-            font = ImageFont.load_default()
-
-        draw.text((400, 280), "[AUDIO] Audio Image", fill="white", anchor="mm", font=font)
-        return img
+        ui.notify(f"Error embedding video: {str(e)}", type="negative")
+        print(f"Video embedding error: {e}")
+    finally:
+        if "_video_embed_params" in app.storage.user:
+            del app.storage.user["_video_embed_params"]
 
 
-@app.post("/extract-audio-chunks")
-async def extract_audio_chunks_endpoint():
-    """Extract audio data from PNG custom chunks"""
+async def process_video_embedding(
+    img_name,
+    img_path,
+    hash_value,
+    video_file,
+    receiver_public_key=None,
+    expires_in=None,
+):
+    """
+    Embed video into image using encrypted HVYMDataToken stored on IPFS.
+
+    1. Create encrypted video token from video file
+    2. Upload token to IPFS
+    3. Embed IPFS CID in PNG tEXt chunk
+
+    Args:
+        img_name: Image name
+        img_path: Image path
+        hash_value: Current image hash
+        video_file: Video file path
+        receiver_public_key: Required — subscriber's public key
+        expires_in: Token expiration time in seconds (None for no expiry)
+
+    Returns:
+        tuple: (new_hash, output_path) or (None, None) on failure
+    """
     try:
-        data = await ui.request.body()
-        img_path = data.get("imagePath")
+        if not video_file or not os.path.exists(video_file):
+            ui.notify("Video file not found", type="negative")
+            return None, None
 
-        if not img_path or not os.path.exists(img_path):
-            return {"error": "Image not found"}
+        if not is_video_file_check(video_file):
+            ui.notify("Unsupported video format", type="negative")
+            return None, None
 
-        audio_data, audio_format = extract_audio_from_image(img_path)
+        if not receiver_public_key:
+            ui.notify("Receiver public key required for video token", type="negative")
+            return None, None
 
-        if audio_data:
-            return {
-                "audioData": base64.b64encode(audio_data).decode(),
-                "audioFormat": audio_format,
-                "success": True,
-            }
+        sender_kp = get_user_keypair(app)
+        print(f"[DEBUG process_video_embedding] Creating token video image...")
+
+        # Create token, upload to IPFS, embed CID in PNG (CPU+IO bound)
+        output_path, video_cid = await run.io_bound(
+            create_token_video_image,
+            video_file, img_path, sender_kp, receiver_public_key,
+            expires_in, _ipfs_add_pure
+        )
+
+        print(f"[DEBUG process_video_embedding] output_path={output_path}, cid={video_cid}")
+        if not output_path or not video_cid:
+            return None, None
+
+        # Store locally in session temp dir
+        new_hash, _, editor_url = _local_store_image_pure(output_path)
+        print(f"[DEBUG process_video_embedding] new_hash={new_hash}")
+        if not new_hash:
+            return None, None
+
+        # Update storage with new image info
+        old_info = app.storage.user.get(hash_value, {})
+
+        import time
+        token_expires = None
+        if expires_in is not None:
+            token_expires = time.time() + expires_in
+
+        new_info = {
+            "name": f"video_{img_name}",
+            "path": output_path,
+            "editor_url": editor_url,
+            "has_video": True,
+            "video_method": "token",
+            "video_token_cid": video_cid,
+            "video_path": video_file,
+            "video_token_expires": token_expires,
+            "video_token_no_expiry": expires_in is None,
+            # Preserve existing audio info if present
+            "has_audio": old_info.get("has_audio", False),
+            "audio_method": old_info.get("audio_method"),
+            "audio_path": old_info.get("audio_path"),
+            "image_type": old_info.get("image_type", "raw"),
+        }
+        app.storage.user[new_hash] = new_info
+        print(f"[DEBUG process_video_embedding] Stored new_info for {new_hash}")
+
+        # Update hash list for current state
+        state_idx = app.storage.user.get("img_state", 1)
+        state_names = ["raw", "processed", "aposematic", "enciphered"]
+        state = state_names[state_idx - 1] if state_idx <= 4 else "raw"
+        hash_list_key = f"{state}_img_hashes"
+
+        hash_list = app.storage.user.get(hash_list_key, [])
+        if hash_value in hash_list:
+            idx = hash_list.index(hash_value)
+            hash_list[idx] = new_hash
         else:
-            return {"error": "No audio data found"}
+            hash_list.append(new_hash)
+        app.storage.user[hash_list_key] = hash_list
+
+        # Clean up old entry
+        if hash_value in app.storage.user:
+            del app.storage.user[hash_value]
+
+        return new_hash, output_path
+
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Error in process_video_embedding: {e}")
+        ui.notify(f"Video embedding failed: {str(e)}", type="negative")
+        return None, None
+
+
+async def play_video_from_image(hash_value):
+    """Decrypt and play video from an image with embedded video token CID.
+
+    Fetches the encrypted token from IPFS, decrypts it server-side,
+    writes to the session temp dir, and opens a video player dialog.
+    """
+    file_info = app.storage.user.get(hash_value, {})
+    if not file_info:
+        ui.notify("Image not found", type="negative")
+        return
+
+    img_path = file_info.get("path")
+    video_cid = file_info.get("video_token_cid")
+
+    if not video_cid:
+        # Try extracting CID from the PNG itself
+        if img_path and os.path.exists(img_path):
+            from png_chunks import extract_video_token_cid
+            video_cid = extract_video_token_cid(img_path)
+        if not video_cid:
+            ui.notify("No video token found in this image", type="warning")
+            return
+
+    ui.notify("Decrypting video...", type="info")
+
+    try:
+        receiver_kp = get_user_keypair(app)
+
+        # Fetch from IPFS and decrypt (IO-bound)
+        video_bytes, video_format, metadata = await run.io_bound(
+            extract_token_video,
+            img_path, receiver_kp, _ipfs_load_to_temp_file_pure, True
+        )
+
+        if not video_bytes:
+            ui.notify("Failed to decrypt video — you may not be the intended recipient", type="negative")
+            return
+
+        if not video_format or video_format == 'unknown':
+            video_format = 'mp4'
+
+        # Write decrypted video to session temp dir for serving
+        video_filename = f"video_{hash_value[:16]}.{video_format}"
+        video_temp_path = os.path.join(EDITOR_STORAGE_DIR, video_filename)
+        with open(video_temp_path, 'wb') as f:
+            f.write(video_bytes)
+
+        video_url = f"/editor/{video_filename}"
+
+        # Build video player popup dialog
+        with ui.dialog().props('maximized') as video_dialog:
+            with ui.card().classes('w-full h-full items-center justify-center bg-black'):
+                with ui.column().classes('items-center gap-4'):
+                    video_name = ''
+                    if metadata:
+                        video_name = metadata.get('filename', '')
+                    if video_name:
+                        ui.label(video_name).classes('text-white text-lg')
+                    ui.video(video_url).classes('w-full max-w-4xl').style('max-height: 80vh')
+                    ui.button('Close', on_click=video_dialog.close).props('flat color=white')
+
+        video_dialog.open()
+
+    except Exception as e:
+        print(f"Error playing video: {e}")
+        ui.notify(f"Video playback failed: {str(e)}", type="negative")
+
+
+async def remove_video_from_image(hash_value):
+    """Remove video from an image.
+
+    1. Unpin encrypted token from IPFS
+    2. Strip video CID tEXt chunks from PNG
+    3. Update metadata and refresh gallery
+    """
+    file_info = app.storage.user.get(hash_value, {})
+    if not file_info:
+        ui.notify("Image not found", type="negative")
+        return
+
+    img_path = file_info.get("path")
+    video_cid = file_info.get("video_token_cid")
+
+    if not video_cid and img_path and os.path.exists(img_path):
+        from png_chunks import extract_video_token_cid
+        video_cid = extract_video_token_cid(img_path)
+
+    if not video_cid:
+        ui.notify("No video found in this image", type="warning")
+        return
+
+    try:
+        # Unpin token from IPFS
+        if video_cid:
+            await run.io_bound(ipfs_remove, video_cid)
+            await run.io_bound(ipfs_gc)
+
+        # Strip video CID chunks from the PNG
+        if img_path and os.path.exists(img_path):
+            await run.io_bound(
+                remove_text_chunks, img_path, VIDEO_TOKEN_CID_PREFIX
+            )
+
+        # Re-store the cleaned PNG to get a new hash
+        new_hash, _, editor_url = _local_store_image_pure(img_path)
+        if not new_hash:
+            ui.notify("Failed to update image", type="negative")
+            return
+
+        # Update metadata — remove video fields, keep everything else
+        new_info = dict(file_info)
+        new_info["path"] = img_path
+        new_info["editor_url"] = editor_url
+        new_info["has_video"] = False
+        for key in ("video_method", "video_token_cid", "video_path",
+                     "video_token_expires", "video_token_no_expiry"):
+            new_info.pop(key, None)
+
+        app.storage.user[new_hash] = new_info
+
+        # Update hash list
+        state_idx = app.storage.user.get("img_state", 1)
+        state_names = ["raw", "processed", "aposematic", "enciphered"]
+        state = state_names[state_idx - 1] if state_idx <= 4 else "raw"
+        hash_list_key = f"{state}_img_hashes"
+
+        hash_list = app.storage.user.get(hash_list_key, [])
+        if hash_value in hash_list:
+            idx = hash_list.index(hash_value)
+            hash_list[idx] = new_hash
+        app.storage.user[hash_list_key] = hash_list
+
+        # Clean up old entry
+        if hash_value != new_hash and hash_value in app.storage.user:
+            del app.storage.user[hash_value]
+
+        ui.notify("Video removed from image", type="positive")
+        render_gallery()
+
+    except Exception as e:
+        print(f"Error removing video: {e}")
+        ui.notify(f"Failed to remove video: {str(e)}", type="negative")
 
 
 async def process_audio_embedding(
@@ -5131,20 +5369,20 @@ async def process_audio_embedding(
     img_path,
     hash_value,
     audio_file,
-    audio_method="metadata",
+    audio_method="token",
     receiver_public_key=None,
     expires_in=None,
 ):
     """
-    Embed audio into image using specified method.
+    Embed audio into image using encrypted HVYMDataToken.
 
     Args:
         img_name: Image name
         img_path: Image path
         hash_value: Current image hash
         audio_file: Audio file path
-        audio_method: 'metadata' (base64 in PNG chunks) or 'token' (encrypted)
-        receiver_public_key: Required for token method
+        audio_method: Always 'token' (encrypted via HVYMDataToken)
+        receiver_public_key: Required — subscriber's public key
         expires_in: Token expiration time in seconds (None for no expiry)
 
     Returns:
@@ -5160,21 +5398,16 @@ async def process_audio_embedding(
             ui.notify("Unsupported audio format", type="negative")
             return None, None
 
-        if audio_method == "token" and not receiver_public_key:
-            ui.notify("Receiver public key required for token sharing", type="negative")
+        if not receiver_public_key:
+            ui.notify("Receiver public key required for audio token", type="negative")
             return None, None
 
-        # Create audio image based on method
-        print(f"[DEBUG process_audio_embedding] audio_method={audio_method}")
-        if audio_method == "token":
-            sender_kp = get_user_keypair(app)
-            print(f"[DEBUG process_audio_embedding] Creating token audio image...")
-            output_path = create_token_audio_image(
-                audio_file, img_path, sender_kp, receiver_public_key, expires_in
-            )
-        else:
-            print(f"[DEBUG process_audio_embedding] Creating metadata audio image...")
-            output_path = create_audio_image(audio_file, img_path)
+        # Create encrypted audio token image
+        sender_kp = get_user_keypair(app)
+        print(f"[DEBUG process_audio_embedding] Creating token audio image...")
+        output_path = create_token_audio_image(
+            audio_file, img_path, sender_kp, receiver_public_key, expires_in
+        )
 
         print(f"[DEBUG process_audio_embedding] output_path={output_path}")
         if not output_path:

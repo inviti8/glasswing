@@ -15,6 +15,7 @@ import exiftool
 from pprint import pprint
 from aiposematic import SCRAMBLE_MODE
 from audio_tokens import is_audio_file
+from video_tokens import is_video_file
 from task_runner import TaskRunner, TaskDialog, TaskType, TaskResult
 
 # Explicit exports for PyInstaller compatibility with 'from dialogs import *'
@@ -38,6 +39,9 @@ __all__ = [
     'is_audio',
     'browse_audio_file',
     'handle_audio_selection',
+    'edit_video_info',
+    'is_video',
+    'handle_video_selection',
     'gallery_info_dialog',
 ]
 
@@ -655,20 +659,20 @@ def edit_audio_info(hash_value, on_close, process_func, choose_files=None):
             ui.notify('Please select an audio file', type='warning')
             return
 
-        # Validate recipient for token method
-        if audio_method.value == 'token' and not recipient_select.value:
+        # Validate recipient (always required — token-only)
+        if not recipient_select.value:
             ui.notify('Please select a recipient for token sharing', type='warning')
             return
 
-        # Store values for process_func to use
+        # Store values for process_func to use (always token method)
         app.storage.user['_audio_embed_params'] = {
             'img_name': img_name,
             'img_path': img_path,
             'hash_value': hash_value,
             'audio_file': audio_input.value,
-            'audio_method': audio_method.value,
-            'receiver_public_key': recipient_select.value if audio_method.value == 'token' else None,
-            'expiry_option': expiry_select.value if audio_method.value == 'token' else 'never'
+            'audio_method': 'token',
+            'receiver_public_key': recipient_select.value,
+            'expiry_option': expiry_select.value
         }
         confirmed['value'] = True
         dialog.close()
@@ -683,14 +687,6 @@ def edit_audio_info(hash_value, on_close, process_func, choose_files=None):
             ui.label('Add Audio to Image').classes('text-lg font-semibold mb-4')
             ui.label(f'Image: {img_name}').classes('text-sm mb-4')
 
-            # Audio method selection
-            with ui.row().classes('w-full gap-4 mb-4'):
-                ui.label('Audio Method:').classes('font-medium')
-                audio_method = ui.select(
-                    options={'metadata': 'Metadata (Standard)', 'token': 'Token (Secure Sharing)'},
-                    value='metadata'
-                ).classes('flex-grow')
-
             # Audio file selection - following Andromica pattern
             with ui.row().classes('w-full gap-4 mb-4'):
                 ui.label('Audio File:').classes('font-medium')
@@ -700,8 +696,8 @@ def edit_audio_info(hash_value, on_close, process_func, choose_files=None):
                 ).props('clearable').classes('flex-grow')
                 ui.button('Browse', on_click=lambda: handle_audio_selection(audio_input, choose_files)).props('flat')
 
-            # Token sharing options (shown only when token method is selected)
-            with ui.column().classes('w-full mb-4') as token_options:
+            # Token sharing options (always visible — audio is always encrypted)
+            with ui.column().classes('w-full mb-4'):
                 ui.label('Token Sharing Options').classes('font-medium mb-2')
 
                 with ui.row().classes('w-full gap-4 mb-4'):
@@ -727,24 +723,10 @@ def edit_audio_info(hash_value, on_close, process_func, choose_files=None):
 
                 ui.label('Audio will be encrypted and can only be accessed by the selected recipient').classes('text-sm text-blue-600')
 
-            # Preview section
-            with ui.column().classes('w-full mb-4'):
-                ui.label('Preview:').classes('font-medium mb-2')
-                audio_info = ui.label('No audio file selected').classes('text-sm text-gray-600')
-
-            # Update token options visibility based on method selection
-            def update_token_options():
-                if audio_method.value == 'token':
-                    token_options.classes('remove', 'hidden')
-                else:
-                    token_options.classes('add', 'hidden')
-
-            audio_method.on('change', update_token_options)
-
             # Action buttons
             with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
-                ui.button('Embed Audio', on_click=on_confirm).props('color=primary')
+                ui.button('Encrypt & Embed Audio', on_click=on_confirm).props('color=primary')
 
     dialog.open()
     return dialog
@@ -797,6 +779,131 @@ def browse_audio_file(input_field, choose_files=None):
             ui.notify(f'Error selecting file: {str(e)}', type='negative')
 
     return handle_file_selection
+
+def is_video(file):
+    """Check if file is a video format."""
+    return is_video_file(file)
+
+
+async def handle_video_selection(input_field, choose_files=None):
+    """
+    Handle video file selection following the same pattern as handle_audio_selection.
+
+    Args:
+        input_field: The input field to update with selected file
+        choose_files: Async callback to open file dialog
+    """
+    if not choose_files:
+        ui.notify('File selection not available', type='warning')
+        return
+    try:
+        files = await choose_files()
+        video_files = [file for file in files if is_video(file)]
+        if video_files:
+            input_field.value = video_files[0]
+        else:
+            ui.notify('Please select a valid video file (MP4, WebM, MOV, AVI, MKV)', type='warning')
+    except Exception as e:
+        ui.notify(f'Error selecting file: {str(e)}', type='negative')
+
+
+def edit_video_info(hash_value, on_close, process_func, choose_files=None):
+    """Dialog for embedding video into an existing image with token support.
+
+    Follows the process_dialog pattern used by edit_audio_info.
+
+    Args:
+        hash_value: Image hash to embed video into
+        on_close: Callback when dialog closes (typically process_dialog)
+        process_func: Function to process the video embedding
+        choose_files: Async callback to open file dialog
+    """
+    # Get image info
+    img_path = app.storage.user[hash_value]['path']
+    img_name = app.storage.user[hash_value]['name']
+
+    # Get recipient options for token sharing
+    recipient_options = get_recipient_options()
+
+    # Track if user confirmed (vs cancelled)
+    confirmed = {'value': False}
+
+    def on_confirm():
+        """Store values and mark as confirmed before closing."""
+        if not video_input.value:
+            ui.notify('Please select a video file', type='warning')
+            return
+
+        if not recipient_select.value:
+            ui.notify('Please select a recipient for token sharing', type='warning')
+            return
+
+        # Store values for process_func to use
+        app.storage.user['_video_embed_params'] = {
+            'img_name': img_name,
+            'img_path': img_path,
+            'hash_value': hash_value,
+            'video_file': video_input.value,
+            'receiver_public_key': recipient_select.value,
+            'expiry_option': expiry_select.value
+        }
+        confirmed['value'] = True
+        dialog.close()
+
+    async def on_dialog_hide():
+        """Called when dialog closes - trigger processing if confirmed."""
+        if confirmed['value']:
+            await on_close(process_func)
+
+    with ui.dialog().on('hide', on_dialog_hide) as dialog:
+        with ui.card().classes('w-full max-w-2xl'):
+            ui.label('Add Video to Image').classes('text-lg font-semibold mb-4')
+            ui.label(f'Image: {img_name}').classes('text-sm mb-4')
+
+            # Video file selection
+            with ui.row().classes('w-full gap-4 mb-4'):
+                ui.label('Video File:').classes('font-medium')
+                video_input = ui.input(
+                    placeholder='Select video file (MP4, WebM, MOV, AVI, MKV)',
+                    value=''
+                ).props('clearable').classes('flex-grow')
+                ui.button('Browse', on_click=lambda: handle_video_selection(video_input, choose_files)).props('flat')
+
+            # Token sharing options (always visible — video is always encrypted)
+            with ui.column().classes('w-full mb-4'):
+                ui.label('Token Sharing Options').classes('font-medium mb-2')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Recipient:').classes('font-medium')
+                    recipient_select = ui.select(
+                        options=recipient_options,
+                        value=list(recipient_options.keys())[0] if recipient_options else ''
+                    ).classes('flex-grow')
+
+                with ui.row().classes('w-full gap-4 mb-4'):
+                    ui.label('Token Expiry:').classes('font-medium')
+                    expiry_select = ui.select(
+                        options={
+                            'never': 'Never',
+                            '1h': '1 Hour',
+                            '24h': '24 Hours',
+                            '7d': '7 Days',
+                            '30d': '30 Days',
+                            '365d': '1 Year'
+                        },
+                        value='never'
+                    ).classes('flex-grow')
+
+                ui.label('Video will be encrypted and stored on IPFS. Only the selected recipient can decrypt it.').classes('text-sm text-purple-600')
+
+            # Action buttons
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
+                ui.button('Encrypt & Embed Video', on_click=on_confirm).props('color=primary')
+
+    dialog.open()
+    return dialog
+
 
 def gallery_info_dialog():
     """Dialog for setting gallery title and description."""
