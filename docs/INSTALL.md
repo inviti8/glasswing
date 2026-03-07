@@ -47,28 +47,28 @@ IPFS is required for video embedding (encrypted video tokens are stored on IPFS)
 
 ### Windows
 
-1. Download `glasswing-windows.exe` from the latest release
+1. Download `andromica-windows.exe` from the latest release
 2. Double-click to run
 3. If SmartScreen appears, click "More info" > "Run anyway"
 
 ### macOS
 
-1. Download `glasswing-macos.zip` from the latest release
+1. Download `andromica-macos.zip` from the latest release
    - This is an ARM (Apple Silicon) build
    - Intel Macs can run it via Rosetta 2 (automatic, no extra setup)
 2. Extract the ZIP file
-3. Move `glasswing.app` to Applications folder
-4. Right-click `glasswing.app` and select "Open"
+3. Move `andromica.app` to Applications folder
+4. Right-click `andromica.app` and select "Open"
 5. Click "Open" in the dialog (required first time due to Gatekeeper)
 
 ### Linux
 
-1. Download `glasswing-linux` from the latest release
+1. Download `andromica-linux` from the latest release
 2. Make executable and run:
 
 ```bash
-chmod +x glasswing-linux
-./glasswing-linux
+chmod +x andromica-linux
+./andromica-linux
 ```
 
 ## Troubleshooting

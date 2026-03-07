@@ -38,9 +38,9 @@ python scripts/build_cross_platform.py --clean
 ### Output
 
 Executables are created in:
-- Linux: `build/dist/glasswing`
-- Windows: `build/dist/glasswing.exe`
-- macOS: `build/dist/glasswing.app`
+- Linux: `build/dist/andromica`
+- Windows: `build/dist/andromica.exe`
+- macOS: `build/dist/andromica.app`
 
 ## CI/CD Builds
 
@@ -65,9 +65,9 @@ Note: Intel Mac runners (macos-13) are retired. Intel Mac users can run the ARM 
 ### Artifacts
 
 GitHub Actions creates artifacts for each platform:
-- `glasswing-linux` - Linux executable
-- `glasswing-windows` - Windows .exe
-- `glasswing-macos` - macOS ARM .zip (runs on Intel via Rosetta 2)
+- `andromica-linux` - Linux executable
+- `andromica-windows` - Windows .exe
+- `andromica-macos` - macOS ARM .zip (runs on Intel via Rosetta 2)
 
 ## Project Structure
 
@@ -158,13 +158,13 @@ python scripts/check_dependencies.py
 
 # Test executable
 # Linux:
-./build/dist/glasswing
+./build/dist/andromica
 
 # Windows:
-build\dist\glasswing.exe
+build\dist\andromica.exe
 
 # macOS:
-open build/dist/glasswing.app
+open build/dist/andromica.app
 ```
 
 ### CI Debugging

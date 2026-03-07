@@ -144,9 +144,9 @@ class GlasswingBuilder:
 
             # Show output location
             if target_platform == 'macos':
-                output_path = self.build_dir / 'dist' / 'glasswing.app'
+                output_path = self.build_dir / 'dist' / 'andromica.app'
             else:
-                output_path = self.build_dir / 'dist' / 'glasswing'
+                output_path = self.build_dir / 'dist' / 'andromica'
                 if target_platform == 'windows':
                     output_path = output_path.with_suffix('.exe')
 
@@ -170,7 +170,7 @@ class GlasswingBuilder:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Build glasswing for target platform using uv')
+    parser = argparse.ArgumentParser(description='Build andromica for target platform using uv')
     parser.add_argument('--platform', choices=['linux', 'macos', 'windows'],
                        help='Target platform (auto-detected if not specified)')
     parser.add_argument('--clean', action='store_true',

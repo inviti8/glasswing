@@ -66,8 +66,8 @@ jobs:
     - name: Upload Linux build
       uses: actions/upload-artifact@v4
       with:
-        name: glasswing-linux
-        path: build/dist/glasswing
+        name: andromica-linux
+        path: build/dist/andromica
         retention-days: 30
 
   build-windows:
@@ -106,8 +106,8 @@ jobs:
     - name: Upload Windows build
       uses: actions/upload-artifact@v4
       with:
-        name: glasswing-windows
-        path: build/dist/glasswing.exe
+        name: andromica-windows
+        path: build/dist/andromica.exe
         retention-days: 30
 
   build-macos:
@@ -152,13 +152,13 @@ jobs:
     - name: Create ZIP
       run: |
         cd build/dist
-        zip -r glasswing-macos.zip glasswing.app
+        zip -r andromica-macos.zip andromica.app
 
     - name: Upload macOS build
       uses: actions/upload-artifact@v4
       with:
-        name: glasswing-macos
-        path: build/dist/glasswing-macos.zip
+        name: andromica-macos
+        path: build/dist/andromica-macos.zip
         retention-days: 30
 
   create-release:
@@ -177,18 +177,18 @@ jobs:
     - name: Create release package
       run: |
         mkdir -p release
-        cp builds/glasswing-linux/glasswing release/glasswing-linux
-        cp builds/glasswing-windows/glasswing.exe release/glasswing-windows.exe
-        cp builds/glasswing-macos/*.zip release/
+        cp builds/andromica-linux/andromica release/andromica-linux
+        cp builds/andromica-windows/andromica.exe release/andromica-windows.exe
+        cp builds/andromica-macos/*.zip release/
 
     - name: Create installation guide
       run: |
         cat > release/INSTALL.txt << 'EOF'
-        # Glasswing Installation Guide
+        # Andromica Installation Guide
 
         ## Prerequisites
 
-        Glasswing requires the following native tools to be installed:
+        Andromica requires the following native tools to be installed:
 
         ### Windows
         1. ImageMagick: https://imagemagick.org/script/download.php#windows
@@ -196,7 +196,7 @@ jobs:
            - During installation, check "Add to PATH"
         2. ExifTool: https://exiftool.org/
            - Download and add to PATH
-        3. (Optional) IPFS Desktop: https://docs.ipfs.tech/install/ipfs-desktop/
+        3. IPFS Desktop: https://docs.ipfs.tech/install/ipfs-desktop/
 
         ### macOS
         brew install imagemagick exiftool
@@ -209,15 +209,15 @@ jobs:
         ## Installation
 
         ### Linux
-        chmod +x glasswing-linux
-        ./glasswing-linux
+        chmod +x andromica-linux
+        ./andromica-linux
 
         ### Windows
-        Double-click glasswing-windows.exe or run from command prompt.
+        Double-click andromica-windows.exe or run from command prompt.
 
         ### macOS
-        1. Unzip glasswing-macos.zip
-        2. Move glasswing.app to Applications
+        1. Unzip andromica-macos.zip
+        2. Move andromica.app to Applications
         3. Right-click and select "Open" (first time only, due to Gatekeeper)
 
         Note: This is an ARM (Apple Silicon) build. Intel Macs can run it

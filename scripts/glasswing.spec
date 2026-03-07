@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # Application metadata
-APP_NAME = 'glasswing'
+APP_NAME = 'andromica'
 
 # Paths - SPECPATH is provided by PyInstaller and points to the directory containing the spec file
 # Go up one level from scripts/ to project root
