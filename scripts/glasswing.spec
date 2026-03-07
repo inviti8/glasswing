@@ -116,7 +116,9 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 # Splash screen — shown by the bootloader before Python starts
-# Requires Tcl/Tk shared libraries; uv's standalone Python on Linux may lack them
+# Requires Tcl/Tk shared libraries; uv's standalone Python may lack them
+_has_splash = False
+splash = None
 try:
     splash = Splash(
         str(spec_root / 'static' / 'splash.png'),
@@ -130,10 +132,9 @@ try:
         always_on_top=True,
     )
     _has_splash = True
-except Exception:
+except (Exception, SystemExit) as e:
     splash = None
-    _has_splash = False
-    print("WARNING: Splash screen disabled (Tcl/Tk not available)")
+    print(f"WARNING: Splash screen disabled ({e})")
 
 # Helper lists for splash binaries
 _splash_args = [splash] if _has_splash else []
