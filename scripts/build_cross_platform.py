@@ -77,7 +77,7 @@ class GlasswingBuilder:
         print("Syncing dependencies with uv...")
         try:
             subprocess.run(['uv', 'sync'], check=True, cwd=str(self.cwd))
-            print("✅ Dependencies synced successfully")
+            print(f"{CHECK} Dependencies synced successfully")
             return True
         except subprocess.CalledProcessError as e:
             print(f"❌ Failed to sync dependencies: {e}")
@@ -93,13 +93,13 @@ class GlasswingBuilder:
                     'uv', 'run', 'python', '-c', 
                     'import PyQt6.QtWebEngineWidgets; print("PyQt6 WebEngine available")'
                 ], check=True, capture_output=True, cwd=str(self.cwd))
-                print("✅ pywebview[qt] dependencies verified")
+                print(f"{CHECK} pywebview[qt] dependencies verified")
                 return True
             except subprocess.CalledProcessError:
                 print("Installing pywebview[qt] for Linux compatibility...")
                 try:
                     subprocess.run(['uv', 'add', 'pywebview[qt]'], check=True, cwd=str(self.cwd))
-                    print("✅ pywebview[qt] installed successfully")
+                    print(f"{CHECK} pywebview[qt] installed successfully")
                     return True
                 except subprocess.CalledProcessError as e:
                     print(f"❌ Failed to install pywebview[qt]: {e}")
@@ -140,7 +140,7 @@ class GlasswingBuilder:
 
         try:
             result = subprocess.run(cmd, cwd=str(self.cwd), check=True)
-            print(f"\n✅ Build completed successfully!")
+            print(f"\n{CHECK} Build completed successfully!")
 
             # Show output location
             if target_platform == 'macos':
@@ -165,7 +165,7 @@ class GlasswingBuilder:
 
             return True
         except subprocess.CalledProcessError as e:
-            print(f"\n❌ Build failed: {e}")
+            print(f"\n{WARN} Build failed: {e}")
             return False
 
 
