@@ -72,22 +72,62 @@ class GlasswingBuilder:
 
         return True  # Non-blocking
 
+    def sync_dependencies(self):
+        """Sync dependencies using uv"""
+        print("Syncing dependencies with uv...")
+        try:
+            subprocess.run(['uv', 'sync'], check=True, cwd=str(self.cwd))
+            print(f"{CHECK} Dependencies synced successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to sync dependencies: {e}")
+            return False
+
+    def ensure_pywebview_qt(self):
+        """Ensure pywebview[qt] is installed for Linux compatibility"""
+        if platform.system().lower() == 'linux':
+            print("Ensuring pywebview[qt] is available for Linux...")
+            try:
+                # Check if pywebview[qt] is properly installed
+                result = subprocess.run([
+                    'uv', 'run', 'python', '-c', 
+                    'import PyQt6.QtWebEngineWidgets; print("PyQt6 WebEngine available")'
+                ], check=True, capture_output=True, cwd=str(self.cwd))
+                print(f"{CHECK} pywebview[qt] dependencies verified")
+                return True
+            except subprocess.CalledProcessError:
+                print("Installing pywebview[qt] for Linux compatibility...")
+                try:
+                    subprocess.run(['uv', 'add', 'pywebview[qt]'], check=True, cwd=str(self.cwd))
+                    print(f"{CHECK} pywebview[qt] installed successfully")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    print(f"❌ Failed to install pywebview[qt]: {e}")
+                    return False
+        return True  # Not needed for other platforms
+
     def build_executable(self, target_platform=None):
-        """Build the executable using PyInstaller"""
+        """Build executable using PyInstaller with uv"""
         if target_platform is None:
             target_platform = self.get_platform()
 
         print(f"\nBuilding for {target_platform}...")
 
-        # Use spec file
+        # Ensure dependencies are synced
+        if not self.sync_dependencies():
+            return False
+
+        # Ensure pywebview[qt] for Linux
+        if not self.ensure_pywebview_qt():
+            return False
+
+        # Use spec file with uv run
         if not self.spec_file.exists():
             print(f"Error: Spec file not found at {self.spec_file}")
             return False
 
         cmd = [
-            sys.executable,
-            '-m',
-            'PyInstaller',
+            'uv', 'run', 'pyinstaller',  # Key change: use uv run
             '--clean',
             '--noconfirm',
             '--distpath', str(self.build_dir / 'dist'),
@@ -125,32 +165,29 @@ class GlasswingBuilder:
 
             return True
         except subprocess.CalledProcessError as e:
-            print(f"\n[X] Build failed: {e}")
+            print(f"\n{WARN} Build failed: {e}")
             return False
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Build glasswing for target platform')
+    parser = argparse.ArgumentParser(description='Build glasswing for target platform using uv')
     parser.add_argument('--platform', choices=['linux', 'macos', 'windows'],
                        help='Target platform (auto-detected if not specified)')
     parser.add_argument('--clean', action='store_true',
                        help='Clean build directory before building')
     parser.add_argument('--check-deps', action='store_true',
-                       help='Check native dependencies only')
+                       help='Check and sync dependencies only')
 
     args = parser.parse_args()
 
     builder = GlasswingBuilder()
 
     if args.check_deps:
-        builder.check_native_dependencies()
-        return
+        success = builder.sync_dependencies() and builder.ensure_pywebview_qt()
+        sys.exit(0 if success else 1)
 
     if args.clean:
         builder.clean_build_directory()
-
-    # Check dependencies (warn only, don't fail)
-    builder.check_native_dependencies()
 
     # Build
     success = builder.build_executable(args.platform)
@@ -161,9 +198,9 @@ def main():
     print("\n" + "="*50)
     print("Build process complete!")
     print("Next steps:")
-    print("1. Test the executable manually")
+    print("1. Test executable manually")
     print("2. Verify static files load correctly")
-    print("3. Check error handling for missing native dependencies")
+    print("3. Check pywebview functionality on target platform")
 
 
 if __name__ == "__main__":
