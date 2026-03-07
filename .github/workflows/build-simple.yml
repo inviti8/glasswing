@@ -39,7 +39,8 @@ jobs:
           libqt5webenginecore5 \
           libqt5webenginewidgets5 \
           libqt5gui5 \
-          libqt5widgets5
+          libqt5widgets5 \
+          python3-tk
 
     - name: Install Python dependencies
       run: |
