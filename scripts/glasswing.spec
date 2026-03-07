@@ -116,17 +116,28 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 # Splash screen — shown by the bootloader before Python starts
-splash = Splash(
-    str(spec_root / 'static' / 'splash.png'),
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=(10, 460),
-    text_size=12,
-    text_color='#25F5F8',
-    text_default='Loading Andromica...',
-    max_img_size=(760, 480),
-    always_on_top=True,
-)
+# Requires Tcl/Tk shared libraries; uv's standalone Python on Linux may lack them
+try:
+    splash = Splash(
+        str(spec_root / 'static' / 'splash.png'),
+        binaries=a.binaries,
+        datas=a.datas,
+        text_pos=(10, 460),
+        text_size=12,
+        text_color='#25F5F8',
+        text_default='Loading Andromica...',
+        max_img_size=(760, 480),
+        always_on_top=True,
+    )
+    _has_splash = True
+except Exception:
+    splash = None
+    _has_splash = False
+    print("WARNING: Splash screen disabled (Tcl/Tk not available)")
+
+# Helper lists for splash binaries
+_splash_args = [splash] if _has_splash else []
+_splash_binaries = [splash.binaries] if _has_splash else []
 
 # Different build strategies per platform
 if sys.platform == 'darwin':
@@ -135,7 +146,7 @@ if sys.platform == 'darwin':
     # universal2 requires all dependencies to be fat binaries which isn't always available
     exe = EXE(
         pyz,
-        splash,
+        *_splash_args,
         a.scripts,
         [],
         exclude_binaries=True,
@@ -154,7 +165,7 @@ if sys.platform == 'darwin':
     coll = COLLECT(
         exe,
         a.binaries,
-        splash.binaries,
+        *_splash_binaries,
         a.zipfiles,
         a.datas,
         strip=False,
@@ -178,9 +189,9 @@ else:
     # Windows/Linux: Single executable
     exe = EXE(
         pyz,
-        splash,
+        *_splash_args,
         a.scripts,
-        splash.binaries,
+        *_splash_binaries,
         a.binaries,
         a.zipfiles,
         a.datas,
