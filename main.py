@@ -11,6 +11,14 @@ import sys
 
 # Support PyInstaller frozen builds: must be called early, before any multiprocessing use
 multiprocessing.freeze_support()
+
+# Close PyInstaller splash screen once the UI is ready
+try:
+    import pyi_splash
+    _has_splash = True
+except ImportError:
+    _has_splash = False
+
 from typing import Optional, Dict, List, Any, Tuple, Callable, Union
 import http.server
 import socketserver
@@ -5851,6 +5859,10 @@ if __name__ in {"__main__", "__mp_main__"}:
     pass
 
 app.on_shutdown(on_close)
+
+# Close PyInstaller splash screen when browser first connects
+if _has_splash:
+    app.on_connect(lambda: pyi_splash.close() if pyi_splash.is_alive() else None)
 
 ui.run(
     native=True,

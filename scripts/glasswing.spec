@@ -88,11 +88,11 @@ hiddenimports = [
 ]
 
 # Exclusions to reduce size
+# Note: tkinter is NOT excluded — pyi_splash needs a minimal Tk subset
 excludes = [
     'pytest',
     'unittest',
     'doctest',
-    'tkinter',
     'matplotlib.tests',
     'numpy.tests',
 ]
@@ -115,6 +115,19 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
+# Splash screen — shown by the bootloader before Python starts
+splash = Splash(
+    str(spec_root / 'static' / 'splash.png'),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=(10, 460),
+    text_size=12,
+    text_color='#25F5F8',
+    text_default='Loading Andromica...',
+    max_img_size=(760, 480),
+    always_on_top=True,
+)
+
 # Different build strategies per platform
 if sys.platform == 'darwin':
     # macOS: Create .app bundle (not --onefile)
@@ -122,6 +135,7 @@ if sys.platform == 'darwin':
     # universal2 requires all dependencies to be fat binaries which isn't always available
     exe = EXE(
         pyz,
+        splash,
         a.scripts,
         [],
         exclude_binaries=True,
@@ -140,6 +154,7 @@ if sys.platform == 'darwin':
     coll = COLLECT(
         exe,
         a.binaries,
+        splash.binaries,
         a.zipfiles,
         a.datas,
         strip=False,
@@ -163,7 +178,9 @@ else:
     # Windows/Linux: Single executable
     exe = EXE(
         pyz,
+        splash,
         a.scripts,
+        splash.binaries,
         a.binaries,
         a.zipfiles,
         a.datas,
