@@ -527,7 +527,10 @@ def init():
     hvym_public_key = hvym_keys.public_key()
 
     if not ipns_folder_exists(hvym_public_key):
-        ipns_new_folder(hvym_public_key)
+        if ipns_new_folder(hvym_public_key):
+            content_folders = app.storage.user.get("content_folders", [])
+            content_folders.append(hvym_public_key)
+            app.storage.user["content_folders"] = content_folders
         print(f"Created IPFS folder: {hvym_public_key}")
     else:
         print(f"IPFS folder already exists: {hvym_public_key}")
@@ -1105,12 +1108,7 @@ def ipns_new_folder(name):
         verify_params = {"arg": f"/{name}"}
         verify_response = requests.post(verify_url, params=verify_params, timeout=10)
 
-        if verify_response.status_code == 200:
-            content_folders = app.storage.user.get("content_folders", [])
-            content_folders.append(name)
-            app.storage.user["content_folders"] = content_folders
-            return True
-        return False
+        return verify_response.status_code == 200
 
     except requests.exceptions.RequestException as e:
         print(f"Error creating IPFS folder: {e}")
