@@ -10,9 +10,12 @@ This prevents the NiceGUI "Connection lost" issue during image processing.
 
 import tempfile
 import os
-from wand.image import Image
+from wand.image import Image, COMPOSITE_OPERATORS
 from wand.display import display
 from enum import Enum
+
+# ImageMagick 7 uses 'copy_alpha', ImageMagick 6 uses 'copy_opacity'
+COPY_ALPHA_OP = 'copy_alpha' if 'copy_alpha' in COMPOSITE_OPERATORS else 'copy_opacity'
 import exiftool
 import shutil
 from pathlib import Path
@@ -98,7 +101,7 @@ def _watermark_img_sync(file_name, base_img_path, wm_img_path, amount=0.2, posit
                     # Make sure result has alpha channel
                     result.alpha_channel = 'on'
                     # Apply the original alpha mask
-                    result.composite(alpha_mask, left=0, top=0, operator='copy_alpha')
+                    result.composite(alpha_mask, left=0, top=0, operator=COPY_ALPHA_OP)
 
                 # Save the result
                 result.save(filename=temp_path)
