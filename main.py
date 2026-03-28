@@ -126,7 +126,7 @@ ipfs_webui = "http://localhost"
 ipfs_webui_port = "8080"
 
 
-pintheon_endpoint = "http://127.0.0.1"
+pintheon_endpoint = "https://local.pintheon.com"
 pintheon_port = "9999"
 
 gateway_url = ""
