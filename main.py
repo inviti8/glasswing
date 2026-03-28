@@ -966,34 +966,42 @@ def url_valid(url):
         return False
 
 
-def _pintheon_url():
-    """Return the Pintheon base URL from user settings or defaults."""
+def _pintheon_url(base_url=None):
+    """Return the Pintheon base URL.
+
+    Args:
+        base_url: Pre-resolved URL. If None, reads from app.storage.user
+                  (must be called in UI context).
+    """
+    if base_url:
+        return base_url
     host = app.storage.user.get("pintheon_endpoint", pintheon_endpoint)
     p = app.storage.user.get("pintheon_port", pintheon_port)
     return f"{host}:{p}"
 
 
-def is_pintheon_running():
+def is_pintheon_running(base_url=None):
     """Check if the Pintheon node is running and accessible."""
     try:
-        response = requests.get(f"{_pintheon_url()}/", timeout=5, verify=False)
+        response = requests.get(f"{_pintheon_url(base_url)}/", timeout=5, verify=False)
         return response.status_code == 200
     except (requests.exceptions.RequestException, ValueError):
         return False
 
 
-def pintheon_create_directory(name, access_token=None):
+def pintheon_create_directory(name, access_token=None, base_url=None):
     """
     Create a directory on the Pintheon node using the API.
 
     Args:
         name (str): Name of the directory to create
         access_token (str): Optional access token. If not provided, will try to get from app storage.
+        base_url (str): Pre-resolved Pintheon URL (for use outside UI context).
 
     Returns:
         dict: Response with success status and directories list, or None on failure
     """
-    if not is_pintheon_running():
+    if not is_pintheon_running(base_url):
         print("Error: Pintheon node is not running or not accessible")
         return None
 
@@ -1004,7 +1012,7 @@ def pintheon_create_directory(name, access_token=None):
             return None
 
     try:
-        url = f"{_pintheon_url()}/api_create_directory"
+        url = f"{_pintheon_url(base_url)}/api_create_directory"
         data = {"access_token": access_token, "name": name}
         response = requests.post(url, data=data, timeout=30, verify=False)
 
@@ -1025,7 +1033,7 @@ def pintheon_create_directory(name, access_token=None):
         return None
 
 
-def pintheon_upload_file(file_path, directory=None, encrypted=False, access_token=None):
+def pintheon_upload_file(file_path, directory=None, encrypted=False, access_token=None, base_url=None):
     """
     Upload a file to the Pintheon node using the API.
 
@@ -1034,11 +1042,12 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         directory (str): Optional MFS directory path to store file
         encrypted (bool): Whether to encrypt the file
         access_token (str): Optional access token. If not provided, will try to get from app storage.
+        base_url (str): Pre-resolved Pintheon URL (for use outside UI context).
 
     Returns:
         dict: File info dict with Name, Type, Hash, Size, or None on failure
     """
-    if not is_pintheon_running():
+    if not is_pintheon_running(base_url):
         print("Error: Pintheon node is not running or not accessible")
         return None
 
@@ -1053,7 +1062,7 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         return None
 
     try:
-        url = f"{_pintheon_url()}/api_upload"
+        url = f"{_pintheon_url(base_url)}/api_upload"
 
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f)}
@@ -1083,17 +1092,18 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         return None
 
 
-def pintheon_list_directories(access_token=None):
+def pintheon_list_directories(access_token=None, base_url=None):
     """
     List directories on the Pintheon node.
 
     Args:
         access_token (str): Optional access token. If not provided, will try to get from app storage.
+        base_url (str): Pre-resolved Pintheon URL (for use outside UI context).
 
     Returns:
         list: List of directory dicts with Name and Path, or None on failure
     """
-    if not is_pintheon_running():
+    if not is_pintheon_running(base_url):
         print("Error: Pintheon node is not running or not accessible")
         return None
 
@@ -1104,7 +1114,7 @@ def pintheon_list_directories(access_token=None):
             return None
 
     try:
-        url = f"{_pintheon_url()}/api_list_directories"
+        url = f"{_pintheon_url(base_url)}/api_list_directories"
         data = {"access_token": access_token}
         response = requests.post(url, data=data, timeout=30, verify=False)
 
@@ -2536,8 +2546,11 @@ async def process_pintheon_deploy_gallery():
     - Uses helper functions for template rendering
     """
     try:
+        # Resolve Pintheon URL in UI context for use in io_bound calls
+        pin_url = _pintheon_url()
+
         # Check if Pintheon is running
-        if not is_pintheon_running():
+        if not is_pintheon_running(pin_url):
             ui.notify("Pintheon node is not running", type="negative")
             return
 
@@ -2584,9 +2597,9 @@ async def process_pintheon_deploy_gallery():
 
         # Create directory on Pintheon for this gallery state
         directory_name = f"gallery_{state}"
-        # I/O-bound: create directory (pass access_token to make it pure)
+        # I/O-bound: create directory (pass access_token and base_url to avoid storage access)
         dir_result = await run.io_bound(
-            pintheon_create_directory, directory_name, access_token
+            pintheon_create_directory, directory_name, access_token, pin_url
         )
         if not dir_result:
             ui.notify(
@@ -2611,10 +2624,10 @@ async def process_pintheon_deploy_gallery():
         failed_uploads = []
 
         for hash_value, file_path, file_name in files_to_upload:
-            # I/O-bound: upload file (pass access_token to make it pure)
+            # I/O-bound: upload file (pass access_token and base_url to avoid storage access)
             result = await run.io_bound(
                 pintheon_upload_file,
-                file_path, directory_name, False, access_token
+                file_path, directory_name, False, access_token, pin_url
             )
             if result:
                 uploaded_files.append(result)
@@ -2631,7 +2644,7 @@ async def process_pintheon_deploy_gallery():
         # I/O-bound: upload the data pod JSON file to Pintheon
         data_pod_result = await run.io_bound(
             pintheon_upload_file,
-            output_path, directory_name, False, access_token
+            output_path, directory_name, False, access_token, pin_url
         )
         if data_pod_result:
             print(f"Uploaded data pod to Pintheon: {data_pod_result.get('Hash')}")
