@@ -2083,12 +2083,15 @@ async def process_aposematic():
                     img_path
                 )
 
-            # I/O-bound: network request to IPFS (using pure version)
+            # I/O-bound: upload to IPFS and store locally for display
             ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, aposematic_img_path)
 
             if not ipfs_hash:
                 ui.notify(f"Failed to upload to IPFS", type="negative")
                 continue
+
+            # Store locally so the image can be served via /editor/ URL
+            _, _, editor_url = await run.io_bound(_local_store_image_pure, aposematic_img_path)
 
             app.storage.user["aposematic_img_hashes"].append(ipfs_hash)
 
@@ -2096,6 +2099,7 @@ async def process_aposematic():
             app.storage.user[ipfs_hash] = {
                 "path": aposematic_img_path,
                 "name": f"aposematic_{img_name}",
+                "editor_url": editor_url,
                 "original_hash": hash_value,
                 "has_audio": img_info.get("has_audio", False),
                 "audio_path": img_info.get("audio_path"),
@@ -2191,12 +2195,15 @@ async def process_enciphering():
                 # CRITICAL: Do NOT re-embed audio for enciphered images
                 # Modifying the PNG would destroy the enciphered data
 
-            # I/O-bound: network request to IPFS (using pure version)
+            # I/O-bound: upload to IPFS and store locally for display
             ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, enciphered_img_path)
 
             if not ipfs_hash:
                 ui.notify(f"Failed to upload to IPFS", type="negative")
                 continue
+
+            # Store locally so the image can be served via /editor/ URL
+            _, _, editor_url = await run.io_bound(_local_store_image_pure, enciphered_img_path)
 
             app.storage.user["enciphered_img_hashes"].append(ipfs_hash)
 
@@ -2204,6 +2211,7 @@ async def process_enciphering():
             app.storage.user[ipfs_hash] = {
                 "path": enciphered_img_path,
                 "name": f"enciphered_{img_name}",
+                "editor_url": editor_url,
                 "original_hash": hash_value,
                 "has_audio": img_info.get("has_audio", False),
                 "audio_path": img_info.get("audio_path"),
@@ -2269,18 +2277,22 @@ async def process_deciphering():
             cipher_key,  # cipher_key
         )
 
-        # I/O-bound: network request to IPFS (using pure version)
+        # I/O-bound: upload to IPFS and store locally for display
         ipfs_hash, _, _ = await run.io_bound(_ipfs_add_pure, deciphered_img_path)
 
         if not ipfs_hash:
             ui.notify(f"Failed to upload to IPFS", type="negative")
             continue
 
+        # Store locally so the image can be served via /editor/ URL
+        _, _, editor_url = await run.io_bound(_local_store_image_pure, deciphered_img_path)
+
         app.storage.user["deciphered_img_hashes"].append(ipfs_hash)
         # Store basic info for the deciphered hash
         app.storage.user[ipfs_hash] = {
             "path": deciphered_img_path,
             "name": f"deciphered_{os.path.basename(img_path)}",
+            "editor_url": editor_url,
             "original_hash": hash_value,
         }
         ui.notify(f"Deciphered {hash_value}")
@@ -3214,12 +3226,12 @@ def render_gallery(folder=None):
                     print(f"[DEBUG render_gallery] hash={hash_value}, file_info={file_info}")
                     print(f"[DEBUG render_gallery] has_audio={file_info.get('has_audio', False)}")
 
-                    # Use local editor URL for raw/processed, IPFS for protected images
+                    # Use local editor URL when available, IPFS gateway as fallback
                     editor_url = file_info.get("editor_url")
                     # Read IPFS gateway settings from storage (user may have changed them)
                     _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
                     _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
-                    if editor_url and state in ("raw", "processed"):
+                    if editor_url:
                         img_url = editor_url
                     elif folder:
                         img_url = (
