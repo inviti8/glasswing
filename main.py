@@ -976,7 +976,7 @@ def _pintheon_url():
 def is_pintheon_running():
     """Check if the Pintheon node is running and accessible."""
     try:
-        response = requests.get(f"{_pintheon_url()}/", timeout=5)
+        response = requests.get(f"{_pintheon_url()}/", timeout=5, verify=False)
         return response.status_code == 200
     except (requests.exceptions.RequestException, ValueError):
         return False
@@ -1006,7 +1006,7 @@ def pintheon_create_directory(name, access_token=None):
     try:
         url = f"{_pintheon_url()}/api_create_directory"
         data = {"access_token": access_token, "name": name}
-        response = requests.post(url, data=data, timeout=30)
+        response = requests.post(url, data=data, timeout=30, verify=False)
 
         if response.status_code == 200:
             result = response.json()
@@ -1064,7 +1064,7 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
             if directory:
                 data["directory"] = directory
 
-            response = requests.post(url, files=files, data=data, timeout=60)
+            response = requests.post(url, files=files, data=data, timeout=60, verify=False)
 
         if response.status_code == 200:
             result = response.json()
@@ -1106,7 +1106,7 @@ def pintheon_list_directories(access_token=None):
     try:
         url = f"{_pintheon_url()}/api_list_directories"
         data = {"access_token": access_token}
-        response = requests.post(url, data=data, timeout=30)
+        response = requests.post(url, data=data, timeout=30, verify=False)
 
         if response.status_code == 200:
             result = response.json()
