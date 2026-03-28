@@ -966,10 +966,17 @@ def url_valid(url):
         return False
 
 
+def _pintheon_url():
+    """Return the Pintheon base URL from user settings or defaults."""
+    host = app.storage.user.get("pintheon_endpoint", pintheon_endpoint)
+    p = app.storage.user.get("pintheon_port", pintheon_port)
+    return f"{host}:{p}"
+
+
 def is_pintheon_running():
     """Check if the Pintheon node is running and accessible."""
     try:
-        response = requests.get(f"{pintheon_endpoint}:{pintheon_port}/", timeout=5)
+        response = requests.get(f"{_pintheon_url()}/", timeout=5)
         return response.status_code == 200
     except (requests.exceptions.RequestException, ValueError):
         return False
@@ -997,7 +1004,7 @@ def pintheon_create_directory(name, access_token=None):
             return None
 
     try:
-        url = f"{pintheon_endpoint}:{pintheon_port}/api_create_directory"
+        url = f"{_pintheon_url()}/api_create_directory"
         data = {"access_token": access_token, "name": name}
         response = requests.post(url, data=data, timeout=30)
 
@@ -1046,7 +1053,7 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         return None
 
     try:
-        url = f"{pintheon_endpoint}:{pintheon_port}/api_upload"
+        url = f"{_pintheon_url()}/api_upload"
 
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f)}
@@ -1097,7 +1104,7 @@ def pintheon_list_directories(access_token=None):
             return None
 
     try:
-        url = f"{pintheon_endpoint}:{pintheon_port}/api_list_directories"
+        url = f"{_pintheon_url()}/api_list_directories"
         data = {"access_token": access_token}
         response = requests.post(url, data=data, timeout=30)
 
