@@ -392,9 +392,13 @@ def init():
             app.storage.user["watermark_size"] = data["watermark_size"]
             app.storage.user["watermark_position"] = data["watermark_position"]
             app.storage.user["watermark_padding"] = data["watermark_padding"]
-            # Restore watermark file into session temp dir if source still exists
+            # Restore watermark file into session temp dir
             wm_hash = data.get("watermark")
             wm_source_path = data.get("watermark_path")
+            wm_b64 = data.get("watermark_b64")
+            app.storage.user["watermark_b64"] = wm_b64
+            wm_restored = False
+            # Try local file first
             if wm_hash and wm_source_path and os.path.exists(wm_source_path):
                 restored_hash, restored_name, restored_url = _local_store_image_pure(wm_source_path)
                 if restored_hash:
@@ -406,6 +410,21 @@ def init():
                     if restored_hash != wm_hash:
                         app.storage.user["watermark"] = restored_hash
                     print(f"Watermark restored from {wm_source_path}")
+                    wm_restored = True
+            # Fall back to b64 data if local file is gone
+            if not wm_restored and wm_b64:
+                temp_path = os.path.join(tempfile.gettempdir(), "watermark_restore.png")
+                with open(temp_path, "wb") as f:
+                    f.write(base64.b64decode(wm_b64))
+                restored_hash, restored_name, restored_url = _local_store_image_pure(temp_path)
+                if restored_hash:
+                    app.storage.user["watermark"] = restored_hash
+                    app.storage.user[restored_hash] = {
+                        "name": restored_name,
+                        "path": temp_path,
+                        "editor_url": restored_url,
+                    }
+                    print(f"Watermark restored from b64 data")
             app.storage.user["scramble_mode"] = data["scramble_mode"]
             app.storage.user["op_string"] = data["op_string"]
             app.storage.user["use_iptc"] = data["use_iptc"]
@@ -668,6 +687,7 @@ def persistent_save_data():
                 "use_watermark": use_watermark,
                 "watermark": watermark,
                 "watermark_path": watermark_path,
+                "watermark_b64": app.storage.user.get("watermark_b64"),
                 "watermark_size": watermark_size,
                 "watermark_position": watermark_position,
                 "watermark_padding": watermark_padding,
@@ -1718,13 +1738,17 @@ async def choose_watermark(watermark_container):
     files = await app.native.main_window.create_file_dialog(allow_multiple=True)
     file = files[0]
     if is_image(file):
-        # Store watermark locally in session temp dir (not IPFS)
+        # Store watermark locally in session temp dir
         content_hash, file_name, editor_url = _local_store_image_pure(file)
         if not content_hash:
             ui.notify("Failed to store watermark", type="negative")
             return
+        # Base64 encode for persistence in data.json
+        with open(file, "rb") as f:
+            wm_b64 = base64.b64encode(f.read()).decode("ascii")
         app.storage.user["watermark"] = content_hash
         app.storage.user["watermark_path"] = file
+        app.storage.user["watermark_b64"] = wm_b64
         app.storage.user[content_hash] = {
             "name": file_name,
             "path": file,
@@ -4786,6 +4810,37 @@ def main_page():
                                         on_click=lambda: [
                                             ui.clipboard.write(stellar_secret),
                                             ui.notify("Copied App Secret"),
+                                        ],
+                                    ).classes("w-10").props("flat color=primary")
+
+                        with ui.card().classes("w-full"):
+                            with ui.expansion("Developer").classes("w-full"):
+                                debug_pub = app.storage.user.get("debug_public_key", "")
+                                debug_sec = app.storage.user.get("debug_secret", "")
+                                with ui.row().classes("w-full items-center"):
+                                    ui.input(
+                                        "Debug Public Key", value=debug_pub
+                                    ).classes("grow").props("disable")
+                                    ui.button(
+                                        icon="copy_all",
+                                        on_click=lambda: [
+                                            ui.clipboard.write(
+                                                app.storage.user.get("debug_public_key", "")
+                                            ),
+                                            ui.notify("Copied Debug Public Key"),
+                                        ],
+                                    ).classes("w-10").props("flat color=primary")
+                                with ui.row().classes("w-full items-center"):
+                                    ui.input(
+                                        "Debug Secret", value=debug_sec, password=True
+                                    ).classes("grow").props("disable")
+                                    ui.button(
+                                        icon="copy_all",
+                                        on_click=lambda: [
+                                            ui.clipboard.write(
+                                                app.storage.user.get("debug_secret", "")
+                                            ),
+                                            ui.notify("Copied Debug Secret"),
                                         ],
                                     ).classes("w-10").props("flat color=primary")
 
