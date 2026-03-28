@@ -522,6 +522,12 @@ def init():
             if "ipfs_port" in data:
                 app.storage.user["port"] = data["ipfs_port"]
 
+    # Auto-detect IPFS gateway port from the running daemon
+    if is_ipfs_running():
+        detected_gw_port = detect_ipfs_gateway_port()
+        if detected_gw_port:
+            app.storage.user["ipfs_webui_port"] = detected_gw_port
+
     stellar_keys = Keypair.from_secret(stellar_secret)
     hvym_keys = Stellar25519KeyPair(stellar_keys)
     hvym_public_key = hvym_keys.public_key()
@@ -904,6 +910,32 @@ def is_ipfs_running():
         return response.status_code == 200 and "Version" in response.json()
     except (requests.exceptions.RequestException, ValueError):
         return False
+
+
+def detect_ipfs_gateway_port():
+    """Query the IPFS API for the configured gateway port.
+
+    Returns:
+        str: The gateway port (e.g. '8080'), or None if detection fails.
+    """
+    try:
+        response = requests.post(
+            f"{ipfs_endpoint}:{port}/api/v0/config",
+            params={"arg": "Addresses.Gateway"},
+            timeout=5,
+        )
+        if response.status_code == 200:
+            # Response is {"Key":"Addresses.Gateway","Value":"/ip4/127.0.0.1/tcp/8080"}
+            value = response.json().get("Value", "")
+            # Extract port from multiaddr like /ip4/127.0.0.1/tcp/8080
+            parts = value.split("/")
+            if "tcp" in parts:
+                detected_port = parts[parts.index("tcp") + 1]
+                print(f"Detected IPFS gateway port: {detected_port}")
+                return detected_port
+    except (requests.exceptions.RequestException, ValueError, IndexError) as e:
+        print(f"Could not detect IPFS gateway port: {e}")
+    return None
 
 
 def url_valid(url):
