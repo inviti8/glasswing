@@ -332,7 +332,7 @@ def validate_img_state() -> tuple:
     return idex, img_states[idex]
 
 
-def init(restore_secret=None):
+def init():
     global _INITIALIZED
     if _INITIALIZED:
         return
@@ -478,9 +478,8 @@ def init(restore_secret=None):
             if "ipfs_port" in data:
                 app.storage.user["port"] = data["ipfs_port"]
     else:
-        # First run — use restored secret or generate new one
-        if restore_secret:
-            app.storage.user["stellar_secret"] = restore_secret
+        # First run — generate a random key (RESTORE dialog may replace it after page loads)
+        app.storage.user["_first_run"] = True
         # Initialize app_colors with defaults before calling persistent_save_data()
         app.storage.user["app_colors"] = {
             "primary": PRIMARY_COLOR,
@@ -4125,7 +4124,7 @@ def close_app():
 
 
 async def _first_run_dialog():
-    """Show NEW / RESTORE dialog on first launch. Returns the stellar secret to use."""
+    """Show NEW / RESTORE dialog on first launch. Replaces app key if user restores."""
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Welcome to Andromica").classes("text-xl font-bold")
         ui.label("No existing data found. Create a new identity or restore from a Stellar secret key.")
@@ -4134,34 +4133,44 @@ async def _first_run_dialog():
             ui.button("RESTORE", on_click=lambda: dialog.submit("restore"))
 
     choice = await dialog
-    if choice == "restore":
-        with ui.dialog() as restore_dialog, ui.card().classes("w-96"):
-            ui.label("Restore Identity").classes("text-lg font-bold")
-            ui.label("Enter your Stellar secret key (starts with S...)")
-            secret_input = ui.input("Stellar Secret", password=True).classes("w-full")
-            error_label = ui.label("").classes("text-negative")
+    if choice != "restore":
+        return
 
-            async def do_restore():
-                secret = secret_input.value.strip()
-                if not secret:
-                    error_label.text = "Please enter a secret key"
-                    return
-                try:
-                    Keypair.from_secret(secret)
-                    restore_dialog.submit(secret)
-                except Exception:
-                    error_label.text = "Invalid Stellar secret key"
+    with ui.dialog() as restore_dialog, ui.card().classes("w-96"):
+        ui.label("Restore Identity").classes("text-lg font-bold")
+        ui.label("Enter your Stellar secret key (starts with S...)")
+        secret_input = ui.input("Stellar Secret", password=True).classes("w-full")
+        error_label = ui.label("").classes("text-negative")
 
-            with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                ui.button("Cancel", on_click=lambda: restore_dialog.submit(None)).props("flat")
-                ui.button("RESTORE", on_click=do_restore)
+        async def do_restore():
+            secret = secret_input.value.strip()
+            if not secret:
+                error_label.text = "Please enter a secret key"
+                return
+            try:
+                Keypair.from_secret(secret)
+                restore_dialog.submit(secret)
+            except Exception:
+                error_label.text = "Invalid Stellar secret key"
 
-        return await restore_dialog
-    return None  # NEW — let init() generate a random key
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Cancel", on_click=lambda: restore_dialog.submit(None)).props("flat")
+            ui.button("RESTORE", on_click=do_restore)
+
+    secret = await restore_dialog
+    if secret:
+        # Replace the auto-generated key with the restored one
+        app.storage.user["stellar_secret"] = secret
+        stellar_keys = Keypair.from_secret(secret)
+        hvym_keys = Stellar25519KeyPair(stellar_keys)
+        hvym_public_key = hvym_keys.public_key()
+        app.storage.user["hvym_public_key"] = hvym_public_key
+        persistent_save_data()
+        ui.notify(f"Identity restored: {hvym_public_key[:16]}...")
 
 
 @ui.page("/")
-async def main_page():
+def main_page():
     # Add Lottie player script to the head
     ui.add_head_html("""
         <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
@@ -4356,13 +4365,12 @@ async def main_page():
         }}
     """)
 
-    # First-run dialog: show NEW/RESTORE choice if no data.json exists
-    data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.json")
-    restore_secret = None
-    if not os.path.exists(data_file):
-        restore_secret = await _first_run_dialog()
+    init()
 
-    init(restore_secret)
+    # Show first-run dialog after the page renders (timer ensures page is loaded first)
+    if app.storage.user.get("_first_run"):
+        app.storage.user.pop("_first_run", None)
+        ui.timer(0.1, _first_run_dialog, once=True)
 
     # Create state for toggling header/footer visibility
     show_header_footer = True
