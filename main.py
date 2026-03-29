@@ -1035,7 +1035,7 @@ def pintheon_create_directory(name, access_token=None, base_url=None):
         return None
 
 
-def pintheon_upload_file(file_path, directory=None, encrypted=False, access_token=None, base_url=None):
+def pintheon_upload_file(file_path, directory=None, encrypted=False, access_token=None, base_url=None, upload_name=None):
     """
     Upload a file to the Pintheon node using the API.
 
@@ -1045,6 +1045,7 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         encrypted (bool): Whether to encrypt the file
         access_token (str): Optional access token. If not provided, will try to get from app storage.
         base_url (str): Pre-resolved Pintheon URL (for use outside UI context).
+        upload_name (str): Override filename for the upload (defaults to basename of file_path).
 
     Returns:
         dict: File info dict with Name, Type, Hash, Size, or None on failure
@@ -1067,7 +1068,7 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
         url = f"{_pintheon_url(base_url)}/api_upload"
 
         with open(file_path, "rb") as f:
-            files = {"file": (os.path.basename(file_path), f)}
+            files = {"file": (upload_name or os.path.basename(file_path), f)}
             data = {
                 "access_token": access_token,
                 "encrypted": "true" if encrypted else "false",
@@ -2654,7 +2655,7 @@ async def process_pintheon_deploy_gallery():
             # I/O-bound: upload file (pass access_token and base_url to avoid storage access)
             result = await run.io_bound(
                 pintheon_upload_file,
-                file_path, directory_name, False, access_token, pin_url
+                file_path, directory_name, False, access_token, pin_url, file_name
             )
             if result:
                 uploaded_files.append(result)
