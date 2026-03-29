@@ -1136,6 +1136,31 @@ def pintheon_list_directories(access_token=None, base_url=None):
         return None
 
 
+def pintheon_get_directory_ipns(directory, access_token=None, base_url=None):
+    """Get the IPNS hash for a Pintheon directory."""
+    if not is_pintheon_running(base_url):
+        return None
+
+    if not access_token:
+        access_token = app.storage.user.get("access_token")
+        if not access_token:
+            return None
+
+    try:
+        url = f"{_pintheon_url(base_url)}/api_get_directory_ipns"
+        data = {"access_token": access_token, "directory": directory}
+        response = requests.post(url, data=data, timeout=30, verify=False)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Error getting directory IPNS: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting directory IPNS: {e}")
+        return None
+
+
 def ipns_folder_exists(folder):
     """
     Check if a folder exists in IPFS MFS.
@@ -2656,19 +2681,42 @@ async def process_pintheon_deploy_gallery():
         else:
             ui.notify("Failed to upload data pod to Pintheon", type="warning")
 
-        # Report results
-        if failed_uploads:
-            ui.notify(
-                f"Pintheon deployment complete with {len(failed_uploads)} failures. {len(uploaded_files)} files uploaded.",
-                type="warning",
-            )
-        else:
-            ui.notify(
-                f"Successfully deployed {len(uploaded_files)} files to Pintheon!",
-                type="positive",
-            )
+        # Get the IPNS hash for the directory
+        ipns_hash = None
+        ipns_result = await run.io_bound(
+            pintheon_get_directory_ipns, directory_name, access_token, pin_url
+        )
+        if ipns_result:
+            ipns_hash = ipns_result.get("ipns_hash")
 
-        ui.notify("Gallery ready - switch to BROWSER tab to view", type="positive")
+        # Show deployment summary dialog
+        file_hashes = [r.get("Hash", "?") for r in uploaded_files if r]
+        data_pod_hash = data_pod_result.get("Hash") if data_pod_result else None
+
+        with ui.dialog() as deploy_dialog, ui.card().classes("w-[500px]"):
+            ui.label("Pintheon Deployment Complete").classes("text-lg font-bold")
+            if failed_uploads:
+                ui.label(f"{len(failed_uploads)} file(s) failed to upload").classes("text-negative")
+
+            if ipns_hash:
+                ui.label("IPNS Directory").classes("text-sm font-bold mt-2")
+                with ui.row().classes("w-full items-center"):
+                    ui.input(value=ipns_hash).classes("grow").props("disable dense")
+                    ui.button(icon="copy_all", on_click=lambda: [
+                        ui.clipboard.write(ipns_hash),
+                        ui.notify("Copied IPNS hash"),
+                    ]).classes("w-10").props("flat color=primary")
+
+            ui.label("Uploaded Files").classes("text-sm font-bold mt-2")
+            for h in file_hashes:
+                ui.label(h).classes("text-xs font-mono")
+            if data_pod_hash:
+                ui.label("Data Pod").classes("text-sm font-bold mt-2")
+                ui.label(data_pod_hash).classes("text-xs font-mono")
+
+            ui.button("Close", on_click=deploy_dialog.close).classes("mt-4 self-end")
+
+        deploy_dialog.open()
         persistent_save_data()
 
     except Exception as e:
