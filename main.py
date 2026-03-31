@@ -2767,6 +2767,11 @@ async def add_subscription(label, url, ipns_hash=""):
         ui.notify("Please enter a label and node URL", type="warning")
         return
 
+    # Normalize URL: ensure https:// prefix, strip trailing slash
+    url = url.strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+
     subscriptions = app.storage.user.get("subscriptions", [])
     # Check for duplicate URL
     for sub in subscriptions:
