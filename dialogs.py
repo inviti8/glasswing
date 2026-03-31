@@ -783,10 +783,10 @@ def select_channel_dialog(on_select, fetch_subscription_channels=None):
                                         with ui.column().classes('gap-1'):
                                             ui.label(channel.get('name', 'Unknown Channel')).classes('font-bold')
                                             ui.label(channel.get('description', '')).classes('text-sm text-gray-500')
-                                        ui.button('Select', on_click=lambda c=channel: (
-                                            on_select(sub_name, c),
+                                        async def do_select(c=channel):
                                             dialog.close()
-                                        )).props('flat color=primary')
+                                            await on_select(sub_name, c)
+                                        ui.button('Select', on_click=do_select).props('flat color=primary')
 
                 # Load channels when subscription changes
                 selected_sub.on('update:model-value', lambda: load_channels())
