@@ -208,31 +208,6 @@ For developers and AI assistants:
 
 ---
 
-## FAQ
-
-**Q: How does Digital Aposematism protect against AI?**
-A: Aposematic images are visibly scrambled - if an AI scraper ingests them, it gets corrupted training data. Unlike covert poisoning, this is transparent and ethical. The scrambling is reversible only for authorized subscribers with the correct key.
-
-**Q: Can I post aposematic images on social media?**
-A: Yes! That's a key use case. Aposematic images are valid image files that display normally (just scrambled). Post them anywhere - Instagram, Twitter, your website. Scrapers get poison; your Andromica subscribers see the original.
-
-**Q: Do I need IPFS to use Andromica?**
-A: IPFS is optional but recommended. Without it, you can still create and export galleries manually.
-
-**Q: How do subscribers get access to protected content?**
-A: Subscribers add your Pintheon node URL in their Andromica app. Their App Key automatically discovers their content via the node's `stellar.toml`. No manual hash sharing needed.
-
-**Q: What's the difference between Aposematic and Encrypted?**
-A: Aposematic is for public sharing with AI defense - the image is scrambled but shareable. Encrypted is for maximum privacy - the image is noise until decrypted. Use aposematic for portfolios and social media; use encrypted for premium/sensitive content.
-
-**Q: Can I use Andromica without Pintheon?**
-A: Yes! You can deploy to any IPFS node or export galleries for manual distribution.
-
-**Q: What image formats are supported?**
-A: JPEG, PNG, WebP, and most formats supported by ImageMagick.
-
----
-
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/your-repo/andromica/issues)
@@ -242,7 +217,7 @@ A: JPEG, PNG, WebP, and most formats supported by ImageMagick.
 
 ## License
 
-[Your License Here]
+GNU Affero General Public License v3.0
 
 ---
 
