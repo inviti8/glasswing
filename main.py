@@ -2925,24 +2925,34 @@ async def fetch_subscription_content(label):
         # Try stellar.toml if no cached hash
         if not ipns_hash:
             print(f"[SUBSCRIPTION] Trying stellar.toml resolution...")
-            try:
-                toml_url = f"{node_url.rstrip('/')}/.well-known/stellar.toml"
-                toml_resp = await run.io_bound(
-                    lambda: requests.get(toml_url, timeout=10, verify=False)
-                )
-                if toml_resp.status_code == 200:
-                    import toml as toml_parser
-                    toml_data = toml_parser.loads(toml_resp.text)
-                    sub_dirs = toml_data.get("SUBSCRIBER_DIRECTORIES", {})
-                    ipns_hash = sub_dirs.get(pub_key)
-                    if ipns_hash:
-                        print(f"[SUBSCRIPTION] Resolved from stellar.toml: {ipns_hash}")
+            # Try the provided URL first, then the alternate port (9998↔9999)
+            # stellar.toml is served by Flask (private port), IPNS by gateway (public port)
+            toml_urls = [f"{node_url.rstrip('/')}/.well-known/stellar.toml"]
+            if ':9998' in node_url:
+                toml_urls.append(node_url.replace(':9998', ':9999').rstrip('/') + '/.well-known/stellar.toml')
+            elif ':9999' in node_url:
+                toml_urls.append(node_url.replace(':9999', ':9998').rstrip('/') + '/.well-known/stellar.toml')
+
+            for toml_url in toml_urls:
+                try:
+                    print(f"[SUBSCRIPTION] Trying: {toml_url}")
+                    toml_resp = await run.io_bound(
+                        lambda url=toml_url: requests.get(url, timeout=10, verify=False)
+                    )
+                    if toml_resp.status_code == 200:
+                        import toml as toml_parser
+                        toml_data = toml_parser.loads(toml_resp.text)
+                        sub_dirs = toml_data.get("SUBSCRIBER_DIRECTORIES", {})
+                        ipns_hash = sub_dirs.get(pub_key)
+                        if ipns_hash:
+                            print(f"[SUBSCRIPTION] Resolved from stellar.toml: {ipns_hash}")
+                            break
+                        else:
+                            print(f"[SUBSCRIPTION] Key not found in stellar.toml. Available: {list(sub_dirs.keys())[:5]}")
                     else:
-                        print(f"[SUBSCRIPTION] Key not found in stellar.toml. Available: {list(sub_dirs.keys())[:5]}")
-                else:
-                    print(f"[SUBSCRIPTION] stellar.toml fetch failed: {toml_resp.status_code}")
-            except Exception as e:
-                print(f"[SUBSCRIPTION] stellar.toml resolution failed: {e}")
+                        print(f"[SUBSCRIPTION] stellar.toml at {toml_url}: {toml_resp.status_code}")
+                except Exception as e:
+                    print(f"[SUBSCRIPTION] stellar.toml at {toml_url} failed: {e}")
 
         # Fallback: try IPFS key list API
         if not ipns_hash:
@@ -2975,7 +2985,12 @@ async def fetch_subscription_content(label):
         app.storage.user["subscriptions"] = subscriptions
 
         # Step 2: Fetch the IPNS directory listing
-        dir_url = f"{node_url.rstrip('/')}/ipns/{ipns_hash}/"
+        # IPNS content is served on the public gateway port (9998 locally).
+        # If the subscription URL uses the private port (9999), swap to 9998.
+        gateway_url = node_url.rstrip('/')
+        if ':9999' in gateway_url:
+            gateway_url = gateway_url.replace(':9999', ':9998')
+        dir_url = f"{gateway_url}/ipns/{ipns_hash}/"
         print(f"[SUBSCRIPTION] Fetching directory: {dir_url}")
 
         dir_resp = await run.io_bound(
@@ -2986,7 +3001,7 @@ async def fetch_subscription_content(label):
             return None
 
         # Step 3: Parse directory and find ALL datapod JSON files
-        file_links = _parse_ipfs_directory_links(dir_resp.text, node_url.rstrip('/'))
+        file_links = _parse_ipfs_directory_links(dir_resp.text, gateway_url)
         data_pod_links = [f for f in file_links if f["name"].endswith(".json")]
         image_links = [f for f in file_links if f["name"].endswith(".png")]
 
@@ -3011,7 +3026,7 @@ async def fetch_subscription_content(label):
                         href = rendition.get("href", "")
                         if "/ipfs/" in href:
                             cid = href.split("/ipfs/")[-1]
-                            rendition["href"] = f"{node_url.rstrip('/')}/ipfs/{cid}"
+                            rendition["href"] = f"{gateway_url}/ipfs/{cid}"
                 data_pods.append({
                     "name": pod_link["name"],
                     "data": data_pod,
