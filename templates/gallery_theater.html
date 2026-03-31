@@ -300,14 +300,19 @@
         var desc = document.getElementById('featured-description');
         var audioWrap = document.getElementById('featured-audio');
 
-        // Update player content
+        // Update player content — show image with play overlay, click to play
+        var imgHtml = item.imgSrc ? '<img src="' + item.imgSrc + '" alt="' + item.title + '">' : '';
         if (item.hasVideo && item.videoSrc) {
-            player.innerHTML = '<video id="featured-video" controls autoplay class="featured-video">' +
-                '<source src="' + item.videoSrc + '" type="video/' + item.videoFormat + '">' +
-                '</video>';
+            player.innerHTML = imgHtml +
+                '<div class="featured-play-overlay"><div class="featured-play-icon">' + PLAY_ICON.replace('1em', '2em') + '</div></div>';
+            player.onclick = function() {
+                player.innerHTML = '<video id="featured-video" controls autoplay class="featured-video">' +
+                    '<source src="' + item.videoSrc + '" type="video/' + item.videoFormat + '">' +
+                    '</video>';
+                player.onclick = null;
+            };
         } else {
-            player.innerHTML = (item.imgSrc ? '<img src="' + item.imgSrc + '" alt="' + item.title + '">' : '') +
-                (item.hasVideo ? '<div class="featured-play-overlay"><div class="featured-play-icon">' + PLAY_ICON.replace('1em', '2em') + '</div></div>' : '');
+            player.innerHTML = imgHtml;
             player.onclick = null;
         }
 
