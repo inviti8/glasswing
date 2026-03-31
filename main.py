@@ -3327,9 +3327,6 @@ async def select_channel(subscription_label, channel_info):
         type="positive",
     )
 
-    else:
-        ui.notify("No content available for this channel", type="warning")
-
 
 async def load_iptc_template():
     try:
