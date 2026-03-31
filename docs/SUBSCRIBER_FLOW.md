@@ -12,7 +12,35 @@ The subscriber does NOT need to enter a private key. Andromica already knows the
 
 - **Publisher flow** (working): Creates data pod, uploads images + data pod to Pintheon, directory named by subscriber's public key
 - **Local debug flow** (working): Creates and decrypts data pod locally using debug keys, renders in browser tab
-- **Subscriber flow** (missing): No mechanism for a subscriber to connect to a Pintheon node, discover their content, download, decrypt, and view it
+- **Subscriber flow** (scaffolded, incomplete): UI and handler skeleton exists but needs wiring
+
+### Existing Subscriber Skeleton
+
+**Browser mode FAB buttons** (main.py ~line 4660):
+- "View Subscriptions" → `view_subscriptions_dialog()` — lists saved subscriptions with fetch/remove
+- "Add Subscription" → `add_subscription_dialog()` — name, URL, IPNS hash inputs
+- "Select Channel" → `select_channel_dialog()` — pick subscription, load channels, select one to render
+
+**Dialog implementations** (dialogs.py lines 649-796):
+- `add_subscription_dialog(on_save)` — collects name, node URL, IPNS hash
+- `view_subscriptions_dialog(fetch_fn, remove_fn)` — lists subs with sync/delete buttons
+- `select_channel_dialog(on_select, fetch_channels_fn)` — subscription dropdown + channel list
+
+**Handler functions** (main.py):
+- `add_subscription(name, url, ipns_hash)` (line 2753) — saves to storage
+- `remove_subscription(name)` (line 2774) — removes from storage
+- `fetch_subscription_content(name)` (line 2788) — fetches IPNS content (basic, needs work)
+- `fetch_subscription_channels(name)` (line 2869) — parses directory for data pods (basic, needs work)
+- `select_channel(name, channel_info)` (line 3162) — renders data pod in browser (partially implemented)
+
+### What's Missing
+
+1. **Add Subscription dialog** still asks for IPNS hash — should be auto-derived from App Key
+2. **fetch_subscription_content** does a basic GET but doesn't download individual files or find the data pod JSON
+3. **fetch_subscription_channels** parses response but doesn't handle IPFS directory listings properly
+4. **select_channel** calls `decode_protected_images` which may not exist; should use `process_data_pod_locally`
+5. **No SSL verify=False** on subscription requests (Pintheon uses self-signed certs)
+6. Image references in data pod use creator's local gateway URL — need to be resolved via the subscription's node gateway
 
 ## Subscription Flow
 
@@ -168,12 +196,35 @@ No IPNS hash needs to be shared manually — the subscriber's identity IS the lo
 
 ## Implementation Steps
 
-1. **Subscription storage**: Define subscription data structure, persist in data.json
-2. **Browser Settings UI**: Add subscription management (add/remove/list)
-3. **Content fetching**: Download data pod and images from Pintheon gateway via IPNS
-4. **Decryption**: Wire up `process_data_pod_locally()` with subscriber's App Key
-5. **Rendering**: Display in browser iframe using existing `render_gallery_html()`
-6. **Refresh/polling**: Manual refresh button, optional auto-refresh interval
+### Phase 1: Fix Add Subscription dialog
+- Remove IPNS hash input from `add_subscription_dialog` — it's not needed
+- Subscriber only enters: node URL + friendly label
+- On save, Andromica derives the subscriber's public key and queries the node
+  for the IPNS directory matching that key
+
+### Phase 2: Content fetching (`fetch_subscription_content`)
+- Query the node's public gateway to resolve the IPNS directory
+- Parse the directory listing to find `ninjs_data_pod_*.json` files
+- Download the data pod JSON
+- Download each image referenced in the data pod's `renditions[].href`
+- Rewrite hrefs to point to locally downloaded temp files or local IPFS
+- Handle SSL (verify=False for local Pintheon nodes)
+
+### Phase 3: Decryption
+- Replace `decode_protected_images` with `process_data_pod_locally()` in `select_channel`
+- Pass `subscriber_secret=app.storage.user["stellar_secret"]` (the App Key)
+- Creator public key comes from `data_pod["creator_public_key"]`
+
+### Phase 4: Rendering
+- `select_channel` already renders via gallery.html template — needs minor fixes
+- Gateway URL should point to subscription's node, not local IPFS
+- Ensure `render_gallery_html()` is used consistently
+
+### Phase 5: Polish
+- Browser Settings panel: show subscription list (currently placeholder)
+- Auto-fetch when BROWSER tab is opened
+- Show loading indicator during fetch/decrypt
+- Persist `fetched_subscriptions` with timestamps in data.json
 
 ## Dependencies
 
