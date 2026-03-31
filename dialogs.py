@@ -662,12 +662,8 @@ async def add_subscription_dialog(on_save):
                                      placeholder='e.g., https://mypublisher.pintheon.com') \
                     .classes('w-full')
 
-                ipns_input = ui.input('IPNS Hash (from publisher)',
-                                      placeholder='e.g., k51qzi5uqu5d...') \
-                    .classes('w-full')
-
             async def do_subscribe():
-                await on_save(label_input.value, url_input.value, ipns_input.value)
+                await on_save(label_input.value, url_input.value)
                 dialog.close()
 
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
