@@ -71,6 +71,13 @@
             transition: transform 0.2s;
         }
         .featured-player:hover .featured-play-icon { transform: scale(1.1); }
+        .featured-video {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border-radius: 12px;
+            background: #000;
+        }
         .featured-info {
             max-width: 1200px;
             margin: 0 auto;
@@ -255,74 +262,104 @@
         {% endif %}
     </div>
 
-    {# Find the featured item: first video item, or first item #}
-    {% set featured = namespace(item=data_pod['items'][0]) %}
+    {# Build items data for JS-driven featured player #}
+    <script>
+    var theaterItems = [
     {% for item in data_pod['items'] %}
-        {% if item.hasVideo and not featured.found is defined %}
-            {% set featured.item = item %}
-            {% set featured.found = true %}
-        {% endif %}
+    {
+        index: {{ loop.index0 }},
+        title: {{ (item.headline or 'Untitled')|tojson }},
+        description: {{ (item.description_text or '')|tojson }},
+        byline: {{ (item.byline|join(', ') if item.byline is iterable and item.byline is not string else (item.byline or ''))|tojson }},
+        copyright: {{ (item.copyrightnotice or '')|tojson }},
+        imgSrc: {{ (item.renditions[0].href if item.renditions and item.renditions|length > 0 else '')|tojson }},
+        hasVideo: {{ 'true' if item.hasVideo else 'false' }},
+        videoSrc: {{ (item.video.src if item.video and item.video.src else '')|tojson }},
+        videoFormat: {{ (item.video.format if item.video and item.video.format else 'mp4')|tojson }},
+        hasAudio: {{ 'true' if item.hasAudio else 'false' }},
+        audioData: {{ (item.audio.data if item.audio and item.audio.data else '')|tojson }},
+        audioFormat: {{ (item.audio.format if item.audio and item.audio.format else 'wav')|tojson }},
+    },
     {% endfor %}
+    ];
+
+    // Find initial featured index (first video item, or 0)
+    var featuredIndex = 0;
+    for (var i = 0; i < theaterItems.length; i++) {
+        if (theaterItems[i].hasVideo) { featuredIndex = i; break; }
+    }
+
+    function selectFeatured(idx) {
+        var item = theaterItems[idx];
+        if (!item) return;
+        featuredIndex = idx;
+
+        var player = document.getElementById('featured-player');
+        var title = document.getElementById('featured-title');
+        var meta = document.getElementById('featured-meta');
+        var desc = document.getElementById('featured-description');
+        var audioWrap = document.getElementById('featured-audio');
+
+        // Update player content
+        if (item.hasVideo && item.videoSrc) {
+            player.innerHTML = '<video id="featured-video" controls autoplay class="featured-video">' +
+                '<source src="' + item.videoSrc + '" type="video/' + item.videoFormat + '">' +
+                '</video>';
+        } else {
+            player.innerHTML = (item.imgSrc ? '<img src="' + item.imgSrc + '" alt="' + item.title + '">' : '') +
+                (item.hasVideo ? '<div class="featured-play-overlay"><div class="featured-play-icon">' + PLAY_ICON.replace('1em', '2em') + '</div></div>' : '');
+            player.onclick = null;
+        }
+
+        // Update info
+        title.textContent = item.title;
+        var metaParts = [];
+        if (item.byline) metaParts.push(item.byline);
+        if (item.copyright) metaParts.push(item.copyright);
+        meta.textContent = metaParts.join(' \u2022 ');
+        desc.textContent = item.description || '';
+        desc.style.display = item.description ? '' : 'none';
+
+        // Update audio
+        if (item.hasAudio && item.audioData) {
+            audioWrap.style.display = '';
+            audioWrap.innerHTML = '<div style="display:flex;align-items:center;gap:8px;">' +
+                '<button style="background:{{ colors.primary }};border:none;color:{{ colors.bg }};width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:0.9rem;" ' +
+                'onclick="playPreExtractedAudio(\'' + item.audioData + '\',\'' + item.audioFormat + '\',this)">' + PLAY_ICON + '</button>' +
+                '<span style="font-size:0.85rem;color:{{ colors.text }}66;">Play Audio</span></div>';
+        } else {
+            audioWrap.style.display = 'none';
+        }
+
+        // Scroll to top
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+    </script>
 
     {# Featured player #}
     <div class="featured">
-        <div class="featured-player"
-             {% if featured.item.hasVideo and featured.item.video and featured.item.video.src %}
-             onclick="openVideoPlayer('{{ featured.item.video.src }}', '{{ featured.item.video.format }}', '{{ featured.item.video.metadata.fileName or featured.item.headline }}')"
-             {% endif %}>
-            {% if featured.item.renditions and featured.item.renditions|length > 0 %}
-            <img src="{{ featured.item.renditions[0].href }}" alt="{{ featured.item.headline }}">
-            {% endif %}
-            {% if featured.item.hasVideo %}
-            <div class="featured-play-overlay">
-                <div class="featured-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="2em" height="2em" viewBox="-4 -3 24 24"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg></div>
-            </div>
-            {% endif %}
+        <div class="featured-player" id="featured-player">
+            {# Initial content set by JS on load, but provide static fallback #}
         </div>
     </div>
     <div class="featured-info">
-        <div class="featured-title">{{ featured.item.headline or 'Untitled' }}</div>
-        <div class="featured-meta">
-            {% if featured.item.byline %}{{ featured.item.byline|join(', ') if featured.item.byline is iterable and featured.item.byline is not string else featured.item.byline }}{% endif %}
-            {% if featured.item.copyrightnotice %} &bull; {{ featured.item.copyrightnotice }}{% endif %}
-        </div>
-        {% if featured.item.description_text %}
-        <div class="featured-description">{{ featured.item.description_text }}</div>
-        {% endif %}
+        <div class="featured-title" id="featured-title"></div>
+        <div class="featured-meta" id="featured-meta"></div>
+        <div class="featured-description" id="featured-description"></div>
     </div>
+    <div id="featured-audio" style="max-width:1200px;margin:8px auto 0;padding:0 24px;display:none;"></div>
 
-    {# Featured item audio #}
-    {% if featured.item.hasAudio and featured.item.audio and featured.item.audio.data %}
-    <div style="max-width: 1200px; margin: 8px auto 0; padding: 0 24px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <button style="background: {{ colors.primary }}; border: none; color: {{ colors.bg }}; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 0.9rem;"
-                    onclick="playPreExtractedAudio('{{ featured.item.audio.data }}', '{{ featured.item.audio.format }}', this)"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg></button>
-            <span style="font-size: 0.85rem; color: {{ colors.text }}66;">Play Audio</span>
-        </div>
-    </div>
-    {% endif %}
-
-    {# Featured item markdown #}
-    {% if featured.item.markdown and featured.item.markdown.files %}
-    <details class="markdown-collapse">
-        <summary>&#x1F4DD; Text Content</summary>
-        <div class="markdown-content">
-            {% for md_file in featured.item.markdown.files %}
-            <div>{{ md_file.text_html|safe }}</div>
-            {% endfor %}
-        </div>
-    </details>
-    {% endif %}
+    <script>
+    // Initialize featured player on load
+    selectFeatured(featuredIndex);
+    </script>
 
     {# Thumbnail grid for all items #}
     {% if data_pod['items']|length > 1 %}
     <div class="section-title">All Content</div>
     <div class="thumb-grid">
         {% for item in data_pod['items'] %}
-        <div class="thumb-card"
-             {% if item.hasVideo and item.video and item.video.src %}
-             onclick="openVideoPlayer('{{ item.video.src }}', '{{ item.video.format }}', '{{ item.video.metadata.fileName or item.headline }}')"
-             {% endif %}>
+        <div class="thumb-card" onclick="selectFeatured({{ loop.index0 }})">
             <div class="thumb-img-wrap">
                 {% if item.renditions and item.renditions|length > 0 %}
                 <img src="{{ item.renditions[0].href }}" alt="{{ item.headline }}">
