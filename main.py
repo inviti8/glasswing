@@ -1684,7 +1684,7 @@ def ipfs_remove(hash_value):
 
 def ipfs_gc():
     try:
-        response = requests.post(f"{ipfs_endpoint}:{port}/api/v0/repo/gc")
+        response = requests.post(f"{ipfs_endpoint}:{port}/api/v0/repo/gc", timeout=60)
         if response.status_code == 200:
             try:
                 return response.json()
@@ -1767,30 +1767,27 @@ async def remove_img(hash_value):
     idex = app.storage.user.get("img_state", 1)
     state = img_states[idex]
 
-    # Clean up video token from IPFS if present
-    file_info = app.storage.user.get(hash_value, {})
-    video_cid = file_info.get("video_token_cid")
-    if video_cid and is_ipfs_running():
-        try:
-            ipfs_remove(video_cid)
-            print(f"Unpinned video token CID: {video_cid}")
-        except Exception as e:
-            print(f"Error unpinning video token CID: {e}")
-
-    if state in ("raw", "processed"):
-        # Local session storage — remove from temp dir
-        local_remove_image(hash_value)
-    else:
-        # IPFS-backed (aposematic/enciphered) — unpin and GC
-        ipfs_remove(hash_value)
-        ipfs_gc()
-
+    # Remove from hash list and re-render immediately (responsive UI)
     try:
         app.storage.user.get(f"{state}_img_hashes", []).remove(hash_value)
     except ValueError:
-        pass  # Hash not found, that's okay
-    ui.notify(f"Removed {hash_value}")
+        pass
     render_gallery()
+    ui.notify(f"Removed {hash_value}")
+
+    # Clean up IPFS in background (non-blocking)
+    file_info = app.storage.user.get(hash_value, {})
+    video_cid = file_info.get("video_token_cid")
+
+    if state in ("raw", "processed"):
+        local_remove_image(hash_value)
+    else:
+        # IPFS-backed (aposematic/enciphered) — unpin in background, skip GC
+        if is_ipfs_running():
+            await run.io_bound(ipfs_remove, hash_value)
+            if video_cid:
+                await run.io_bound(ipfs_remove, video_cid)
+                print(f"Unpinned video token CID: {video_cid}")
 
 
 def copy_img(hash_value):
