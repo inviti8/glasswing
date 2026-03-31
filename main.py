@@ -3333,17 +3333,21 @@ async def select_channel(subscription_label, channel_info):
     # Render HTML using the existing gallery template
     html_content = render_gallery_html(processed_data_pod)
 
-    # Store for browser view
-    pending_browser_html = html_content
+    # Load into browser immediately if already on BROWSER tab, otherwise store as pending
     app.storage.user["current_channel"] = {
         "subscription": subscription_label,
         "channel": channel_info.get("name"),
     }
 
-    ui.notify(
-        f"Channel loaded: {channel_info.get('name')}. Switch to BROWSER tab to view.",
-        type="positive",
-    )
+    if update_browser_content and app.storage.user.get("app_mode") == "browser":
+        update_browser_content(html_content)
+        ui.notify(f"Channel loaded: {channel_info.get('name')}", type="positive")
+    else:
+        pending_browser_html = html_content
+        ui.notify(
+            f"Channel loaded: {channel_info.get('name')}. Switch to BROWSER tab to view.",
+            type="positive",
+        )
 
 
 async def load_iptc_template():
