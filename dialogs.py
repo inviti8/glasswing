@@ -662,10 +662,14 @@ async def add_subscription_dialog(on_save):
                                      placeholder='e.g., https://mypublisher.pintheon.com') \
                     .classes('w-full')
 
+                ipns_input = ui.input('IPNS Hash (from publisher)',
+                                      placeholder='e.g., k51qzi5uqu5d...') \
+                    .classes('w-full')
+
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
                 ui.button('Cancel', on_click=dialog.close).props('flat')
                 ui.button('Subscribe', on_click=lambda: (
-                    on_save(label_input.value, url_input.value),
+                    on_save(label_input.value, url_input.value, ipns_input.value),
                     dialog.close()
                 )).props('flat color=primary')
 

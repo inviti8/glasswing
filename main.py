@@ -2750,16 +2750,18 @@ async def get_subscribers():
     return app.storage.user.get("subscribers", [])
 
 
-async def add_subscription(label, url):
+async def add_subscription(label, url, ipns_hash=""):
     """
     Add a subscription to a Pintheon node.
 
     The subscriber's public key (derived from App Key) is the directory name
-    on the Pintheon node. No IPNS hash needed — it's auto-discovered.
+    on the Pintheon node. IPNS hash can be provided by the publisher or
+    auto-discovered if the node's API is accessible.
 
     Args:
         label: User-friendly name for the subscription
         url: Pintheon node URL (e.g., 'https://mypublisher.pintheon.com')
+        ipns_hash: Optional IPNS hash from the publisher's deployment summary
     """
     if not label or not url:
         ui.notify("Please enter a label and node URL", type="warning")
@@ -2776,6 +2778,7 @@ async def add_subscription(label, url):
     subscriptions.append({
         "label": label,
         "url": url.rstrip("/"),
+        "ipns_hash": ipns_hash.strip() if ipns_hash else None,
         "added": datetime.now().isoformat(),
         "last_fetched": None,
         "data_pod_hash": None,
