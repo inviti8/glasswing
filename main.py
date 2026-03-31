@@ -2859,63 +2859,64 @@ async def fetch_subscription_content(label):
     Returns:
         dict with data_pod and metadata, or None on failure
     """
+    print(f"[SUBSCRIPTION] === Starting fetch for '{label}' ===")
     subscription = _find_subscription(label)
     if not subscription:
+        print(f"[SUBSCRIPTION] ERROR: Subscription '{label}' not found in storage")
+        print(f"[SUBSCRIPTION] Available subscriptions: {[s.get('label') for s in app.storage.user.get('subscriptions', [])]}")
         ui.notify(f'Subscription "{label}" not found', type="negative")
         return None
 
     node_url = subscription.get("url")
+    print(f"[SUBSCRIPTION] Subscription data: {subscription}")
     if not node_url:
+        print(f"[SUBSCRIPTION] ERROR: No node URL in subscription")
         ui.notify("Invalid subscription: no node URL", type="negative")
         return None
 
     pub_key = _subscriber_public_key()
     if not pub_key:
+        print(f"[SUBSCRIPTION] ERROR: No App Key / stellar_secret in storage")
         ui.notify("No App Key configured", type="negative")
         return None
+
+    print(f"[SUBSCRIPTION] Subscriber public key: {pub_key}")
 
     try:
         ui.notify(f"Fetching content from {label}...", type="info")
 
-        # Derive the IPNS key name Pintheon uses for this subscriber's directory
         ipns_key_name = _pintheon_ipns_key_name(pub_key)
-        print(f"[SUBSCRIPTION] Node: {node_url}, Key name: {ipns_key_name}")
+        print(f"[SUBSCRIPTION] Derived IPNS key name: {ipns_key_name}")
 
-        # Step 1: Find the IPNS hash for this key by listing the node's keys
-        # We try the IPFS key list API via the gateway
-        # Since the public gateway doesn't expose the key API, we resolve by
-        # fetching the directory listing directly. The IPNS key name IS the
-        # IPFS key name, and the gateway resolves /ipns/<key-id>/.
-        # We need to get the key ID — try listing via the node's IPFS API
-        # on port 5001 (local) or just iterate known keys.
-
-        # For public access, we can use the api_get_directory_ipns endpoint
-        # if we have an access token. Otherwise, fall back to trying the
-        # MFS directory hash directly.
-
-        # Try the IPFS name resolve via the public gateway
-        # The directory name on Pintheon MFS is the subscriber's public key
-        # We need the IPNS hash — check if the subscription has it cached
+        # Step 1: Get IPNS hash — from subscription storage or API discovery
         ipns_hash = subscription.get("ipns_hash")
+        print(f"[SUBSCRIPTION] Stored IPNS hash: {ipns_hash}")
 
         if not ipns_hash:
-            # Try to discover via the node's IPFS API (if accessible)
+            print(f"[SUBSCRIPTION] No IPNS hash stored, trying API discovery...")
             try:
                 api_url = f"{node_url.rstrip('/')}/api/v0/key/list"
+                print(f"[SUBSCRIPTION] Trying key list API: {api_url}")
                 key_resp = await run.io_bound(
                     lambda: requests.post(api_url, timeout=10, verify=False)
                 )
+                print(f"[SUBSCRIPTION] Key list response: {key_resp.status_code}")
                 if key_resp.status_code == 200:
                     keys = key_resp.json().get("Keys", [])
+                    print(f"[SUBSCRIPTION] Found {len(keys)} keys on node")
                     for key in keys:
+                        print(f"[SUBSCRIPTION]   Key: {key.get('Name')} -> {key.get('Id')}")
                         if key.get("Name") == ipns_key_name:
                             ipns_hash = key.get("Id")
-                            print(f"[SUBSCRIPTION] Found IPNS hash: {ipns_hash}")
+                            print(f"[SUBSCRIPTION] Matched! IPNS hash: {ipns_hash}")
                             break
+                else:
+                    print(f"[SUBSCRIPTION] Key list failed: {key_resp.text[:200]}")
             except Exception as e:
                 print(f"[SUBSCRIPTION] Key list API not available: {e}")
 
         if not ipns_hash:
+            print(f"[SUBSCRIPTION] ERROR: Could not determine IPNS hash")
             ui.notify("Could not find IPNS directory for your key on this node", type="negative")
             return None
 
@@ -2929,21 +2930,28 @@ async def fetch_subscription_content(label):
 
         # Step 2: Fetch the IPNS directory listing
         dir_url = f"{node_url.rstrip('/')}/ipns/{ipns_hash}/"
-        print(f"[SUBSCRIPTION] Fetching directory: {dir_url}")
+        print(f"[SUBSCRIPTION] Step 2: Fetching directory: {dir_url}")
 
         dir_resp = await run.io_bound(
             lambda: requests.get(dir_url, timeout=60, verify=False)
         )
+        print(f"[SUBSCRIPTION] Directory response: {dir_resp.status_code}, Content-Type: {dir_resp.headers.get('Content-Type')}")
         if dir_resp.status_code != 200:
+            print(f"[SUBSCRIPTION] Directory fetch failed: {dir_resp.text[:200]}")
             ui.notify(f"Failed to fetch directory: HTTP {dir_resp.status_code}", type="negative")
             return None
 
         # Step 3: Parse directory listing for data pod JSON
         file_links = _parse_ipfs_directory_links(dir_resp.text, node_url.rstrip('/'))
+        print(f"[SUBSCRIPTION] Step 3: Parsed {len(file_links)} links from directory listing")
+        for link in file_links:
+            print(f"[SUBSCRIPTION]   {link['name']} -> {link['href'][:80]}...")
         data_pod_links = [f for f in file_links if f["name"].endswith(".json")]
         image_links = [f for f in file_links if f["name"].endswith(".png")]
 
         if not data_pod_links:
+            print(f"[SUBSCRIPTION] ERROR: No .json files found in directory")
+            print(f"[SUBSCRIPTION] HTML preview: {dir_resp.text[:500]}")
             ui.notify("No data pod found in subscription directory", type="warning")
             return None
 
@@ -2951,17 +2959,19 @@ async def fetch_subscription_content(label):
 
         # Step 4: Download the data pod JSON (use the most recent one)
         data_pod_url = data_pod_links[-1]["href"]
-        print(f"[SUBSCRIPTION] Downloading data pod: {data_pod_url}")
+        print(f"[SUBSCRIPTION] Step 4: Downloading data pod: {data_pod_url}")
 
         pod_resp = await run.io_bound(
             lambda: requests.get(data_pod_url, timeout=30, verify=False)
         )
+        print(f"[SUBSCRIPTION] Data pod response: {pod_resp.status_code}, size: {len(pod_resp.content)}")
         if pod_resp.status_code != 200:
+            print(f"[SUBSCRIPTION] Data pod download failed: {pod_resp.text[:200]}")
             ui.notify("Failed to download data pod", type="negative")
             return None
 
         data_pod = pod_resp.json()
-        print(f"[SUBSCRIPTION] Data pod has {len(data_pod.get('items', []))} items")
+        print(f"[SUBSCRIPTION] Data pod parsed: {len(data_pod.get('items', []))} items, content_type={data_pod.get('content_type')}")
 
         # Step 5: Rewrite image hrefs to point to the subscription node's gateway
         # The data pod was created with the publisher's local gateway URL
@@ -3018,17 +3028,22 @@ async def fetch_subscription_channels(label):
     Returns:
         List of channel info dicts, or empty list on failure
     """
+    print(f"[SUBSCRIPTION] fetch_subscription_channels called for '{label}'")
     fetched = app.storage.user.get("fetched_subscriptions", {}).get(label)
+    print(f"[SUBSCRIPTION] Cached data: {'yes, has data_pod' if fetched and 'data_pod' in fetched else 'no'}")
 
     # If not fetched yet, fetch now
     if not fetched or "data_pod" not in fetched:
+        print(f"[SUBSCRIPTION] No cached data, calling fetch_subscription_content...")
         fetched = await fetch_subscription_content(label)
 
     if not fetched or "data_pod" not in fetched:
+        print(f"[SUBSCRIPTION] fetch_subscription_channels: no data pod available, returning empty")
         return []
 
     data_pod = fetched["data_pod"]
     items = data_pod.get("items", [])
+    print(f"[SUBSCRIPTION] Returning 1 channel with {len(items)} items")
     return [
         {
             "name": data_pod.get("uri", label),
