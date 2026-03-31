@@ -21,7 +21,7 @@ distinct visual style suited to different content types.
 - **Features**: Audio player, video controls, markdown collapse, media badges
 
 ### 2. `gallery_album.html` — Music/Audio Focused
-- **Inspired by**: Spotify, Bandcamp
+- **Inspired by**: music streaming platforms
 - **Style**: Dark background, large hero image (first item), tracklist layout
   below. Audio items displayed as a vertical track list with play buttons,
   duration, and waveform-style progress bars. Non-audio images shown as
@@ -44,8 +44,8 @@ distinct visual style suited to different content types.
   └─────────────────────────────────────────┘
   ```
 
-### 3. `gallery_artstation.html` — Visual Art Focused
-- **Inspired by**: ArtStation, Behance, DeviantArt
+### 3. `gallery_artspace.html` — Visual Art Focused
+- **Inspired by**: art portfolio platforms
 - **Style**: Clean white/dark background, images displayed large with
   generous spacing. Masonry or single-column layout. Focus on image
   quality with minimal UI chrome. Metadata shown on hover or below
@@ -76,7 +76,7 @@ distinct visual style suited to different content types.
   ```
 
 ### 4. `gallery_book.html` — Publication / Reading Focused
-- **Inspired by**: Medium, Substack, e-readers
+- **Inspired by**: long-form publishing platforms, e-readers
 - **Style**: Serif typography, narrow reading column, images inline with
   text. Markdown/text content is primary, images are supporting. Clean
   page-like feel with ample line height and margins.
@@ -172,7 +172,7 @@ GALLERY_TEMPLATES = {
         "description": "Music-focused tracklist layout",
         "icon": "album",
     },
-    "gallery_artstation.html": {
+    "gallery_artspace.html": {
         "name": "Showcase",
         "description": "Full-width art showcase",
         "icon": "palette",
@@ -247,7 +247,7 @@ def render_gallery_html(data_pod: dict) -> str:
 - Waveform-style audio progress bars
 
 ### Phase 3: Showcase Template
-- Create `templates/gallery_artstation.html`
+- Create `templates/gallery_artspace.html`
 - Full-width images, single column
 - Minimal chrome, focus on image quality
 - Hover metadata reveal
