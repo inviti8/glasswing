@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en" style="height: 100%;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ gallery_title or 'Publication' }} - {{ data_pod.uri }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 10000px; margin: 0; padding: 0; }
+        body {
+            font-family: Georgia, 'Times New Roman', serif;
+            background: {{ colors.bg }};
+            color: {{ colors.text }};
+            line-height: 1.8;
+            -webkit-font-smoothing: antialiased;
+        }
+        .publication {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 24px 80px;
+        }
+        .pub-header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 32px;
+            border-bottom: 1px solid {{ colors.border }};
+        }
+        .pub-header h1 {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: {{ colors.text }};
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+        .pub-header .pub-byline {
+            font-size: 1rem;
+            color: {{ colors.text }}88;
+            font-style: italic;
+        }
+        .pub-header .pub-description {
+            font-size: 1rem;
+            color: {{ colors.text }}aa;
+            margin-top: 16px;
+            line-height: 1.7;
+        }
+        .pub-item {
+            margin-bottom: 48px;
+        }
+        .pub-item img {
+            width: 100%;
+            display: block;
+            border-radius: 4px;
+            margin-bottom: 12px;
+        }
+        .pub-item .image-placeholder {
+            width: 100%;
+            min-height: 200px;
+            background: {{ colors.card }};
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+        .pub-item-title {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: {{ colors.text }};
+            margin-bottom: 4px;
+        }
+        .pub-item-meta {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.8rem;
+            color: {{ colors.text }}66;
+            margin-bottom: 16px;
+        }
+        .pub-item-description {
+            font-size: 1.05rem;
+            margin-bottom: 16px;
+        }
+        .audio-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            background: {{ colors.card }};
+            border-radius: 6px;
+            margin-bottom: 16px;
+        }
+        .audio-bar button {
+            background: {{ colors.primary }};
+            border: none;
+            color: {{ colors.bg }};
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .audio-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .audio-bar .audio-label {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.85rem;
+            color: {{ colors.text }}88;
+        }
+        .video-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            background: {{ colors.card }};
+            border-radius: 6px;
+            margin-bottom: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .video-bar:hover { filter: brightness(0.95); }
+        .video-bar .video-icon {
+            font-size: 1.5rem;
+        }
+        .video-bar .video-label {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.85rem;
+            color: {{ colors.text }}88;
+        }
+        .markdown-expanded {
+            margin-bottom: 16px;
+            padding-top: 8px;
+        }
+        .markdown-expanded .markdown-file-label {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.75rem;
+            color: {{ colors.text }}66;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .markdown-expanded h1, .markdown-expanded h2, .markdown-expanded h3, .markdown-expanded h4 {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin-top: 1.2em;
+            margin-bottom: 0.5em;
+            color: {{ colors.text }};
+        }
+        .markdown-expanded p { margin-bottom: 1em; }
+        .markdown-expanded code {
+            background: {{ colors.card }};
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.88em;
+        }
+        .markdown-expanded pre {
+            background: {% if is_dark_mode %}#1a1a2e{% else %}#2d2d2d{% endif %};
+            color: #f8f8f2;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1.2em 0;
+            font-size: 0.9em;
+        }
+        .markdown-expanded pre code { background: none; padding: 0; color: inherit; }
+        .markdown-expanded table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+        .markdown-expanded th, .markdown-expanded td { border: 1px solid {{ colors.border }}; padding: 8px 12px; text-align: left; }
+        .markdown-expanded th { background: {{ colors.card }}; font-weight: 600; }
+        .keyword-pill {
+            display: inline-block;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: {{ colors.primary }}18;
+            color: {{ colors.text }}88;
+            margin: 2px;
+        }
+        .item-separator {
+            border: none;
+            border-top: 1px solid {{ colors.border }};
+            margin: 48px 0;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 120px 20px;
+            color: {{ colors.text }}66;
+        }
+        .video-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+        .video-modal { position: relative; width: 90%; max-width: 900px; }
+        .video-modal-title { color: #fff; font-size: 1.1rem; margin-bottom: 10px; }
+        .video-close-btn { position: absolute; top: -40px; right: 0; background: none; border: none; color: #fff; font-size: 2rem; cursor: pointer; }
+        .video-player { width: 100%; border-radius: 8px; }
+        @media (max-width: 640px) {
+            .publication { padding: 32px 16px 60px; }
+            .pub-header h1 { font-size: 1.6rem; }
+        }
+        @media print {
+            .audio-bar, .video-bar { display: none; }
+            body { background: white; color: black; }
+        }
+    </style>
+    <script>
+    function playPreExtractedAudio(audioData, audioFormat, playButton) {
+        if (playButton) { playButton.disabled = true; playButton.innerHTML = '\u23F3'; }
+        playExtractedAudio(audioData, audioFormat || 'wav', playButton);
+    }
+    function playExtractedAudio(audioData, audioFormat, playButton) {
+        const dataUri = `data:audio/${audioFormat};base64,${audioData}`;
+        const audio = new Audio(dataUri);
+        audio.oncanplay = function() {
+            if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u23F8\uFE0F'; }
+            playButton.onclick = function() {
+                if (audio.paused) { audio.play(); playButton.innerHTML = '\u23F8\uFE0F'; }
+                else { audio.pause(); playButton.innerHTML = '\u25B6\uFE0F'; }
+            };
+            audio.play().catch(() => tryBlobMethod(audioData, audioFormat, playButton));
+        };
+        audio.onerror = function() { tryBlobMethod(audioData, audioFormat, playButton); };
+        audio.onended = function() { if (playButton) playButton.innerHTML = '\u25B6\uFE0F'; };
+    }
+    function tryBlobMethod(audioData, audioFormat, playButton) {
+        try {
+            const byteChars = atob(audioData);
+            const byteArray = new Uint8Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+            const blob = new Blob([byteArray], { type: `audio/${audioFormat}` });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.oncanplay = function() {
+                if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u23F8\uFE0F'; }
+                playButton.onclick = function() {
+                    if (audio.paused) { audio.play(); playButton.innerHTML = '\u23F8\uFE0F'; }
+                    else { audio.pause(); playButton.innerHTML = '\u25B6\uFE0F'; }
+                };
+                audio.play().catch(() => { if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u25B6\uFE0F'; } });
+            };
+            audio.onended = function() { if (playButton) playButton.innerHTML = '\u25B6\uFE0F'; URL.revokeObjectURL(url); };
+        } catch(e) { if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u25B6\uFE0F'; } }
+    }
+    function openVideoPlayer(videoSrc, videoFormat, videoName) {
+        const overlay = document.createElement('div');
+        overlay.className = 'video-overlay';
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        overlay.innerHTML = '<div class="video-modal">' +
+            '<button class="video-close-btn" onclick="this.parentElement.parentElement.remove()">&times;</button>' +
+            (videoName ? '<div class="video-modal-title">' + videoName + '</div>' : '') +
+            '<video controls autoplay class="video-player"><source src="' + videoSrc + '" type="video/' + (videoFormat || 'mp4') + '"></video></div>';
+        document.body.appendChild(overlay);
+        document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); } });
+    }
+    </script>
+</head>
+<body>
+    <div class="publication">
+        <div class="pub-header">
+            <h1>{{ gallery_title or 'Untitled Publication' }}</h1>
+            {% if data_pod['items'] and data_pod['items'][0].byline %}
+            <div class="pub-byline">by {{ data_pod['items'][0].byline|join(', ') if data_pod['items'][0].byline is iterable and data_pod['items'][0].byline is not string else data_pod['items'][0].byline }}</div>
+            {% endif %}
+            {% if gallery_description %}
+            <div class="pub-description">{{ gallery_description }}</div>
+            {% endif %}
+        </div>
+
+        {% if data_pod['items'] %}
+        {% for item in data_pod['items'] %}
+        {% if not loop.first %}<hr class="item-separator">{% endif %}
+
+        <div class="pub-item">
+            {% if item.renditions and item.renditions|length > 0 %}
+            <img src="{{ item.renditions[0].href }}" alt="{{ item.headline }}"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div class="image-placeholder" style="display:none;">&#x1F5BC;&#xFE0F;</div>
+            {% endif %}
+
+            <div class="pub-item-title">{{ item.headline or 'Untitled' }}</div>
+            <div class="pub-item-meta">
+                {% if item.byline %}{{ item.byline|join(', ') if item.byline is iterable and item.byline is not string else item.byline }}{% endif %}
+                {% if item.copyrightnotice %} &bull; {{ item.copyrightnotice }}{% endif %}
+            </div>
+
+            {% if item.description_text %}
+            <div class="pub-item-description">{{ item.description_text }}</div>
+            {% endif %}
+
+            {% if item.hasAudio %}
+            <div class="audio-bar">
+                {% if item.audio and item.audio.data %}
+                <button onclick="playPreExtractedAudio('{{ item.audio.data }}', '{{ item.audio.format }}', this)">&#x25B6;&#xFE0F;</button>
+                {% else %}
+                <button disabled>&#x1F512;</button>
+                {% endif %}
+                <span class="audio-label">
+                    Audio{% if item.audio_format %} ({{ item.audio_format.upper() }}){% endif %}{% if item.audio_duration %} &bull; {{ "%.0f"|format(item.audio_duration // 60) }}:{{ "%02.0f"|format(item.audio_duration % 60) }}{% endif %}
+                </span>
+            </div>
+            {% endif %}
+
+            {% if item.hasVideo and item.video and item.video.src %}
+            <div class="video-bar" onclick="openVideoPlayer('{{ item.video.src }}', '{{ item.video.format }}', '{{ item.video.metadata.fileName or item.headline }}')">
+                <span class="video-icon">&#x1F3AC;</span>
+                <span class="video-label">Watch Video{% if item.video.format %} ({{ item.video.format.upper() }}){% endif %}</span>
+            </div>
+            {% endif %}
+
+            {% if item.markdown and item.markdown.files %}
+            <div class="markdown-expanded">
+                {% for md_file in item.markdown.files %}
+                    {% if item.markdown.files|length > 1 %}
+                    <div class="markdown-file-label">{{ md_file.filename }}</div>
+                    {% endif %}
+                    <div>{{ md_file.text_html|safe }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if item.keywords %}
+            <div style="margin-top: 12px;">
+                {% for keyword in item.keywords %}
+                <span class="keyword-pill">{{ keyword }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state"><h2>No Content</h2><p>This publication doesn't contain any content yet.</p></div>
+        {% endif %}
+    </div>
+</body>
+</html>
