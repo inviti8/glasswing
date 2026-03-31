@@ -2627,8 +2627,8 @@ async def process_pintheon_deploy_gallery():
 
         ui.notify(f"Data pod created, uploading to Pintheon...", type="info")
 
-        # Create directory on Pintheon for this gallery state
-        directory_name = f"gallery_{state}"
+        # Create directory on Pintheon keyed by subscriber's public key
+        directory_name = recipient_public_key
         # I/O-bound: create directory (pass access_token and base_url to avoid storage access)
         dir_result = await run.io_bound(
             pintheon_create_directory, directory_name, access_token, pin_url
