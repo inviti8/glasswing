@@ -5211,11 +5211,20 @@ def main_page():
 
             with ui.card().classes("w-full card-no-border") as browser_settings:
                 ui.label("browser settings").classes("text-md font-medium")
-                with ui.grid(columns=2).classes("w-full"):
-                    # Left column
-                    with ui.column().classes("w-full gap-1"):
-                        with ui.card().classes("w-full"):
-                            ui.label("browser settings").classes("text-md font-medium")
+                with ui.column().classes("w-full gap-1"):
+                    with ui.card().classes("w-full"):
+                        with ui.expansion("Subscriptions").classes("w-full"):
+                            subs = app.storage.user.get("subscriptions", [])
+                            if not subs:
+                                ui.label("No subscriptions yet").classes("text-sm text-gray-500")
+                            else:
+                                for sub in subs:
+                                    with ui.row().classes("w-full items-center justify-between"):
+                                        with ui.column().classes("gap-0"):
+                                            ui.label(sub.get("label", "Unknown")).classes("font-bold text-sm")
+                                            ui.label(sub.get("url", "")).classes("text-xs")
+                                        last = sub.get("last_fetched")
+                                        ui.label(f"Last: {last[:16] if last else 'never'}").classes("text-xs")
 
         with ui.tab_panel("BROWSER"):
             global content_container
