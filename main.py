@@ -4730,12 +4730,46 @@ def main_page():
     # CSS media queries automatically switch between light/dark mode colors
     ui.timer(0.2, apply_theme_colors, once=True)
 
-    # Add a floating button to toggle header/footer visibility
+    # Add floating buttons for header/footer toggle and browser maximize
+    def maximize_browser():
+        ui.run_javascript("""
+            (function() {
+                var existing = document.getElementById('maximize-overlay');
+                if (existing) { existing.remove(); return; }
+                var iframe = document.querySelector('#browser-frame');
+                if (!iframe) return;
+                var overlay = document.createElement('div');
+                overlay.id = 'maximize-overlay';
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99999;background:#000;display:flex;flex-direction:column;';
+                var closeBtn = document.createElement('button');
+                closeBtn.textContent = '\\u2715';
+                closeBtn.style.cssText = 'position:absolute;top:12px;right:16px;z-index:100000;background:rgba(255,255,255,0.15);border:none;color:#fff;font-size:1.5rem;width:40px;height:40px;border-radius:50%;cursor:pointer;';
+                closeBtn.onmouseover = function() { this.style.background='rgba(255,255,255,0.3)'; };
+                closeBtn.onmouseout = function() { this.style.background='rgba(255,255,255,0.15)'; };
+                closeBtn.onclick = function() { overlay.remove(); };
+                var clone = iframe.cloneNode(false);
+                clone.style.cssText = 'width:100%;height:100%;border:none;flex:1;';
+                clone.srcdoc = iframe.srcdoc;
+                overlay.appendChild(closeBtn);
+                overlay.appendChild(clone);
+                document.body.appendChild(overlay);
+                document.addEventListener('keydown', function esc(e) {
+                    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+                });
+            })();
+        """)
+
     fab = ui.button(icon="visibility", color="primary").classes(
         "fixed-bottom-right q-mb-xl q-mr-xl shadow-5"
     )
     fab.style("z-index: 9999; width: 56px; height: 56px; border-radius: 50%;")
     fab.on("click", toggle_header_footer)
+
+    maximize_fab = ui.button(icon="fullscreen", color="primary").classes(
+        "fixed-bottom-right q-mb-xl shadow-5"
+    )
+    maximize_fab.style("z-index: 9999; width: 56px; height: 56px; border-radius: 50%; right: 88px;")
+    maximize_fab.on("click", maximize_browser)
 
     with ui.footer().classes(
         "gradient-background transition-all duration-300 transform"
