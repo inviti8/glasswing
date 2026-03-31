@@ -193,6 +193,8 @@
         }
     </style>
     <script>
+    var PLAY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg>';
+    var PAUSE_ICON = '\u23F8\uFE0F';
     function playPreExtractedAudio(audioData, audioFormat, playButton) {
         if (playButton) { playButton.disabled = true; playButton.innerHTML = '\u23F3'; }
         playExtractedAudio(audioData, audioFormat || 'wav', playButton);
@@ -201,15 +203,15 @@
         const dataUri = `data:audio/${audioFormat};base64,${audioData}`;
         const audio = new Audio(dataUri);
         audio.oncanplay = function() {
-            if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u23F8\uFE0F'; }
+            if (playButton) { playButton.disabled = false; playButton.innerHTML = PAUSE_ICON; }
             playButton.onclick = function() {
-                if (audio.paused) { audio.play(); playButton.innerHTML = '\u23F8\uFE0F'; }
-                else { audio.pause(); playButton.innerHTML = '\u25B6\uFE0F'; }
+                if (audio.paused) { audio.play(); playButton.innerHTML = PAUSE_ICON; }
+                else { audio.pause(); playButton.innerHTML = PLAY_ICON; }
             };
             audio.play().catch(() => tryBlobMethod(audioData, audioFormat, playButton));
         };
         audio.onerror = function() { tryBlobMethod(audioData, audioFormat, playButton); };
-        audio.onended = function() { if (playButton) playButton.innerHTML = '\u25B6\uFE0F'; };
+        audio.onended = function() { if (playButton) playButton.innerHTML = PLAY_ICON; };
     }
     function tryBlobMethod(audioData, audioFormat, playButton) {
         try {
@@ -220,15 +222,15 @@
             const url = URL.createObjectURL(blob);
             const audio = new Audio(url);
             audio.oncanplay = function() {
-                if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u23F8\uFE0F'; }
+                if (playButton) { playButton.disabled = false; playButton.innerHTML = PAUSE_ICON; }
                 playButton.onclick = function() {
-                    if (audio.paused) { audio.play(); playButton.innerHTML = '\u23F8\uFE0F'; }
-                    else { audio.pause(); playButton.innerHTML = '\u25B6\uFE0F'; }
+                    if (audio.paused) { audio.play(); playButton.innerHTML = PAUSE_ICON; }
+                    else { audio.pause(); playButton.innerHTML = PLAY_ICON; }
                 };
-                audio.play().catch(() => { if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u25B6\uFE0F'; } });
+                audio.play().catch(() => { if (playButton) { playButton.disabled = false; playButton.innerHTML = PLAY_ICON; } });
             };
-            audio.onended = function() { if (playButton) playButton.innerHTML = '\u25B6\uFE0F'; URL.revokeObjectURL(url); };
-        } catch(e) { if (playButton) { playButton.disabled = false; playButton.innerHTML = '\u25B6\uFE0F'; } }
+            audio.onended = function() { if (playButton) playButton.innerHTML = PLAY_ICON; URL.revokeObjectURL(url); };
+        } catch(e) { if (playButton) { playButton.disabled = false; playButton.innerHTML = PLAY_ICON; } }
     }
     function openVideoPlayer(videoSrc, videoFormat, videoName) {
         const overlay = document.createElement('div');
@@ -273,7 +275,7 @@
             {% endif %}
             {% if featured.item.hasVideo %}
             <div class="featured-play-overlay">
-                <div class="featured-play-icon">&#x25B6;</div>
+                <div class="featured-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="2em" height="2em" viewBox="-4 -3 24 24"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg></div>
             </div>
             {% endif %}
         </div>
@@ -294,7 +296,7 @@
     <div style="max-width: 1200px; margin: 8px auto 0; padding: 0 24px;">
         <div style="display: flex; align-items: center; gap: 8px;">
             <button style="background: {{ colors.primary }}; border: none; color: {{ colors.bg }}; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 0.9rem;"
-                    onclick="playPreExtractedAudio('{{ featured.item.audio.data }}', '{{ featured.item.audio.format }}', this)">&#x25B6;&#xFE0F;</button>
+                    onclick="playPreExtractedAudio('{{ featured.item.audio.data }}', '{{ featured.item.audio.format }}', this)"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg></button>
             <span style="font-size: 0.85rem; color: {{ colors.text }}66;">Play Audio</span>
         </div>
     </div>
@@ -326,7 +328,7 @@
                 <img src="{{ item.renditions[0].href }}" alt="{{ item.headline }}">
                 {% endif %}
                 {% if item.hasVideo %}
-                <span class="thumb-badge">&#x25B6; VIDEO</span>
+                <span class="thumb-badge"><svg xmlns="http://www.w3.org/2000/svg" width="0.8em" height="0.8em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg> VIDEO</span>
                 {% endif %}
                 <div class="thumb-badges-left">
                     {% if item.hasAudio %}<span class="thumb-badge-sm">&#x1F3B5;</span>{% endif %}

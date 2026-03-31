@@ -550,6 +550,9 @@
         }
     </style>
     <script>
+    var PLAY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg>';
+    var PAUSE_ICON = '\u23F8\uFE0F';
+
     function playPreExtractedAudio(audioData, audioFormat, playButton) {
         // For token-based audio that was pre-extracted during data pod processing
         console.log('Playing pre-extracted audio, format:', audioFormat);
@@ -573,17 +576,17 @@
             console.log('Audio is ready to play');
             if (playButton) {
                 playButton.disabled = false;
-                playButton.innerHTML = '\u23F8\uFE0F';
+                playButton.innerHTML = PAUSE_ICON;
             }
 
             // Set up play/pause toggle
             playButton.onclick = function() {
                 if (audio.paused) {
                     audio.play();
-                    playButton.innerHTML = '\u23F8\uFE0F';
+                    playButton.innerHTML = PAUSE_ICON;
                 } else {
                     audio.pause();
-                    playButton.innerHTML = '\u25B6\uFE0F';
+                    playButton.innerHTML = PLAY_ICON;
                 }
             };
 
@@ -602,7 +605,7 @@
         audio.onended = function() {
             console.log('Playback finished');
             if (playButton) {
-                playButton.innerHTML = '\u25B6\uFE0F';
+                playButton.innerHTML = PLAY_ICON;
             }
         };
     }
@@ -637,7 +640,7 @@
                 alert('Failed to create audio blob');
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '\u25B6\uFE0F';
+                    playButton.innerHTML = PLAY_ICON;
                 }
                 return;
             }
@@ -647,16 +650,16 @@
             audio.oncanplay = function() {
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '\u23F8\uFE0F';
+                    playButton.innerHTML = PAUSE_ICON;
                 }
 
                 playButton.onclick = function() {
                     if (audio.paused) {
                         audio.play();
-                        playButton.innerHTML = '\u23F8\uFE0F';
+                        playButton.innerHTML = PAUSE_ICON;
                     } else {
                         audio.pause();
-                        playButton.innerHTML = '\u25B6\uFE0F';
+                        playButton.innerHTML = PLAY_ICON;
                     }
                 };
 
@@ -665,7 +668,7 @@
                     alert('Failed to play audio');
                     if (playButton) {
                         playButton.disabled = false;
-                        playButton.innerHTML = '\u25B6\uFE0F';
+                        playButton.innerHTML = PLAY_ICON;
                     }
                 });
             };
@@ -674,13 +677,13 @@
                 alert('Failed to load audio');
                 if (playButton) {
                     playButton.disabled = false;
-                    playButton.innerHTML = '\u25B6\uFE0F';
+                    playButton.innerHTML = PLAY_ICON;
                 }
             };
 
             audio.onended = function() {
                 if (playButton) {
-                    playButton.innerHTML = '\u25B6\uFE0F';
+                    playButton.innerHTML = PLAY_ICON;
                 }
                 URL.revokeObjectURL(audioUrl);
             };
@@ -690,7 +693,7 @@
             alert('Failed to play audio: ' + error.message);
             if (playButton) {
                 playButton.disabled = false;
-                playButton.innerHTML = '\u25B6\uFE0F';
+                playButton.innerHTML = PLAY_ICON;
             }
         }
     }
@@ -781,7 +784,7 @@
                         <div class="audio-controls">
                             {% if item.audio and item.audio.data %}
                             <button class="audio-play-btn" onclick="playPreExtractedAudio('{{ item.audio.data }}', '{{ item.audio.format }}', this)">
-                                &#x25B6;&#xFE0F;
+                                <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg>
                             </button>
                             {% else %}
                             <button class="audio-play-btn" disabled title="Audio requires decryption">
@@ -804,7 +807,7 @@
                         <div class="video-controls" {% if item.hasAudio %}style="bottom: 60px;"{% endif %}>
                             {% if item.video and item.video.src %}
                             <button class="video-play-btn" onclick="openVideoPlayer('{{ item.video.src }}', '{{ item.video.format }}', '{{ item.video.metadata.fileName or item.headline }}')">
-                                &#x25B6;&#xFE0F;
+                                <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="-4 -3 24 24" style="vertical-align:middle"><path fill="currentColor" d="M13.82 9.523a.976.976 0 0 0-.324-1.363L3.574 2.128a1.03 1.03 0 0 0-.535-.149c-.56 0-1.013.443-1.013.99V15.03c0 .185.053.366.153.523c.296.464.92.606 1.395.317l9.922-6.031c.131-.08.243-.189.325-.317zm.746 1.997l-9.921 6.031c-1.425.867-3.3.44-4.186-.951A2.9 2.9 0 0 1 0 15.03V2.97C0 1.329 1.36 0 3.04 0c.567 0 1.123.155 1.605.448l9.921 6.032c1.425.866 1.862 2.696.975 4.088c-.246.386-.58.712-.975.952"/></svg>
                             </button>
                             {% else %}
                             <button class="video-play-btn" disabled title="Video requires decryption">
