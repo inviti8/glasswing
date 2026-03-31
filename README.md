@@ -84,9 +84,9 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed instructions.
 ### Subscribing to Content
 
 1. **Switch to Browser Mode** (globe icon)
-2. **Add Subscription** - Enter the creator's Pintheon URL and IPNS hash
-3. **Browse Channels** - Select a channel to view
-4. **Enjoy** - Protected content decrypts automatically if you have access
+2. **Add Subscription** - Enter a label and the creator's Pintheon node URL
+3. **Browse Channels** - Select a data pod (book, album, gallery) to view
+4. **Enjoy** - Protected content decrypts automatically using your App Key
 
 ---
 
@@ -122,17 +122,19 @@ Both methods use Stellar-based cryptography for secure key exchange between crea
 [Pintheon](https://pintheon.com) is the companion hosting platform for Andromica galleries.
 
 ### What Pintheon Provides
+- Self-sovereign web service — you own the node
 - IPFS pinning for reliable content availability
-- IPNS for updateable gallery addresses
-- Simple API for gallery deployment
-- CDN-backed content delivery
+- IPNS directories per subscriber for content delivery
+- Warren tunnel to the public internet (no port forwarding needed)
+- `stellar.toml` for automatic subscriber content discovery
 
 ### Deploying to Pintheon
 
-1. Get your Pintheon access token
-2. Configure your node URL in Andromica
-3. Click the cloud deploy button
-4. Share your gallery link with subscribers!
+1. Get your Pintheon access token from the node's admin panel
+2. Configure your node URL in Settings (default: `https://local.pintheon.com:9999`)
+3. Click the cloud deploy button — images upload with proper names
+4. Deployment summary shows IPNS hash and uploaded file CIDs
+5. Subscribers auto-discover their content via the node's `stellar.toml`
 
 ---
 
@@ -179,7 +181,12 @@ Protect the original while displaying the preview. The aposematic version proves
 Switch between light and dark modes, or customize colors to match your brand.
 
 ### Gallery Templates
-Galleries render with clean, responsive HTML that looks great on any device.
+Choose from five gallery templates in the Gallery Information dialog:
+- **Default** — Card grid with gradient background
+- **Album** — Music-focused tracklist layout
+- **Showcase** — Full-width art portfolio
+- **Publication** — Reading-focused with serif typography
+- **Theater** — Video-focused with featured player and thumbnail grid
 
 ### Metadata Templates
 Save and reuse IPTC metadata templates for consistent copyright and credit information.
@@ -193,6 +200,9 @@ For developers and AI assistants:
 - [Architecture Overview](docs/ARCHITECTURE.md) - System design and components
 - [Encryption Details](docs/ENCRYPTION.md) - Cryptography and content protection
 - [Data Structures](docs/DATA_STRUCTURES.md) - JSON schemas and storage format
+- [Subscriber Flow](docs/SUBSCRIBER_FLOW.md) - Browser mode subscription design
+- [Template Selection](docs/TEMPLATE_SELECTION.md) - Gallery template system
+- [HVYM Network](docs/HVYM_NETWORK.md) - Name service and network design
 - [Build Guide](docs/BUILD.md) - Building from source
 - [Installation](docs/INSTALL.md) - Detailed setup instructions
 
@@ -210,7 +220,7 @@ A: Yes! That's a key use case. Aposematic images are valid image files that disp
 A: IPFS is optional but recommended. Without it, you can still create and export galleries manually.
 
 **Q: How do subscribers get access to protected content?**
-A: You add them to your subscriber list with their public key. They can then decrypt any content you've shared with them.
+A: Subscribers add your Pintheon node URL in their Andromica app. Their App Key automatically discovers their content via the node's `stellar.toml`. No manual hash sharing needed.
 
 **Q: What's the difference between Aposematic and Encrypted?**
 A: Aposematic is for public sharing with AI defense - the image is scrambled but shareable. Encrypted is for maximum privacy - the image is noise until decrypted. Use aposematic for portfolios and social media; use encrypted for premium/sensitive content.
