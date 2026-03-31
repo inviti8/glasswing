@@ -1355,29 +1355,32 @@ def ipns_add_to_folder(folder, file_path):
                 print("Error: Failed to get hash from IPFS add response")
                 return None
 
-            # Store the file info with the hash as the key
-            file_info = {
-                "name": os.path.basename(file_path),
+            # Update file info — preserve existing fields (e.g. name from process_aposematic)
+            existing = app.storage.user.get(hash_value, {})
+            existing.update({
                 "path": file_path,
                 "ipns_path": f"/{folder}/{hash_value}",
                 "extension": os.path.splitext(file_path)[1],
                 "render_metadata": False,
-            }
-            app.storage.user[hash_value] = file_info
+            })
+            if "name" not in existing:
+                existing["name"] = os.path.basename(file_path)
+            app.storage.user[hash_value] = existing
 
             # Now copy the file from the IPFS repo to the MFS folder
+            mfs_name = existing.get("name", os.path.basename(file_path))
             copy_url = f"{ipfs_endpoint}:{port}/api/v0/files/cp"
             copy_params = {
                 "arg": [
                     f"/ipfs/{hash_value}",
-                    f"/{folder}/{os.path.basename(file_path)}",
+                    f"/{folder}/{mfs_name}",
                 ]
             }
             copy_response = requests.post(copy_url, params=copy_params, timeout=30)
             copy_response.raise_for_status()
 
             # Get the file stat to return some useful info
-            file_path_in_ipfs = f"/{folder}/{os.path.basename(file_path)}"
+            file_path_in_ipfs = f"/{folder}/{mfs_name}"
             stat_params = {"arg": file_path_in_ipfs}
             stat_response = requests.post(
                 f"{ipfs_endpoint}:{port}/api/v0/files/stat",
