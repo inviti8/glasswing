@@ -1080,7 +1080,8 @@ def pintheon_upload_file(file_path, directory=None, encrypted=False, access_toke
 
         if response.status_code == 200:
             result = response.json()
-            print(f"Successfully uploaded file: {os.path.basename(file_path)}")
+            actual_name = upload_name or os.path.basename(file_path)
+            print(f"Successfully uploaded file: {actual_name}")
             return result
         elif response.status_code == 403:
             print("Error: Invalid or unauthorized access token")
