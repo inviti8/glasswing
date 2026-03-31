@@ -38,8 +38,10 @@ Andromica is a decentralized content creation and distribution system built on I
 Primary application entry point and UI orchestration.
 
 **Key Functions:**
-- `init()` - Application initialization, storage setup, key generation
+- `init(restore_secret=None)` - Application initialization, storage setup, key generation
+- `_first_run_dialog()` - NEW/RESTORE identity dialog on first launch (no data.json)
 - `render_gallery()` - Display images based on current view state
+- `render_gallery_html()` - Render data pod to HTML using selected Jinja2 template
 - `process_watermarking()` - Apply watermarks to raw images
 - `process_aposematic()` - Generate scrambled images with visual noise
 - `process_enciphering()` - Generate encrypted images via ImageMagick
@@ -53,8 +55,14 @@ Primary application entry point and UI orchestration.
 - `create_ninjs_data_pod()` - Create NINJS-format data pod from current images
 - `process_debug_deploy_gallery()` - Debug deployment with local decryption
 - `process_pintheon_deploy_gallery()` - Production deployment to Pintheon node
-- `select_channel()` - Browser mode channel rendering
-- `decode_protected_images()` - Decrypt/descramble for viewing
+- `detect_ipfs_gateway_port()` - Query IPFS daemon for gateway port at startup
+- `_pintheon_url(base_url=None)` - Resolve Pintheon URL from storage or parameter
+- `pintheon_get_directory_ipns()` - Get IPNS hash for a Pintheon directory
+- `_subscriber_public_key()` - Derive subscriber's Stellar 25519 public key from App Key
+- `fetch_subscription_content()` - Fetch data pods from Pintheon via stellar.toml IPNS resolution
+- `fetch_subscription_channels()` - List available data pods (channels) from a subscription
+- `select_channel()` - Download, decrypt, and render a subscription's data pod
+- `GALLERY_TEMPLATES` - Registry of gallery templates (default, album, artspace, book, theater)
 
 **Session-Scoped Storage:**
 - `EDITOR_STORAGE_DIR` - `tempfile.mkdtemp()` served via FastAPI StaticFiles at `/editor`
@@ -136,6 +144,7 @@ Image processing and manipulation.
 - `new_enciphered_img()` - Encrypt image using ImageMagick
 - `new_deciphered_img()` - Decrypt image
 - `new_iptc_img()` - Write IPTC metadata
+- `COPY_ALPHA_OP` - Cross-platform constant: `'copy_alpha'` (ImageMagick 7) or `'copy_opacity'` (ImageMagick 6)
 
 ### dialogs.py
 UI dialog components for user interactions.
@@ -149,6 +158,10 @@ UI dialog components for user interactions.
 - `edit_video_info()` - Video embedding dialog (file picker, recipient, expiry)
 - `edit_markdown_info()` - Markdown embedding dialog (file picker, recipient, expiry)
 - `process_dialog()` - Async task runner with progress UI
+- `add_subscription_dialog()` - Add Pintheon node subscription (label + URL)
+- `view_subscriptions_dialog()` - List/manage subscriptions with fetch/remove
+- `select_channel_dialog()` - Select and load a data pod channel from subscription
+- `gallery_info_dialog()` - Gallery title, description, and template selection
 
 ---
 
@@ -483,13 +496,23 @@ cipher_key = shared_key.shared_secret_as_hex()
 ```
 
 **Steps:**
-1. Check Pintheon running and access token
-2. Validate image state
-3. Create data pod with real creator key
-4. Create directory on Pintheon
-5. Upload all images to Pintheon
-6. Upload data pod JSON
-7. Store hash for subscriber access
+1. Resolve Pintheon URL from storage (`_pintheon_url()`)
+2. Check Pintheon running (`is_pintheon_running()`) and access token
+3. Validate image state
+4. Create data pod with creator key + recipient (subscriber) public key
+5. Clean IPFS MFS folder and re-add gallery images
+6. Create directory on Pintheon named by subscriber's public key
+7. Upload all images with proper filenames (not temp names)
+8. Upload data pod JSON to same directory
+9. Query IPNS hash via `pintheon_get_directory_ipns()`
+10. Show deployment summary dialog (IPNS hash, file hashes, copy buttons)
+11. Pintheon auto-publishes to IPNS and updates `stellar.toml` `[SUBSCRIBER_DIRECTORIES]`
+
+**Pintheon API Notes:**
+- Default endpoint: `https://local.pintheon.com:9999` (private port)
+- SSL `verify=False` for self-signed certs
+- All API functions accept `base_url` parameter for `run.io_bound` calls (avoids `app.storage.user` access outside UI context)
+- Directory name = subscriber's Stellar 25519 public key (each subscriber gets their own IPNS channel)
 
 **Key Difference:** Debug flow decrypts locally for preview; Pintheon flow is deployment-only (subscribers decrypt on their end).
 

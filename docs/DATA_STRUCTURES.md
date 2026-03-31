@@ -187,26 +187,57 @@ Stored in `app.storage.user['subscriptions']` as a list:
 
 ```json
 {
-    "name": "My Gallery Subscription",
-    "url": "https://pintheon-node.example.com",
-    "ipns_hash": "k51qzi5uqu5d..."
+    "label": "My Publisher",
+    "url": "https://mypublisher.pintheon.com",
+    "ipns_hash": "k51qzi5uqu5d...",
+    "added": "2026-03-30T12:00:00",
+    "last_fetched": "2026-03-30T14:00:00",
+    "data_pod_hash": null
 }
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `label` | string | User-friendly subscription name |
+| `url` | string | Pintheon node public gateway URL (auto-prepends `https://`) |
+| `ipns_hash` | string/null | IPNS key ID (auto-discovered from stellar.toml, or cached) |
+| `added` | string | ISO timestamp when subscription was added |
+| `last_fetched` | string/null | ISO timestamp of last successful fetch |
+
+**IPNS Resolution:** The subscriber's public key (derived from App Key) is used as the
+directory name on Pintheon. The IPNS hash is auto-discovered by reading the node's
+`/.well-known/stellar.toml` `[SUBSCRIBER_DIRECTORIES]` section, with fallback to the
+IPFS key list API.
+
 ### Fetched Subscription Metadata
 
-Stored in `app.storage.user['fetched_subscriptions']` as a dict:
+Stored in `app.storage.user['fetched_subscriptions']` as a dict keyed by label:
 
 ```json
 {
-    "My Gallery Subscription": {
-        "subscription": "My Gallery Subscription",
+    "My Publisher": {
+        "label": "My Publisher",
+        "node_url": "https://mypublisher.pintheon.com",
         "ipns_hash": "k51qzi5uqu5d...",
-        "gateway_url": "https://pintheon-node.example.com/ipns/k51qzi5uqu5d...",
-        "content_type": "application/json",
-        "size": 4096
+        "data_pods": [
+            {
+                "name": "ninjs_data_pod_aposematic_20260330.json",
+                "data": { "...full data pod JSON..." },
+                "items_count": 5,
+                "content_type": "mixed",
+                "created": "2026-03-30T12:00:00"
+            }
+        ],
+        "image_links": [
+            {"name": "image1.png", "href": "https://.../ipfs/QmHash..."}
+        ],
+        "fetched_at": "2026-03-30T14:00:00"
     }
 }
+```
+
+**Multiple Datapods:** A subscription directory may contain multiple data pod JSON files
+(book, album, graphic novel). Each appears as a selectable channel in the Select Channel dialog.
 ```
 
 ### Current Channel

@@ -178,48 +178,40 @@ When deploying protected galleries, the data pod includes metadata needed for de
 | `creator_public_key` | Subscriber uses this + their private key to derive shared secret |
 | `recipient_public_key` | Verifies subscriber is authorized (optional check) |
 
-## Browser-Side Decoding
+## Browser-Side Decoding (Subscriber Flow)
 
-When the Browser mode encounters protected content:
+When the subscriber selects a channel from a subscription, `select_channel()` uses
+`process_data_pod_locally()` to decrypt the content. This is the same function used
+by the debug deployment flow.
 
 ```python
-async def decode_protected_images(data_pod, stellar_secret):
-    content_type = data_pod.get('content_type', 'original')
-
-    if content_type == 'original':
-        return data_pod  # No decoding needed
-
-    stellar_keys = Keypair.from_secret(stellar_secret)
-    hvym_keys = Stellar25519KeyPair(stellar_keys)
-    creator_public_key = data_pod.get('creator_public_key')
-
-    # For enciphered: derive cipher_key manually
-    if content_type == 'encrypted':
-        shared_key = StellarSharedKey(hvym_keys, creator_public_key)
-        cipher_key = shared_key.shared_secret_as_hex()
-
-    # Decode each image
-    for item in data_pod['items']:
-        href = item['renditions'][0]['href']
-        temp_path = download_ipfs_image(href)
-
-        if content_type == 'encrypted':
-            decoded_path = new_deciphered_img(temp_path, cipher_key)
-        elif content_type == 'aposematic':
-            # aiposematic v1.1: pass keypair directly
-            decoded_path = recover_aposematic_img(
-                temp_path,
-                stellar_keypair=hvym_keys,
-                artist_public_key=creator_public_key,
-                op_string=data_pod.get('op_string'),
-            )
-
-        # Convert to base64 data URI for display
-        base64_uri = image_to_base64_uri(decoded_path)
-        item['renditions'][0]['href'] = base64_uri
-
-    return data_pod
+# select_channel() in main.py
+processed_data_pod = await process_data_pod_locally(
+    temp_pod_path,                    # Data pod JSON saved to temp file
+    subscriber_secret,                # App Key (stellar_secret from storage)
+    app,
+    embed_images_as_base64=True,      # Inline images for reliable display
+    download_ipfs_image=download_ipfs_image,
+    recover_aposematic_img=recover_aposematic_img,
+    new_deciphered_img=new_deciphered_img,
+    image_to_base64_uri=image_to_base64_uri,
+    ipfs_webui=gw_host,              # Subscription node's gateway
+    ipfs_webui_port=gw_port,
+    video_temp_dir=EDITOR_STORAGE_DIR,
+)
+html_content = render_gallery_html(processed_data_pod)
 ```
+
+**IPNS Resolution Flow (stellar.toml):**
+
+The subscriber's IPNS hash is auto-discovered from the Pintheon node's
+`/.well-known/stellar.toml` `[SUBSCRIBER_DIRECTORIES]` section, which maps
+subscriber public keys to IPNS directory hashes. No manual hash sharing needed.
+
+**Content-Layer Security:** Pintheon nodes expose content publicly via IPFS/IPNS
+gateways (and Warren tunnels to the internet). Security is at the content layer —
+aposematic images and encrypted media tokens can only be decrypted by the intended
+recipient's private key. The node itself cannot read the content.
 
 ## Media Token Encryption
 
