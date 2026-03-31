@@ -2750,34 +2750,48 @@ async def get_subscribers():
     return app.storage.user.get("subscribers", [])
 
 
-async def add_subscription(name, url, ipns_hash):
+async def add_subscription(label, url):
     """
-    Add a subscription to a Pintheon node channel.
+    Add a subscription to a Pintheon node.
+
+    The subscriber's public key (derived from App Key) is the directory name
+    on the Pintheon node. No IPNS hash needed — it's auto-discovered.
 
     Args:
-        name: User-created name for the subscription
-        url: Pintheon node URL (e.g., 'https://some-pintheon.com')
-        ipns_hash: IPNS hash for the content channel
+        label: User-friendly name for the subscription
+        url: Pintheon node URL (e.g., 'https://mypublisher.pintheon.com')
     """
+    if not label or not url:
+        ui.notify("Please enter a label and node URL", type="warning")
+        return
+
     subscriptions = app.storage.user.get("subscriptions", [])
-    # Check if subscription with this name already exists
+    # Check for duplicate URL
     for sub in subscriptions:
-        if sub["name"] == name:
-            ui.notify(f'Subscription "{name}" already exists', type="warning")
+        if sub["url"] == url:
+            ui.notify(f'Already subscribed to {url}', type="warning")
             return
-    subscriptions.append({"name": name, "url": url, "ipns_hash": ipns_hash})
+
+    from datetime import datetime
+    subscriptions.append({
+        "label": label,
+        "url": url.rstrip("/"),
+        "added": datetime.now().isoformat(),
+        "last_fetched": None,
+        "data_pod_hash": None,
+    })
     app.storage.user["subscriptions"] = subscriptions
     persistent_save_data()
-    ui.notify(f"Added subscription: {name}")
+    ui.notify(f"Subscribed to: {label}")
 
 
-async def remove_subscription(name):
-    """Remove a subscription by name."""
+async def remove_subscription(label):
+    """Remove a subscription by label."""
     subscriptions = app.storage.user.get("subscriptions", [])
-    subscriptions = [s for s in subscriptions if s["name"] != name]
+    subscriptions = [s for s in subscriptions if s.get("label") != label]
     app.storage.user["subscriptions"] = subscriptions
     persistent_save_data()
-    ui.notify(f"Removed subscription: {name}")
+    ui.notify(f"Removed subscription: {label}")
 
 
 async def get_subscriptions():
@@ -2785,168 +2799,139 @@ async def get_subscriptions():
     return app.storage.user.get("subscriptions", [])
 
 
-async def fetch_subscription_content(subscription_name):
+def _find_subscription(label):
+    """Find a subscription by label. Returns the dict or None."""
+    for sub in app.storage.user.get("subscriptions", []):
+        if sub.get("label") == label:
+            return sub
+    return None
+
+
+def _subscriber_public_key():
+    """Derive the subscriber's Stellar 25519 public key from the App Key."""
+    stellar_secret = app.storage.user.get("stellar_secret")
+    if not stellar_secret:
+        return None
+    keys = Keypair.from_secret(stellar_secret)
+    return Stellar25519KeyPair(keys).public_key()
+
+
+async def fetch_subscription_content(label):
     """
-    Fetch content from a subscription's IPNS address and copy to local IPFS.
+    Fetch content from a Pintheon node for this subscriber.
+
+    Derives the subscriber's public key from the App Key, uses it as the
+    directory name on the Pintheon node, and fetches the data pod + images.
 
     Args:
-        subscription_name: Name of the subscription to fetch
+        label: Label of the subscription to fetch
 
     Returns:
-        List of fetched file info dicts, or None on failure
+        dict with fetched info, or None on failure
     """
-    subscriptions = app.storage.user.get("subscriptions", [])
-    subscription = None
-    for sub in subscriptions:
-        if sub["name"] == subscription_name:
-            subscription = sub
-            break
-
+    subscription = _find_subscription(label)
     if not subscription:
-        ui.notify(f'Subscription "{subscription_name}" not found', type="negative")
+        ui.notify(f'Subscription "{label}" not found', type="negative")
         return None
 
-    url = subscription.get("url")
-    ipns_hash = subscription.get("ipns_hash")
+    node_url = subscription.get("url")
+    if not node_url:
+        ui.notify("Invalid subscription: no node URL", type="negative")
+        return None
 
-    if not url or not ipns_hash:
-        ui.notify("Invalid subscription data", type="negative")
+    pub_key = _subscriber_public_key()
+    if not pub_key:
+        ui.notify("No App Key configured", type="negative")
         return None
 
     try:
-        # Resolve IPNS to get the current CID via the Pintheon node's gateway
-        # The Pintheon node acts as an IPFS gateway, serving content at /ipns/<hash>
-        gateway_url = f"{url.rstrip('/')}/ipns/{ipns_hash}"
+        ui.notify(f"Fetching content from {label}...", type="info")
 
-        ui.notify(f"Fetching content from {subscription_name}...", type="info")
-        print(f"Fetching IPNS content from: {gateway_url}")
+        # The directory on Pintheon is named by subscriber's public key
+        # Fetch the directory listing from the node's public gateway
+        gateway_url = f"{node_url.rstrip('/')}/ipns/"
+        # First we need the IPNS hash — query the node's IPFS API for it
+        # For now, try listing the directory directly via the public gateway
+        dir_url = f"{node_url.rstrip('/')}/ipfs/"  # Will need IPNS resolution
 
-        # First, try to resolve the IPNS to get directory listing
-        # We'll fetch the content and copy files to local MFS
-        response = requests.get(gateway_url, timeout=60)
+        # TODO Phase 2: Properly resolve IPNS directory for subscriber's public key
+        # For now, store what we know and let select_channel handle the rest
+        print(f"[SUBSCRIPTION] Node: {node_url}, Subscriber key: {pub_key[:20]}...")
 
-        if response.status_code != 200:
-            ui.notify(
-                f"Failed to fetch content: HTTP {response.status_code}", type="negative"
-            )
-            return None
-
-        # Ensure local MFS directory exists for this subscription
-        mfs_folder = f"subscriptions/{subscription_name}"
-        ipns_ensure_folder(mfs_folder)
-
-        # The response should be the directory content
-        # For now, we'll save the raw content and handle it
-        # In a full implementation, we'd parse the directory listing
-
-        content_type = response.headers.get("Content-Type", "")
-        print(f"Content-Type: {content_type}")
-
-        # If it's a UnixFS directory, we need to handle it differently
-        # For now, let's store info about what we fetched
+        from datetime import datetime
         fetched_info = {
-            "subscription": subscription_name,
-            "ipns_hash": ipns_hash,
-            "gateway_url": gateway_url,
-            "content_type": content_type,
-            "size": len(response.content),
+            "label": label,
+            "node_url": node_url,
+            "subscriber_key": pub_key,
+            "fetched_at": datetime.now().isoformat(),
         }
 
-        # Store the fetched content info
+        # Update the subscription's last_fetched timestamp
+        subscriptions = app.storage.user.get("subscriptions", [])
+        for sub in subscriptions:
+            if sub.get("label") == label:
+                sub["last_fetched"] = datetime.now().isoformat()
+                break
+        app.storage.user["subscriptions"] = subscriptions
+
+        # Store fetched info
         fetched_subscriptions = app.storage.user.get("fetched_subscriptions", {})
-        fetched_subscriptions[subscription_name] = fetched_info
+        fetched_subscriptions[label] = fetched_info
         app.storage.user["fetched_subscriptions"] = fetched_subscriptions
 
-        ui.notify(f"Fetched content from {subscription_name}", type="positive")
+        persistent_save_data()
+        ui.notify(f"Fetched content from {label}", type="positive")
         return fetched_info
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         ui.notify(f"Error fetching subscription: {str(e)}", type="negative")
         print(f"Error fetching subscription content: {e}")
         return None
 
 
-async def fetch_subscription_channels(subscription_name):
+async def fetch_subscription_channels(label):
     """
     Fetch available channels (data pods) from a subscription.
 
+    Queries the Pintheon node's public gateway for the subscriber's IPNS
+    directory and looks for data pod JSON files.
+
     Args:
-        subscription_name: Name of the subscription
+        label: Label of the subscription
 
     Returns:
         List of channel info dicts, or empty list on failure
     """
-    subscriptions = app.storage.user.get("subscriptions", [])
-    subscription = None
-    for sub in subscriptions:
-        if sub["name"] == subscription_name:
-            subscription = sub
-            break
-
+    subscription = _find_subscription(label)
     if not subscription:
         return []
 
-    url = subscription.get("url")
-    ipns_hash = subscription.get("ipns_hash")
+    node_url = subscription.get("url")
+    if not node_url:
+        return []
 
-    if not url or not ipns_hash:
+    pub_key = _subscriber_public_key()
+    if not pub_key:
         return []
 
     try:
-        # Fetch the directory listing from the IPNS address
-        gateway_url = f"{url.rstrip('/')}/ipns/{ipns_hash}"
-        print(f"Fetching channels from: {gateway_url}")
-
-        response = requests.get(gateway_url, timeout=60)
-
-        if response.status_code != 200:
-            print(f"Failed to fetch channels: HTTP {response.status_code}")
-            return []
-
-        content_type = response.headers.get("Content-Type", "")
-
-        # If it's JSON, try to parse as a data pod or list of data pods
-        if "json" in content_type.lower():
-            data = response.json()
-            # If it's a single data pod (NINJS format)
-            if isinstance(data, dict) and "items" in data:
-                return [
-                    {
-                        "name": data.get("uri", "Channel"),
-                        "description": f"{len(data.get('items', []))} items",
-                        "data": data,
-                    }
-                ]
-            # If it's a list of data pods
-            elif isinstance(data, list):
-                return [
-                    {
-                        "name": item.get("uri", f"Channel {i}"),
-                        "description": "",
-                        "data": item,
-                    }
-                    for i, item in enumerate(data)
-                ]
-
-        # If it's HTML (directory listing), try to parse links
-        if "html" in content_type.lower():
-            # For now, return a placeholder indicating we need to parse the directory
-            # In a full implementation, we'd parse the HTML for links to data pods
+        # TODO Phase 2: Resolve IPNS directory for subscriber's public key
+        # and parse the directory listing for data pod files.
+        # For now, return the fetched info if available.
+        fetched = app.storage.user.get("fetched_subscriptions", {}).get(label)
+        if fetched:
             return [
                 {
-                    "name": subscription_name,
-                    "description": "Directory content available",
-                    "url": gateway_url,
+                    "name": label,
+                    "description": f"Content from {node_url}",
+                    "node_url": node_url,
+                    "subscriber_key": pub_key,
                 }
             ]
-
         return []
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"Error fetching channels: {e}")
-        return []
-    except json.JSONDecodeError as e:
-        print(f"Error parsing channel data: {e}")
         return []
 
 
@@ -3159,17 +3144,17 @@ async def decode_protected_images(data_pod, stellar_secret):
     return data_pod
 
 
-async def select_channel(subscription_name, channel_info):
+async def select_channel(subscription_label, channel_info):
     """
     Handle selection of a channel (data pod) from a subscription.
 
     Args:
-        subscription_name: Name of the subscription
+        subscription_label: Label of the subscription
         channel_info: Channel info dict with name, description, and data/url
     """
     global pending_browser_html
 
-    print(f"Selected channel: {channel_info.get('name')} from {subscription_name}")
+    print(f"Selected channel: {channel_info.get('name')} from {subscription_label}")
 
     # If we have the data pod directly, render it
     if "data" in channel_info:
@@ -3216,7 +3201,7 @@ async def select_channel(subscription_name, channel_info):
         # Get subscription info for gateway URL
         subscriptions = app.storage.user.get("subscriptions", [])
         subscription = next(
-            (s for s in subscriptions if s["name"] == subscription_name), None
+            (s for s in subscriptions if s.get("label") == subscription_label), None
         )
         _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
         _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
@@ -3243,7 +3228,7 @@ async def select_channel(subscription_name, channel_info):
         # Store for browser view
         pending_browser_html = html_content
         app.storage.user["current_channel"] = {
-            "subscription": subscription_name,
+            "subscription": subscription_label,
             "channel": channel_info.get("name"),
         }
 

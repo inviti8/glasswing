@@ -647,29 +647,25 @@ async def add_subscriber_dialog(on_save):
     return
 
 async def add_subscription_dialog(on_save):
-    """Dialog for adding a subscription to a Pintheon channel."""
+    """Dialog for adding a subscription to a Pintheon node."""
     with ui.dialog() as dialog:
         with ui.card().classes('w-full max-w-xl'):
             ui.label('Add Subscription').classes('text-xl font-bold mb-4')
-            ui.label('Subscribe to a Pintheon channel to receive content').classes('text-sm text-gray-500 mb-4')
+            ui.label('Enter the Pintheon node address to subscribe. Your App Key is used to find your content automatically.').classes('text-sm text-gray-500 mb-4')
 
             with ui.column().classes('w-full gap-4'):
-                name_input = ui.input('Subscription Name',
-                                      placeholder='e.g., My Favorite Channel') \
+                label_input = ui.input('Label',
+                                       placeholder='e.g., My Publisher') \
                     .classes('w-full')
 
                 url_input = ui.input('Pintheon Node URL',
-                                     placeholder='e.g., https://some-pintheon.com') \
-                    .classes('w-full')
-
-                ipns_input = ui.input('IPNS Hash',
-                                      placeholder='e.g., k51qzi5uqu5d...') \
+                                     placeholder='e.g., https://mypublisher.pintheon.com') \
                     .classes('w-full')
 
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
                 ui.button('Cancel', on_click=dialog.close).props('flat')
-                ui.button('Add Subscription', on_click=lambda: (
-                    on_save(name_input.value, url_input.value, ipns_input.value),
+                ui.button('Subscribe', on_click=lambda: (
+                    on_save(label_input.value, url_input.value),
                     dialog.close()
                 )).props('flat color=primary')
 
@@ -686,16 +682,16 @@ def view_subscriptions_dialog(fetch_subscription_content=None, remove_subscripti
     """
     subscriptions = app.storage.user.get('subscriptions', [])
 
-    async def fetch_and_notify(name, dialog):
+    async def fetch_and_notify(label, dialog):
         """Helper to fetch subscription content and show notification."""
         dialog.close()
         if fetch_subscription_content:
-            await fetch_subscription_content(name)
+            await fetch_subscription_content(label)
 
-    async def remove_and_refresh(name, dialog):
+    async def remove_and_refresh(label, dialog):
         """Helper to remove subscription and refresh dialog."""
         if remove_subscription:
-            await remove_subscription(name)
+            await remove_subscription(label)
         dialog.close()
         view_subscriptions_dialog(fetch_subscription_content, remove_subscription)
 
@@ -711,12 +707,13 @@ def view_subscriptions_dialog(fetch_subscription_content=None, remove_subscripti
                         with ui.card().classes('w-full'):
                             with ui.row().classes('w-full items-center justify-between'):
                                 with ui.column().classes('gap-1'):
-                                    ui.label(sub.get('name', 'Unknown')).classes('font-bold')
+                                    ui.label(sub.get('label', sub.get('name', 'Unknown'))).classes('font-bold')
                                     ui.label(sub.get('url', '')).classes('text-sm text-gray-500')
-                                    ui.label(f"IPNS: {sub.get('ipns_hash', '')[:20]}...").classes('text-xs text-gray-400')
+                                    last = sub.get('last_fetched')
+                                    ui.label(f"Last fetched: {last or 'never'}").classes('text-xs text-gray-400')
                                 with ui.row().classes('gap-2'):
-                                    ui.button(icon='sync', on_click=lambda s=sub: fetch_and_notify(s['name'], dialog)).props('flat round').tooltip('Fetch Content')
-                                    ui.button(icon='delete', on_click=lambda s=sub: remove_and_refresh(s['name'], dialog)).props('flat round color=negative').tooltip('Remove')
+                                    ui.button(icon='sync', on_click=lambda s=sub: fetch_and_notify(s['label'], dialog)).props('flat round').tooltip('Fetch Content')
+                                    ui.button(icon='delete', on_click=lambda s=sub: remove_and_refresh(s['label'], dialog)).props('flat round color=negative').tooltip('Remove')
 
             with ui.row().classes('w-full justify-end mt-4'):
                 ui.button('Close', on_click=dialog.close).props('flat')
@@ -742,7 +739,7 @@ def select_channel_dialog(on_select, fetch_subscription_channels=None):
                 ui.label('No subscriptions yet. Add a subscription first!').classes('text-gray-500')
             else:
                 # Subscription selector
-                subscription_names = [s['name'] for s in subscriptions]
+                subscription_names = [s.get('label', s.get('name', 'Unknown')) for s in subscriptions]
                 selected_sub = ui.select(
                     label='Select Subscription',
                     options=subscription_names,
@@ -760,7 +757,7 @@ def select_channel_dialog(on_select, fetch_subscription_channels=None):
                         return
 
                     # Get subscription info
-                    sub = next((s for s in subscriptions if s['name'] == sub_name), None)
+                    sub = next((s for s in subscriptions if s.get('label', s.get('name')) == sub_name), None)
                     if not sub:
                         return
 
