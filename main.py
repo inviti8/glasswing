@@ -224,6 +224,35 @@ def get_gallery_colors() -> dict:
         }
 
 
+GALLERY_TEMPLATES = {
+    "gallery.html": {
+        "name": "Default",
+        "description": "Card grid with gradient background",
+        "icon": "grid_view",
+    },
+    "gallery_album.html": {
+        "name": "Album",
+        "description": "Music-focused tracklist layout",
+        "icon": "album",
+    },
+    "gallery_artspace.html": {
+        "name": "Showcase",
+        "description": "Full-width art showcase",
+        "icon": "palette",
+    },
+    "gallery_book.html": {
+        "name": "Publication",
+        "description": "Reading-focused layout with serif typography",
+        "icon": "menu_book",
+    },
+    "gallery_theater.html": {
+        "name": "Theater",
+        "description": "Video-focused player with thumbnail grid",
+        "icon": "theaters",
+    },
+}
+
+
 def render_gallery_html(data_pod: dict) -> str:
     """
     Render gallery HTML from data pod using Jinja2 template.
@@ -236,7 +265,8 @@ def render_gallery_html(data_pod: dict) -> str:
     """
     template_dir = os.path.join(os.path.dirname(__file__), "templates")
     jinja_env = Environment(loader=FileSystemLoader(template_dir))
-    template = jinja_env.get_template("gallery.html")
+    template_name = app.storage.user.get("gallery_template", "gallery.html")
+    template = jinja_env.get_template(template_name)
 
     colors = get_gallery_colors()
     is_dark_mode = app.storage.user.get("dark_mode", None)
@@ -466,6 +496,7 @@ def init():
             app.storage.user["gallery_description"] = data.get(
                 "gallery_description", ""
             )
+            app.storage.user["gallery_template"] = data.get("gallery_template", "gallery.html")
             app.storage.user["dark_mode"] = data.get("dark_mode", None)
             app.storage.user["debug_secret"] = data.get("debug_secret", None)
             # IPFS settings
@@ -531,6 +562,7 @@ def init():
             app.storage.user["gallery_description"] = data.get(
                 "gallery_description", ""
             )
+            app.storage.user["gallery_template"] = data.get("gallery_template", "gallery.html")
             app.storage.user["dark_mode"] = data.get("dark_mode", None)
             app.storage.user["debug_secret"] = data.get("debug_secret", None)
             # IPFS settings
@@ -672,6 +704,7 @@ def persistent_save_data():
     latest_data_pod_timestamp = app.storage.user.get("latest_data_pod_timestamp", None)
     gallery_title = app.storage.user.get("gallery_title", "")
     gallery_description = app.storage.user.get("gallery_description", "")
+    gallery_template = app.storage.user.get("gallery_template", "gallery.html")
     dark_mode = app.storage.user.get("dark_mode", None)
     debug_secret = app.storage.user.get("debug_secret", None)
     ipfs_webui_setting = app.storage.user.get("ipfs_webui", ipfs_webui)
@@ -709,6 +742,7 @@ def persistent_save_data():
                 "latest_data_pod_timestamp": latest_data_pod_timestamp,
                 "gallery_title": gallery_title,
                 "gallery_description": gallery_description,
+                "gallery_template": gallery_template,
                 "ipfs_webui": ipfs_webui_setting,
                 "ipfs_webui_port": ipfs_webui_port_setting,
                 "ipfs_endpoint": ipfs_endpoint_setting,

@@ -1071,7 +1071,23 @@ def edit_video_info(hash_value, on_close, process_func, choose_files=None):
 
 
 def gallery_info_dialog():
-    """Dialog for setting gallery title and description."""
+    """Dialog for setting gallery title, description, and template."""
+    # Build template options from available files
+    import os
+    template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+    all_templates = {
+        "gallery.html": "Default",
+        "gallery_album.html": "Album",
+        "gallery_artspace.html": "Showcase",
+        "gallery_book.html": "Publication",
+        "gallery_theater.html": "Theater",
+    }
+    # Only show templates that exist on disk
+    available = {k: v for k, v in all_templates.items()
+                 if os.path.exists(os.path.join(template_dir, k))}
+
+    current_template = app.storage.user.get("gallery_template", "gallery.html")
+
     with ui.dialog() as dialog:
         with ui.card().classes('w-full max-w-2xl'):
             ui.label('Gallery Information').classes('text-xl font-bold mb-4')
@@ -1088,6 +1104,12 @@ def gallery_info_dialog():
                            placeholder='Enter gallery description (leave empty to hide)') \
                     .bind_value(app.storage.user, 'gallery_description') \
                     .classes('w-full')
+
+                ui.select(
+                    label='Template',
+                    options=available,
+                    value=current_template,
+                ).bind_value(app.storage.user, 'gallery_template').classes('w-full')
 
             # Action buttons
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
