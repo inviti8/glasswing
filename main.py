@@ -3248,99 +3248,84 @@ async def select_channel(subscription_label, channel_info):
     """
     Handle selection of a channel (data pod) from a subscription.
 
+    Downloads images, decrypts content using the subscriber's App Key,
+    and renders the gallery in the browser tab.
+
     Args:
         subscription_label: Label of the subscription
-        channel_info: Channel info dict with name, description, and data/url
+        channel_info: Channel info dict with name, description, and data
     """
     global pending_browser_html
 
     print(f"Selected channel: {channel_info.get('name')} from {subscription_label}")
 
-    # If we have the data pod directly, render it
-    if "data" in channel_info:
-        data_pod = channel_info["data"]
+    if "data" not in channel_info:
+        ui.notify("No data pod available", type="warning")
+        return
 
-        # Decode protected images if necessary (aposematic/encrypted)
-        content_type = data_pod.get("content_type", "original")
-        if content_type in ("aposematic", "encrypted"):
-            stellar_secret = app.storage.user.get("stellar_secret")
-            if stellar_secret:
-                ui.notify(f"Decoding {content_type} content...", type="info")
-                data_pod = await decode_protected_images(data_pod, stellar_secret)
-            else:
-                ui.notify("Cannot decode: no stellar secret configured", type="warning")
+    data_pod = channel_info["data"]
+    subscriber_secret = app.storage.user.get("stellar_secret")
+    if not subscriber_secret:
+        ui.notify("No App Key configured — cannot decrypt content", type="negative")
+        return
 
-        # Set up Jinja2 environment
-        template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        jinja_env = Environment(loader=FileSystemLoader(template_dir))
-        template = jinja_env.get_template("gallery.html")
+    # Get the subscription's node URL for gateway resolution
+    subscription = _find_subscription(subscription_label)
+    node_url = subscription.get("url", "") if subscription else ""
 
-        # Get current color scheme
-        app_colors = app.storage.user.get("app_colors", {})
-        is_dark_mode = app.storage.user.get("dark_mode", None)
+    # Save data pod to temp file (process_data_pod_locally reads from file)
+    temp_pod_path = os.path.join(tempfile.gettempdir(), "subscription_data_pod.json")
+    with open(temp_pod_path, "w") as f:
+        json.dump(data_pod, f)
 
-        if is_dark_mode:
-            colors = {
-                "primary": app_colors.get("dark-primary", DARK_PRIMARY),
-                "secondary": app_colors.get("dark-secondary", DARK_SECONDARY),
-                "text": app_colors.get("dark-text", DARK_TEXT),
-                "bg": app_colors.get("dark-bg", DARK_BG),
-                "card": app_colors.get("dark-card", DARK_CARD),
-                "border": app_colors.get("dark-border", DARK_BORDER),
-            }
-        else:
-            colors = {
-                "primary": app_colors.get("primary", PRIMARY_COLOR),
-                "secondary": app_colors.get("secondary", SECONDARY_COLOR),
-                "text": app_colors.get("text-color", TEXT_COLOR),
-                "bg": app_colors.get("bg-color", BG_COLOR),
-                "card": app_colors.get("card-bg", CARD_BG),
-                "border": app_colors.get("border-color", BORDER_COLOR),
-            }
+    # Parse the node URL into host:port for the gateway
+    # The subscription node URL IS the gateway for IPFS content
+    from urllib.parse import urlparse
+    parsed = urlparse(node_url)
+    gw_host = f"{parsed.scheme}://{parsed.hostname}" if parsed.hostname else ipfs_webui
+    gw_port = str(parsed.port) if parsed.port else ipfs_webui_port
 
-        # Get subscription info for gateway URL
-        subscriptions = app.storage.user.get("subscriptions", [])
-        subscription = next(
-            (s for s in subscriptions if s.get("label") == subscription_label), None
+    ui.notify(f"Decrypting content from {subscription_label}...", type="info")
+
+    try:
+        processed_data_pod = await process_data_pod_locally(
+            temp_pod_path, subscriber_secret, app,
+            embed_images_as_base64=True,  # Embed as base64 for reliable display
+            download_ipfs_image=download_ipfs_image,
+            new_deciphered_img=new_deciphered_img,
+            recover_aposematic_img=recover_aposematic_img,
+            image_to_base64_uri=image_to_base64_uri,
+            ipfs_add=ipfs_add,
+            _ipfs_add_pure=_ipfs_add_pure,
+            _ipfs_load_to_temp_file_pure=_ipfs_load_to_temp_file_pure,
+            ipfs_webui=gw_host,
+            ipfs_webui_port=gw_port,
+            video_temp_dir=EDITOR_STORAGE_DIR,
         )
-        _gw_host = app.storage.user.get("ipfs_webui", ipfs_webui)
-        _gw_port = app.storage.user.get("ipfs_webui_port", ipfs_webui_port)
-        _gw_default = f"{_gw_host}:{_gw_port}"
-        gateway = (
-            subscription.get("url", _gw_default)
-            if subscription
-            else _gw_default
-        )
+    except Exception as e:
+        ui.notify(f"Error decrypting content: {e}", type="negative")
+        import traceback
+        traceback.print_exc()
+        return
 
-        # Render the template
-        template_context = {
-            "data_pod": data_pod,
-            "ipfs_gateway": gateway,
-            "ipfs_webui": gateway.split(":")[0] if ":" in gateway else gateway,
-            "ipfs_webui_port": gateway.split(":")[1] if ":" in gateway else "443",
-            "gallery_title": channel_info.get("name", ""),
-            "gallery_description": channel_info.get("description", ""),
-            "colors": colors,
-            "is_dark_mode": is_dark_mode,
-        }
-        html_content = template.render(**template_context)
+    if not processed_data_pod:
+        ui.notify("Failed to process data pod", type="negative")
+        return
 
-        # Store for browser view
-        pending_browser_html = html_content
-        app.storage.user["current_channel"] = {
-            "subscription": subscription_label,
-            "channel": channel_info.get("name"),
-        }
+    # Render HTML using the existing gallery template
+    html_content = render_gallery_html(processed_data_pod)
 
-        ui.notify(
-            f"Channel loaded: {channel_info.get('name')}. Switch to BROWSER tab to view.",
-            type="positive",
-        )
+    # Store for browser view
+    pending_browser_html = html_content
+    app.storage.user["current_channel"] = {
+        "subscription": subscription_label,
+        "channel": channel_info.get("name"),
+    }
 
-    elif "url" in channel_info:
-        # If we have a URL, fetch and display
-        ui.notify(f"Fetching content from {channel_info.get('name')}...", type="info")
-        # Could implement fetching and rendering here
+    ui.notify(
+        f"Channel loaded: {channel_info.get('name')}. Switch to BROWSER tab to view.",
+        type="positive",
+    )
 
     else:
         ui.notify("No content available for this channel", type="warning")
