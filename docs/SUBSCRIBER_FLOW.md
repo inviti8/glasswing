@@ -131,31 +131,40 @@ When switching to BROWSER tab:
 - A dropdown or selector lets the subscriber switch between subscriptions
 - "Refresh" re-fetches from the Pintheon node
 
-## Access Token Consideration
+## Content Access Model
 
-The subscriber needs a Pintheon **access token** to query the API (`api_get_directory_ipns`, etc.). Two options:
+No access token is required for subscribers. Pintheon nodes are self-sovereign web
+services that expose IPFS, IPNS, and homepage content via a Warren tunnel to the
+open internet (see `/hvym_tunnler`). The public gateway (port 9998) serves content
+to anyone who requests it.
 
-1. **Token exchange**: Publisher generates an access token for the subscriber and shares it out-of-band (current mechanism via Pintheon admin)
-2. **Public gateway only**: Skip the API entirely and resolve content via the public IPFS gateway (port 9998) — the IPNS directory and files are publicly accessible if the subscriber knows the IPNS hash
+**Security is at the content layer, not the transport layer.** All images are
+aposematic-encrypted and can only be decrypted by the intended recipient (using
+ECDH with the creator's public key + subscriber's private key) or the creator
+themselves. The content is safe to serve publicly — without the subscriber's
+Stellar 25519 private key, it's just scrambled pixels.
 
-Option 2 is simpler for MVP: the subscriber just needs the node's **public gateway URL** and their IPNS hash. No access token required for reading public IPFS/IPNS content. The access token is only needed for write operations (upload, create directory).
-
-However, this means the subscriber needs the IPNS hash, not just the node URL. The publisher would share the IPNS hash after deployment (shown in the deployment summary dialog we added).
-
-### Revised Subscription Input (Option 2 — MVP)
+### Subscription Input
 
 The subscriber enters:
-- **Pintheon Gateway URL** (e.g., `https://local.pintheon.com:9998`)
-- **IPNS Hash** (e.g., `k51qzi5uqu5dm9cmfob3ky72uluj1u0wvcpenzwvswxv0f06c8az3kfpsqulm2`)
+- **Pintheon Node URL** (e.g., `https://mypublisher.pintheon.com`)
 
-Andromica resolves `{gateway}/ipns/{ipns_hash}/` to list files and download the data pod.
+Andromica derives the subscriber's public key from the App Key, constructs the
+IPNS directory path, and resolves content from the node's public gateway. The
+IPNS hash can be discovered by querying the node, or shared by the publisher
+after deployment (shown in the deployment summary dialog).
 
-### Future Enhancement (Option 1 — Full API)
+### Content Discovery
 
-With an access token, the subscriber can:
-- Query `api_get_directory_ipns` using their public key as directory name
-- No need to know the IPNS hash — the node resolves it from the directory name
-- Enables auto-discovery: subscriber adds a node + token, Andromica finds their content automatically
+Since the directory name on Pintheon IS the subscriber's public key, discovery
+is automatic:
+
+1. Subscriber adds a Pintheon node URL
+2. Andromica derives subscriber's public key from App Key
+3. Queries the node for the IPNS directory matching that public key
+4. Downloads and decrypts the content
+
+No IPNS hash needs to be shared manually — the subscriber's identity IS the lookup key.
 
 ## Implementation Steps
 
@@ -177,5 +186,4 @@ With an access token, the subscriber can:
 
 - Should subscriptions auto-refresh when the BROWSER tab is opened?
 - Should there be a notification when new content is available?
-- How does the publisher share the IPNS hash with the subscriber? (Currently shown in deployment dialog — could also be a shareable link)
 - Should the subscriber be able to browse multiple subscriptions, or one at a time?
