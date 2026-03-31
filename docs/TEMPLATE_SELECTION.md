@@ -106,6 +106,33 @@ distinct visual style suited to different content types.
   └─────────────────────────────────────────┘
   ```
 
+### 5. `gallery_theater.html` — Video Focused
+- **Inspired by**: video streaming platforms
+- **Style**: Dark background, large video player front and center. Thumbnail
+  grid below for browsing. Video items get the theater treatment — full-width
+  player with title, description, and metadata beneath. Image-only items
+  shown as a secondary thumbnail grid.
+- **Best for**: Video collections, short films, tutorials, music videos
+- **Layout**:
+  ```
+  ┌─────────────────────────────────────────┐
+  │  ┌─────────────────────────────────┐    │
+  │  │                                 │    │
+  │  │       ▶  VIDEO PLAYER           │    │
+  │  │          (selected item)        │    │
+  │  │                                 │    │
+  │  └─────────────────────────────────┘    │
+  │  Video Title                            │
+  │  Description text...                    │
+  ├─────────────────────────────────────────┤
+  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐  │
+  │  │thumb │ │thumb │ │thumb │ │thumb │  │
+  │  │  ▶   │ │  ▶   │ │      │ │      │  │
+  │  └──────┘ └──────┘ └──────┘ └──────┘  │
+  │  Title     Title     Title     Title   │
+  └─────────────────────────────────────────┘
+  ```
+
 ## Template Contract
 
 All templates receive the same Jinja2 context and must handle the same
@@ -181,6 +208,11 @@ GALLERY_TEMPLATES = {
         "name": "Publication",
         "description": "Reading-focused layout with serif typography",
         "icon": "menu_book",
+    },
+    "gallery_theater.html": {
+        "name": "Theater",
+        "description": "Video-focused player with thumbnail grid",
+        "icon": "theaters",
     },
 }
 ```
@@ -259,6 +291,14 @@ def render_gallery_html(data_pod: dict) -> str:
 - Inline images between text blocks
 - Chapter-like navigation for multi-item pods
 - Print-friendly styling
+
+### Phase 5: Theater Template
+- Create `templates/gallery_theater.html`
+- Large featured video player area
+- Click-to-play thumbnail grid for browsing
+- Dark theme by default
+- Video metadata display (title, description below player)
+- Graceful fallback for non-video items (shown as thumbnail grid)
 
 ## Design Principles
 
