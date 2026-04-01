@@ -6290,6 +6290,15 @@ app.on_shutdown(on_close)
 if _has_splash:
     app.on_connect(lambda: pyi_splash.close() if pyi_splash.is_alive() else None)
 
+# Persistent directory for pywebview's WebView2/WebKit profile data.
+# Without this, WebView2 uses a temp dir that can be cleaned up or have
+# permission issues in frozen builds.
+_webview_data_dir = os.path.join(os.path.expanduser('~'), '.andromica', 'webview')
+os.makedirs(_webview_data_dir, exist_ok=True)
+
+# Must be set BEFORE ui.run() — the child process re-imports the module
+app.native.window_args['data_dir'] = _webview_data_dir
+
 ui.run(
     native=True,
     port=cli_args.port,
