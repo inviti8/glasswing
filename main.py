@@ -8,9 +8,26 @@ import time
 import base64
 import os
 import sys
+import logging
 
 # Support PyInstaller frozen builds: must be called early, before any multiprocessing use
 multiprocessing.freeze_support()
+
+# File-based logging for frozen builds (no console available)
+if getattr(sys, 'frozen', False):
+    _log_dir = os.path.join(os.path.expanduser('~'), '.andromica')
+    os.makedirs(_log_dir, exist_ok=True)
+    _log_file = os.path.join(_log_dir, 'andromica.log')
+    logging.basicConfig(
+        filename=_log_file,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+    # Redirect stdout/stderr to log file so print() statements are captured
+    sys.stdout = open(_log_file, 'a', encoding='utf-8')
+    sys.stderr = sys.stdout
+    logging.info(f"Andromica starting (frozen build, log: {_log_file})")
 
 # Close PyInstaller splash screen once the UI is ready
 try:
