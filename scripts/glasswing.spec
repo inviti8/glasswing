@@ -80,6 +80,9 @@ hiddenimports = [
     'metadata',
     'img_edit',
     'task_runner',
+    # SSL (ensure DLLs are bundled for uv's standalone Python)
+    'ssl',
+    '_ssl',
     # Crypto / token dependencies
     'biscuit_auth',
     'nacl',
@@ -97,10 +100,30 @@ excludes = [
     'numpy.tests',
 ]
 
+# Collect SSL DLLs — uv's standalone Python may bundle them outside the default search path
+import importlib
+_ssl_binaries = []
+try:
+    import _ssl
+    _ssl_dir = os.path.dirname(_ssl.__file__) if hasattr(_ssl, '__file__') else None
+    if _ssl_dir:
+        for dll in os.listdir(_ssl_dir):
+            if dll.lower().startswith(('libssl', 'libcrypto', '_ssl')) and dll.endswith(('.dll', '.pyd', '.so', '.dylib')):
+                _ssl_binaries.append((os.path.join(_ssl_dir, dll), '.'))
+except Exception:
+    pass
+# Also try to find SSL DLLs next to the Python executable
+_python_dir = os.path.dirname(sys.executable)
+for dll in os.listdir(_python_dir):
+    if dll.lower().startswith(('libssl', 'libcrypto')) and dll.endswith(('.dll', '.so', '.dylib')):
+        _ssl_binaries.append((os.path.join(_python_dir, dll), '.'))
+if _ssl_binaries:
+    print(f"Collecting SSL binaries: {[b[0] for b in _ssl_binaries]}")
+
 a = Analysis(
     [str(main_script)],
     pathex=[str(spec_root)],
-    binaries=[],
+    binaries=_ssl_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
