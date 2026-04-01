@@ -91,8 +91,8 @@ hiddenimports = [
 ]
 
 # Exclusions to reduce size
-# Note: tkinter is NOT excluded — pyi_splash needs a minimal Tk subset
 excludes = [
+    'tkinter',
     'pytest',
     'unittest',
     'doctest',
@@ -138,44 +138,11 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
-# Splash screen — shown by the bootloader before Python starts
-# Requires Tcl/Tk *shared* libraries. uv's standalone Python (python-build-standalone)
-# often statically links Tcl/Tk, which makes _tkinter a built-in without __file__.
-# PyInstaller intentionally calls sys.exit() when it can't find the shared libs
-# (see pyinstaller/pyinstaller#9022), so we must pre-check before calling Splash().
+# Splash screen disabled — Tcl/Tk conflicts with PyQt6 in frozen builds on Windows,
+# hangs macOS builds, and uv's standalone Python often lacks shared Tcl/Tk libs.
+# TODO: Revisit when PyInstaller resolves Tcl/Tk + Qt coexistence issues.
 _has_splash = False
 splash = None
-_tk_available = False
-
-# Splash screen is incompatible with macOS (Tcl/Tk threading restriction)
-# and causes the build to hang during COLLECT. Only attempt on Windows/Linux.
-if sys.platform != 'darwin':
-    try:
-        import _tkinter
-        # If _tkinter has no __file__, it's statically linked and incompatible with splash
-        _tk_available = hasattr(_tkinter, '__file__')
-    except ImportError:
-        pass
-
-if _tk_available:
-    try:
-        splash = Splash(
-            str(spec_root / 'static' / 'splash.png'),
-            binaries=a.binaries,
-            datas=a.datas,
-            text_pos=(10, 460),
-            text_size=12,
-            text_color='#25F5F8',
-            text_default='Loading Andromica...',
-            max_img_size=(760, 480),
-            always_on_top=True,
-        )
-        _has_splash = True
-    except (Exception, SystemExit) as e:
-        splash = None
-        print(f"WARNING: Splash screen disabled ({e})")
-else:
-    print("WARNING: Splash screen disabled (Tcl/Tk shared libraries not available)")
 
 # Helper lists for splash binaries
 _splash_args = [splash] if _has_splash else []
