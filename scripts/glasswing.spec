@@ -146,12 +146,16 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 _has_splash = False
 splash = None
 _tk_available = False
-try:
-    import _tkinter
-    # If _tkinter has no __file__, it's statically linked and incompatible with splash
-    _tk_available = hasattr(_tkinter, '__file__')
-except ImportError:
-    pass
+
+# Splash screen is incompatible with macOS (Tcl/Tk threading restriction)
+# and causes the build to hang during COLLECT. Only attempt on Windows/Linux.
+if sys.platform != 'darwin':
+    try:
+        import _tkinter
+        # If _tkinter has no __file__, it's statically linked and incompatible with splash
+        _tk_available = hasattr(_tkinter, '__file__')
+    except ImportError:
+        pass
 
 if _tk_available:
     try:
