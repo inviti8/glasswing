@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Andromica
+Comment=Creative media application
+Exec=/opt/andromica/andromica
+Icon=andromica
+Terminal=false
+Type=Application
+Categories=Graphics;AudioVideo;

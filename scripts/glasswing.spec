@@ -195,27 +195,33 @@ if sys.platform == 'darwin':
         },
     )
 else:
-    # Windows/Linux: Single executable
+    # Windows/Linux: Directory mode (for MSI / .deb installer packaging)
     exe = EXE(
         pyz,
         *_splash_args,
         a.scripts,
-        *_splash_binaries,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
         [],
+        exclude_binaries=True,
         name=APP_NAME,
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,  # Disabled - UPX corrupts JS files like echart assets
-        upx_exclude=[],
-        runtime_tmpdir=None,
         console=console,
         disable_windowed_traceback=False,
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
         icon=icon_file,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        *_splash_binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name=APP_NAME,
     )

@@ -1,0 +1,355 @@
+name: Build Installers
+
+on:
+  push:
+    tags: [ 'v*' ]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+    inputs:
+      skip-notarize:
+        description: 'Skip macOS notarization'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  # ── Linux ────────────────────────────────────────────────────────
+  build-linux:
+    name: Build Linux .deb
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          imagemagick libmagickwand-dev \
+          libexiv2-27 libexiv2-dev \
+          libxcb-xinerama0 libxcb-cursor0 \
+          libwebkit2gtk-4.0-37 \
+          python3-pyqt5 \
+          python3-pyqt5.qtwebengine \
+          python3-pyqt5.qtwebchannel \
+          libqt5webenginecore5 \
+          libqt5webenginewidgets5 \
+          libqt5gui5 \
+          libqt5widgets5
+
+    - name: Install Python dependencies
+      run: |
+        uv sync
+        uv add --dev pyinstaller pillow
+        uv add pywebview[qt]
+
+    - name: Generate icons
+      run: uv run python scripts/generate_icons.py
+
+    - name: Build .deb installer
+      env:
+        BUILD_VERSION: ${{ github.ref_name }}
+      run: bash builds/build_linux.sh
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: andromica-linux
+        path: build/dist/*.deb
+        retention-days: 30
+
+  # ── Windows ──────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows .msi
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install Python dependencies
+      run: |
+        uv sync
+        uv add --dev pyinstaller pillow
+
+    - name: Generate icons
+      run: uv run python scripts/generate_icons.py
+
+    - name: Build with PyInstaller
+      env:
+        BUILD_VERSION: ${{ github.ref_name }}
+      run: |
+        uv run pyinstaller scripts/glasswing.spec --distpath build/dist --workpath build/work --noconfirm
+
+    - name: Install WiX Toolset
+      run: dotnet tool install --global wix
+
+    - name: Create MSI installer
+      env:
+        BUILD_VERSION: ${{ github.ref_name }}
+      shell: pwsh
+      run: |
+        $version = "0.1.0"
+        if ($env:BUILD_VERSION -match '(\d+\.\d+(\.\d+)?)') {
+          $version = $matches[1]
+        }
+        echo "MSI version: $version"
+
+        $distPath = (Resolve-Path "build\dist\andromica").Path
+        $iconPath = (Resolve-Path "icon.ico").Path
+        wix build `
+          -d SourceDir="$distPath" `
+          -d Version="$version" `
+          -d IconPath="$iconPath" `
+          -o "build\dist\andromica-${version}-win64.msi" `
+          "builds\andromica.wxs"
+
+        echo "MSI created:"
+        Get-ChildItem -Path "build\dist\*.msi" | Format-Table Name, Length
+
+    - name: Find Signtool
+      id: signtool
+      shell: pwsh
+      run: |
+        $sdkPath = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+        $signTools = Get-ChildItem -Path $sdkPath -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+          Where-Object { $_.FullName -match '\\x64\\' }
+        if ($signTools) {
+          $signTool = $signTools |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          echo "SIGNTOOL_PATH=$signTool" >> $env:GITHUB_ENV
+          Write-Host "Found signtool: $signTool"
+        } else {
+          Write-Host "::warning::Could not find signtool.exe — skipping code signing"
+        }
+
+    - name: Sign EXE and MSI
+      if: env.SIGNTOOL_PATH != '' && secrets.WINDOWS_SIGNING_CERT != ''
+      shell: pwsh
+      run: |
+        $certDir = "$env:RUNNER_TEMP\certs"
+        New-Item -ItemType Directory -Path $certDir -Force | Out-Null
+        $pfxPath = "$certDir\andromica-code-sign.pfx"
+        [System.IO.File]::WriteAllBytes(
+          $pfxPath,
+          [System.Convert]::FromBase64String("${{ secrets.WINDOWS_SIGNING_CERT }}")
+        )
+
+        $signTool = $env:SIGNTOOL_PATH
+        $password = "${{ secrets.WINDOWS_SIGNING_PASSWORD }}"
+
+        # Sign EXE
+        $exePath = "build\dist\andromica\andromica.exe"
+        Write-Host "Signing EXE: $exePath"
+        & $signTool sign /f $pfxPath /p $password `
+          /fd sha256 /td sha256 /tr "http://timestamp.digicert.com" /v $exePath
+
+        # Sign MSI
+        $msiFile = (Get-ChildItem -Path "build\dist\*.msi" | Select-Object -First 1).FullName
+        Write-Host "Signing MSI: $msiFile"
+        & $signTool sign /f $pfxPath /p $password `
+          /fd sha256 /td sha256 /tr "http://timestamp.digicert.com" /v $msiFile
+
+        Remove-Item $pfxPath -Force
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: andromica-windows
+        path: build/dist/*.msi
+        retention-days: 30
+
+  # ── macOS ────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS .dmg
+    runs-on: macos-14  # Apple Silicon
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install system dependencies
+      run: brew install imagemagick
+
+    - name: Install Python dependencies
+      run: |
+        uv sync
+        uv add --dev pyinstaller pillow icnsutil
+
+    - name: Generate icons
+      run: uv run python scripts/generate_icons.py
+
+    - name: Build with PyInstaller
+      env:
+        BUILD_VERSION: ${{ github.ref_name }}
+      run: |
+        uv run pyinstaller scripts/glasswing.spec --distpath build/dist --workpath build/work --noconfirm
+
+    - name: Create temporary keychain and import certificates
+      if: env.MACOS_APPLICATION_P12 != ''
+      env:
+        MACOS_APPLICATION_P12: ${{ secrets.MACOS_APPLICATION_P12 }}
+        MACOS_CERT_PW: ${{ secrets.MACOS_CERT_PW }}
+      run: |
+        set -eo pipefail
+        KC_PW="$(openssl rand -base64 32)"
+        echo "::add-mask::$KC_PW"
+
+        security create-keychain -p "$KC_PW" build.keychain
+        security set-keychain-settings -lut 21600 build.keychain
+        security unlock-keychain -p "$KC_PW" build.keychain
+        security list-keychains -d user -s build.keychain login.keychain
+        security default-keychain -s build.keychain
+
+        echo "$MACOS_APPLICATION_P12" | base64 -D > app.p12
+        security import app.p12 -k build.keychain -P "$MACOS_CERT_PW" -T /usr/bin/codesign
+        rm app.p12
+
+        security set-key-partition-list -S "apple-tool:,apple:" -s -k "$KC_PW" build.keychain
+
+        APP_IDENTITY_HASH=$(security find-identity -v -p codesigning build.keychain | \
+          grep "Developer ID Application" | head -n1 | awk '{print $2}')
+        if [ -n "$APP_IDENTITY_HASH" ]; then
+          echo "APP_IDENTITY_HASH=$APP_IDENTITY_HASH" >> "$GITHUB_ENV"
+        fi
+
+    - name: Code sign .app bundle
+      if: env.APP_IDENTITY_HASH != ''
+      run: |
+        codesign --force --options runtime --timestamp \
+          --sign "$APP_IDENTITY_HASH" --deep "build/dist/andromica.app"
+        codesign --verify --deep --strict --verbose=2 "build/dist/andromica.app"
+
+    - name: Create DMG
+      env:
+        BUILD_VERSION: ${{ github.ref_name }}
+      run: |
+        VERSION=$(echo "$BUILD_VERSION" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+        VERSION="${VERSION:-0.1.0}"
+        ARCH="$(uname -m)"
+
+        hdiutil create -volname "Andromica" \
+          -srcfolder "build/dist/andromica.app" \
+          -ov -format UDZO \
+          "build/dist/andromica-${VERSION}-macos-${ARCH}.dmg"
+
+        ls -lh build/dist/*.dmg
+
+    - name: Sign DMG
+      if: env.APP_IDENTITY_HASH != ''
+      run: |
+        DMG_PATH=$(ls build/dist/*.dmg)
+        codesign --force --timestamp --sign "$APP_IDENTITY_HASH" "$DMG_PATH"
+
+    - name: Notarize DMG
+      if: env.APP_IDENTITY_HASH != '' && inputs.skip-notarize != true
+      env:
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        APPLE_ID_APP_PW: ${{ secrets.APPLE_ID_APP_PW }}
+      run: |
+        set -eo pipefail
+        DMG_PATH=$(ls build/dist/*.dmg)
+
+        xcrun notarytool store-credentials "AC_PROFILE" \
+          --apple-id "$APPLE_ID" \
+          --team-id "$APPLE_TEAM_ID" \
+          --password "$APPLE_ID_APP_PW"
+
+        xcrun notarytool submit "$DMG_PATH" \
+          --keychain-profile "AC_PROFILE" \
+          --output-format json | tee notarytool_submit.json
+
+        SUBMISSION_ID=$(python3 -c "import json; print(json.load(open('notarytool_submit.json')).get('id',''))")
+        xcrun notarytool wait "$SUBMISSION_ID" \
+          --keychain-profile "AC_PROFILE" \
+          --timeout 1200
+
+        xcrun stapler staple "$DMG_PATH"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: andromica-macos
+        path: build/dist/*.dmg
+        retention-days: 30
+
+  # ── Release ──────────────────────────────────────────────────────
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Download all builds
+      uses: actions/download-artifact@v4
+      with:
+        path: dist
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release
+
+        echo "=== Downloaded artifacts ==="
+        find dist -type f | head -50
+
+        # Linux .deb
+        cp dist/andromica-linux/*.deb release/ 2>/dev/null && echo "Copied Linux .deb" || \
+          echo "::warning::No .deb found"
+
+        # Windows .msi
+        cp dist/andromica-windows/*.msi release/ 2>/dev/null && echo "Copied Windows .msi" || \
+          echo "::warning::No .msi found"
+
+        # macOS .dmg
+        cp dist/andromica-macos/*.dmg release/ 2>/dev/null && echo "Copied macOS .dmg" || \
+          echo "::warning::No .dmg found"
+
+        echo "=== Release artifacts ==="
+        ls -lh release/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release/*
+        tag_name: ${{ github.ref_name }}
+        name: Andromica ${{ github.ref_name }}
+        draft: true
+        body: |
+          ## Andromica ${{ github.ref_name }}
+
+          ### Downloads
+          - **Linux**: `.deb` package (x86_64) — `sudo dpkg -i andromica-*.deb`
+          - **Windows**: `.msi` installer (x86_64) — double-click to install
+          - **macOS (Apple Silicon)**: `.dmg` installer
+
+          ### Prerequisites
+          - **ImageMagick** (16-bit dynamic version)
+          - **ExifTool**
+          - **IPFS Desktop** (optional, for IPFS features)
+
+          See [INSTALL.md](docs/INSTALL.md) for detailed setup instructions.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

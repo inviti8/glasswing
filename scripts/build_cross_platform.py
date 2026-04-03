@@ -142,24 +142,15 @@ class GlasswingBuilder:
             result = subprocess.run(cmd, cwd=str(self.cwd), check=True)
             print(f"\n{CHECK} Build completed successfully!")
 
-            # Show output location
+            # Show output location (all platforms now use onedir / .app bundle)
             if target_platform == 'macos':
                 output_path = self.build_dir / 'dist' / 'andromica.app'
             else:
                 output_path = self.build_dir / 'dist' / 'andromica'
-                if target_platform == 'windows':
-                    output_path = output_path.with_suffix('.exe')
 
             if output_path.exists():
-                print(f"\nExecutable created at: {output_path}")
-
-                # Show size
-                if target_platform == 'macos':
-                    # Get .app bundle size
-                    size = sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file())
-                else:
-                    size = output_path.stat().st_size
-
+                print(f"\nBuild output at: {output_path}")
+                size = sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file())
                 size_mb = size / (1024 * 1024)
                 print(f"Size: {size_mb:.1f} MB")
 

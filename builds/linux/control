@@ -1,0 +1,9 @@
+Package: andromica
+Version: VERSION_PLACEHOLDER
+Section: graphics
+Priority: optional
+Architecture: amd64
+Maintainer: HEAVYMETA Cooperative <support@heavymeta.digital>
+Description: Andromica - Creative media application
+ Audio and image processing with token support, IPFS integration,
+ and Stellar blockchain connectivity.
