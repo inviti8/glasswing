@@ -140,19 +140,27 @@ jobs:
         }
 
     - name: Sign EXE and MSI
-      if: env.SIGNTOOL_PATH != '' && secrets.WINDOWS_SIGNING_CERT != ''
+      env:
+        WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
+        WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+      if: env.SIGNTOOL_PATH != ''
       shell: pwsh
       run: |
+        if (-not $env:WINDOWS_SIGNING_CERT) {
+          Write-Host "No signing certificate configured — skipping code signing"
+          exit 0
+        }
+
         $certDir = "$env:RUNNER_TEMP\certs"
         New-Item -ItemType Directory -Path $certDir -Force | Out-Null
         $pfxPath = "$certDir\andromica-code-sign.pfx"
         [System.IO.File]::WriteAllBytes(
           $pfxPath,
-          [System.Convert]::FromBase64String("${{ secrets.WINDOWS_SIGNING_CERT }}")
+          [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT)
         )
 
         $signTool = $env:SIGNTOOL_PATH
-        $password = "${{ secrets.WINDOWS_SIGNING_PASSWORD }}"
+        $password = $env:WINDOWS_SIGNING_PASSWORD
 
         # Sign EXE
         $exePath = "build\dist\andromica\andromica.exe"
@@ -207,11 +215,16 @@ jobs:
         uv run pyinstaller scripts/glasswing.spec --distpath build/dist --workpath build/work --noconfirm
 
     - name: Create temporary keychain and import certificates
-      if: env.MACOS_APPLICATION_P12 != ''
       env:
         MACOS_APPLICATION_P12: ${{ secrets.MACOS_APPLICATION_P12 }}
         MACOS_CERT_PW: ${{ secrets.MACOS_CERT_PW }}
       run: |
+        # Skip signing if no certificate is configured
+        if [ -z "$MACOS_APPLICATION_P12" ]; then
+          echo "No signing certificate configured — skipping code signing"
+          exit 0
+        fi
+
         set -eo pipefail
         KC_PW="$(openssl rand -base64 32)"
         echo "::add-mask::$KC_PW"
@@ -263,7 +276,10 @@ jobs:
         codesign --force --timestamp --sign "$APP_IDENTITY_HASH" "$DMG_PATH"
 
     - name: Notarize DMG
-      if: env.APP_IDENTITY_HASH != '' && inputs.skip-notarize != true
+      if: >-
+        env.APP_IDENTITY_HASH != '' &&
+        inputs.skip-notarize != true &&
+        !contains(github.ref_name, '-no-notarize')
       env:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
